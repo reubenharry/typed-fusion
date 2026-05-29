@@ -1,0 +1,4 @@
+# HLS must use cabal.project (local linearmap-hmatrix with COrphans).
+cradle:
+  cabal:
+    component: "lib:quantum"
