@@ -14,49 +14,126 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoStarIsType #-}
 
-module Infinite where 
+module Infinite where
 
+import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.VectorSpace.Free.FiniteSupportedSequence
 import Data.Complex (Complex)
-import Data.Basis (HasBasis(..))
-import Math.LinearMap.Category (type (+>), LinearMap (..), (⊗), type (⊗), Num')
+import GHC.TypeLits (KnownNat)
+import Math.LinearMap.Category
+  ( type (+>), type (⊗), LinearMap (..), Tensor (..), TensorSpace (..),
+    AdditiveGroup (..), VectorSpace (..), Scalar, getLinearMap )
+import Math.LinearMap.Category.Instances ()
+import Math.LinearMap.Category.Instances.Deriving ()
+import Math.LinearMap.Category.Backend.HMatrix ()
 import Prelude hiding ((.), ($))
-import Control.Arrow.Constrained (($))
-import Linear.V2 (V2 (..))
-import Numeric.LinearAlgebra.Static (R)
 import Control.Category.Constrained.Prelude
 import Numeric.LinearAlgebra.Static (C)
 
+type Field = Complex Double
+type Bond = FinSuppSeq Field
 
-foo :: U.Vector (Complex Double)
-foo = U.fromList [2,1, 3]
+-- | Active support length of a bond vector (trailing zeros trimmed).
+activeDimBond :: Bond -> Int
+activeDimBond (FinSuppSeq v)
+  | U.null v  = 0
+  | otherwise = 1 + go (U.length v - 1)
+  where
+    go i
+      | i < 0        = 0
+      | v U.! i /= 0 = i + 1
+      | otherwise    = go (i - 1)
 
-bar :: FinSuppSeq (Complex Double)
-bar = FinSuppSeq foo 
+-- | Shift bond-vector support right by @n@ slots (prepend zeros).
+offsetBond :: Int -> Bond -> Bond
+offsetBond 0 b = b
+offsetBond n (FinSuppSeq v)
+  | n <= 0    = FinSuppSeq v
+  | otherwise = FinSuppSeq (U.replicate n 0 U.++ v)
 
-linmap :: FinSuppSeq (Complex Double) +> FinSuppSeq ( Complex Double)
-linmap = LinearMap [FinSuppSeq $ U.fromList [2,1, 3]]
+type BondVec = V.Vector Bond
 
--- comp :: FinSuppSeq (Complex Double) +> FinSuppSeq ( Complex Double)
--- comp = linmap . linmap
+activeDimIntoBond :: BondVec -> Int
+activeDimIntoBond = V.foldl' max 0 . V.map activeDimBond
 
--- baz ::  Double
--- baz = decompose' bar 4
+offsetBondVec :: Int -> BondVec -> BondVec
+offsetBondVec n = V.map (offsetBond n)
 
-ban :: FinSuppSeq (Complex Double) +> V2 (Complex Double)
-ban = LinearMap []
+-- | Block-embed the second map's bond *output* after the first map's active dimension.
+offsetCodomainIntoBond
+  :: Int -> (C vp +> Bond) -> (C vp +> Bond)
+offsetCodomainIntoBond n (LinearMap imgs) =
+  LinearMap (offsetBondVec n imgs)
 
--- test :: V2 (Complex Double)
--- test = ban $ bar
+-- | Active bond dimension of a map whose domain is bond space.
+activeDimFromBond :: [a] -> Int
+activeDimFromBond = length
 
--- instance Num' (Complex Double) where
+-- | Block-embed the second map's bond *input* after the first map's active dimension.
+offsetDomainFromBond
+  :: AdditiveGroup w => Int -> (Bond +> w) -> (Bond +> w)
+offsetDomainFromBond n (LinearMap imgs) =
+  LinearMap (replicate n zeroV ++ imgs)
 
-data MPSClever vp = MPSClever {
-    leftMPSClever :: C vp +> FinSuppSeq (Complex Double),
-    center :: FinSuppSeq (Complex Double) +> C vp ⊗ FinSuppSeq (Complex Double),
-    rightMPSClever :: FinSuppSeq (Complex Double) +> C vp
-}
+-- | Offset the bond leg inside a physical ⊗ bond tensor.
+offsetBondInTensor
+  :: Int -> (C vp ⊗ Bond) -> (C vp ⊗ Bond)
+offsetBondInTensor n (Tensor tp) = Tensor (V.map (offsetBond n) tp)
 
-addClever :: MPSClever vp -> MPSClever vp -> MPSClever vp
-addClever = undefined
+-- | Block-embed a center-site map on both bond input and bond output legs.
+offsetCenterBond
+  :: forall vp. KnownNat vp => Int -> (Bond +> (C vp ⊗ Bond)) -> (Bond +> (C vp ⊗ Bond))
+offsetCenterBond n (LinearMap imgs) =
+  LinearMap (replicate n zeroTensor ++ map (offsetBondInTensor n) imgs)
+
+addIntoBond
+  :: KnownNat vp => (C vp +> Bond) -> (C vp +> Bond) -> (C vp +> Bond)
+addIntoBond f g =
+  f ^+^ offsetCodomainIntoBond (activeDimIntoBond (getLinearMap f)) g
+
+addFromBond
+  :: (AdditiveGroup w, TensorSpace w, Scalar w ~ Field) =>
+     (Bond +> w) -> (Bond +> w) -> (Bond +> w)
+addFromBond f g =
+  f ^+^ offsetDomainFromBond (activeDimFromBond (getLinearMap f)) g
+
+addCenterMap
+  :: forall vp. KnownNat vp =>
+     (Bond +> (C vp ⊗ Bond)) -> (Bond +> (C vp ⊗ Bond)) -> (Bond +> (C vp ⊗ Bond))
+addCenterMap f g =
+  f ^+^ offsetCenterBond (activeDimFromBond (getLinearMap f)) g
+
+data MPSClever vp = MPSClever
+  { leftMPSClever  :: C vp +> Bond
+  , center         :: Bond +> (C vp ⊗ Bond)
+  , rightMPSClever :: Bond +> C vp
+  }
+
+zeroMPSClever :: KnownNat vp => MPSClever vp
+zeroMPSClever = MPSClever zeroV zeroV zeroV
+
+addMPSClever
+  :: KnownNat vp => MPSClever vp -> MPSClever vp -> MPSClever vp
+addMPSClever (MPSClever l c r) (MPSClever l' c' r') =
+  MPSClever
+    (addIntoBond l l')
+    (addCenterMap c c')
+    (addFromBond r r')
+
+scaleMPSClever :: KnownNat vp => Field -> MPSClever vp -> MPSClever vp
+scaleMPSClever μ (MPSClever l c r) =
+  MPSClever (μ *^ l) (μ *^ c) (μ *^ r)
+
+instance KnownNat vp => AdditiveGroup (MPSClever vp) where
+  zeroV = zeroMPSClever
+  (^+^) = addMPSClever
+  negateV m = scaleMPSClever (-1) m
+
+instance KnownNat vp => VectorSpace (MPSClever vp) where
+  type Scalar (MPSClever vp) = Field
+  μ *^ m = scaleMPSClever μ m
+
+{-# DEPRECATED addClever "Use (^+^) on MPSClever instead" #-}
+addClever :: KnownNat vp => MPSClever vp -> MPSClever vp -> MPSClever vp
+addClever = addMPSClever
