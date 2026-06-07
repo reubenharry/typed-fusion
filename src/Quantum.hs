@@ -32,7 +32,7 @@ import Control.Lens (Iso', (^.), _1, Ixed (ix), (^?))
 import Math.VectorSpace.DimensionAware
 import Data.Singletons (Sing, SingI (..), fromSing, sing)
 import Data.Singletons.TH (genSingletons)
-import TensorNetwork (TN, VP, VB, computeEnergy)
+import TensorNetwork
 import qualified Test.QuickCheck as QC
 import Prelude hiding ((||), ($), id, (.))
 import Math.LinearMap.Asserted
@@ -235,7 +235,7 @@ test20 = baz where
     baz = fromIntegral $ fromSing bar
 
 
-type Field = Complex Double
+-- type Field = Complex Double
 type Ham vp = LinearMap Field (vp Field ⊗ vp Field) (vp Field ⊗ vp Field)
 
 type Spin = V2 Field

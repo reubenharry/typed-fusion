@@ -22,8 +22,10 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module General where
+import Control.Functor.Constrained (Functor(fmap))
 import Orphans (U1Irreps, SU2Irreps)
 import Data.Kind (Type)
 import GHC.TypeLits (Nat, type (+), KnownNat)
@@ -37,6 +39,10 @@ import Data.Singletons.TH (genSingletons)
 import Data.VectorSpace ((*^))
 import Data.Complex (Complex(..))
 import Data.Vector.Storable ((!))
+import Control.Category.Constrained (Category)
+import Control.Category.Constrained.Prelude (Category(..))
+import Prelude hiding ((.))
+import Math.LinearMap.Category hiding (type Tensor, type (⊗))
 
 data Group = U1 | SU2
 $(genSingletons [''Group])
@@ -174,11 +180,6 @@ type family
    Representation g r ⊗ Representation g q =
     Representation g (Tensor g r q)
 
-tstR :: Representation U1 '[ '(Pos 1, 2)] ⊗ Representation U1 '[ '(Pos 2, 1)]
-tstR = undefined
-
-tstR' :: Representation SU2 '[ '( 1, 2), '( 2, 1)] ⊗ Representation SU2 '[ '( 2, 1), '( 3, 1)]
-tstR' = undefined
 
 
 
@@ -218,6 +219,39 @@ type family
     HList (RepToVectors g (FilterNonTrivial g
       (
         Tensor g (DualRep g r) q)))
+
+tstR :: Representation U1 '[ '(Pos 1, 2)] ⊗ Representation U1 '[ '(Pos 2, 1)]
+tstR = undefined
+
+tstR' :: Representation SU2 '[ '( 1, 2), '( 2, 1)] ⊗ Representation SU2 '[ '( 2, 1), '( 3, 1)]
+tstR' = undefined
+-- type Re g 
+
+newtype MultiIrreps (g :: Group) = MultiIrreps { getMultiIrreps :: [(Irreps g, Nat)] }
+-- type MultiIrreps (g :: Group) = '[ '(Irreps g, Nat)]
+
+type family GetGroup ( r :: MultiIrreps g) :: Group where
+  GetGroup (r :: MultiIrreps g) = g
+
+type family GetIrreps ( r :: MultiIrreps g) :: [(Irreps g, Nat)] where
+--   GetIrreps (MultiIrreps r :: MultiIrreps g) = r
+
+newtype 
+  (a :: MultiIrreps g)
+  `IntertwinerA`
+  (b :: MultiIrreps g)
+  = Sectors (HList (RepToVectors (GetGroup a) (Tensor (GetGroup a) (GetIrreps a) (GetIrreps b))))
+
+-- type family
+--   (a :: MultiIrreps g)
+--   `IntertwinerA`
+--   (b :: MultiIrreps g)
+--   :: Type where
+
+--    a `IntertwinerA` b = HList (RepToVectors (GetGroup a) (Tensor (GetGroup a) (GetIrreps a) (GetIrreps b)))
+    
+    -- Tensor (GetGroup a) (DualRep (GetGroup a) a) b
+    -- HList (RepToVectors (FilterNonTrivial a (Tensor a (DualRep a a) b)))
 
 
 type family
@@ -279,3 +313,19 @@ tensor (Irrep a) (Irrep b) = Irrep $ fromList [c * d] where
 -- ok so i have a map \rho_1 -> \rho_2, which should be \rho_{-1} \otimes \rho_2 = \rho_1. I'd like to get the explicit linear map from this data. Algebraically: \rho_1 , \rho_{-1} \otimes \rho_2 = \rho_1 , \rho_1 
 
   -- = \rho_2: but what is the map that witnesses these tensor product isomorphisms?
+
+-- type  Foo g r q = FilterNonTrivial g
+--       (
+--         Tensor g (DualRep g r) q)
+
+instance Category (IntertwinerA) where 
+  id :: forall (g :: Group) (a :: MultiIrreps g). Object IntertwinerA a => IntertwinerA a a
+  id = Sectors ((undefined) :: HList (RepToVectors g (Tensor g (GetIrreps a) (GetIrreps a))))
+
+-- type A = Control.Functor.Constrained.Functor 
+
+data RepToVectorsA (r :: MultiIrreps g) = RepToVectorsA (HList (RepToVectors (GetGroup r) (GetIrreps r)))
+
+
+instance Control.Functor.Constrained.Functor RepToVectorsA IntertwinerA (LinearFunction Double) where
+  fmap (Sectors f) = LinearFunction (\x -> undefined)

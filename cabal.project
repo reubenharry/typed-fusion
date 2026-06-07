@@ -1,6 +1,7 @@
 packages:
   .
   ../linearmap-family
+  ../linearmap-family/constrained-categories
   ../linearmap-family/free-vector-spaces
   ../linearmap-family/vector-space
   ../linearmap-family/linearmap-hmatrix

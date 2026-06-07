@@ -73,6 +73,9 @@ library
         Example
         General
         Infinite
+        Random
+        ITensorTyped
+        FunctorExperiment
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -102,7 +105,8 @@ library
         hmatrix,
         vector,
         vector-sized,
-        indexed-list-literals
+        indexed-list-literals,
+        finite-typelits
 
     -- Directories containing source files.
     hs-source-dirs:   src
