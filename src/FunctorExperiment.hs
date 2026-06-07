@@ -3,185 +3,176 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE LambdaCase #-}
 
 module FunctorExperiment where
 
 import Prelude hiding ((.), Functor, fmap)
 import Data.Complex (Complex((:+)))
-import Data.Kind (Type)
 import Data.Proxy (Proxy(..))
 import Data.Type.Equality ((:~:)(Refl))
-import Data.VectorSpace (VectorSpace, (*^))
-import GHC.TypeLits (Nat, KnownNat, natVal)
+import GHC.TypeLits (Nat)
 import Data.Singletons (sing)
 import Control.Category.Constrained (Category(..))
 import Control.Functor.Constrained (Functor(fmap))
-import Data.AdditiveGroup (AdditiveGroup)
-import Math.LinearMap.Category hiding (Functor)
-import Math.LinearMap.Asserted (LinearFunction(..))
-import Math.VectorSpace.DimensionAware (DimensionAware, Dimensional)
+import Math.LinearMap.Category hiding (Tensor)
+import Math.LinearMap.Category.Instances.Deriving ()
 import Numeric.LinearAlgebra.Static (konst)
+import Unsafe.Coerce (unsafeCoerce)
+import General (DualRep, Tensor, FilterNonTrivial, Group(U1))
 import qualified Orphans as Lin
-import Utils (Z(..))
+import Utils (Z(..), KnownZ, getZ, zVal)
 
--- | Type-level U(1) irrep, labelled by charge @n@.
+-- | Type-level U(1) irrep, labelled by charge @z@.
 --
--- Each @'U1Irrep n@ is a one-dimensional representation; all intertwiners
--- between distinct charges are trivial (the @ZeroMap@ hom), and intertwiners
--- @'U1Irrep n -> 'U1Irrep n@ are scalars @Complex Double@.
-data IrrepU1 = U1Irrep Nat
+-- Each @'U1Irrep z@ is one-dimensional. Intertwiners @r -> q@ are indexed
+-- by @HomSectorList r q@: either empty (@InterNil@) or scalar (@InterScalar@).
+data IrrepU1 = U1Irrep Z
 
-type family IrrepCharge (r :: IrrepU1) :: Nat where
-  IrrepCharge ('U1Irrep n) = n
+-- | Witness that every object is a @'U1Irrep z@ for some known @z@.
+class KnownZ (ObjCharge r) => IrrepObj (r :: IrrepU1) where
+  type ObjCharge r :: Z
+  objRefl :: r :~: 'U1Irrep (ObjCharge r)
 
--- | Witness that every object is a @'U1Irrep n@ for some known @n@.
-class IrrepWitness (r :: IrrepU1) where
-  irrepRefl :: r :~: 'U1Irrep (IrrepCharge r)
+instance KnownZ z => IrrepObj ('U1Irrep z) where
+  type ObjCharge ('U1Irrep z) = z
+  objRefl = Refl
 
-instance KnownNat n => IrrepWitness ('U1Irrep n) where
-  irrepRefl = Refl
+-- | Embed a single irrep object as a one-sector rep list.
+type family AsList (r :: IrrepU1) :: [(Z, Nat)] where
+  AsList ('U1Irrep z) = '[ '(z, 1)]
 
---------------------------------------------------------------------------------
--- Morphisms between irreps
---------------------------------------------------------------------------------
-
--- | Intertwiner between one-dimensional U(1) irreps.
+-- | Hom-space sector list for intertwiners @r -> q@.
 --
---   * @'U1Irrep n -> 'U1Irrep n@ — hom space is @Complex Double@ (scalars)
---   * @'U1Irrep n -> 'U1Irrep m@ when @n /= m@ — hom space is ZeroMap
-data IntertwinerIrrep (r :: IrrepU1) (q :: IrrepU1) where
-  ZeroMap :: IntertwinerIrrep ('U1Irrep n) ('U1Irrep m)
-  Scalar :: Complex Double -> IntertwinerIrrep ('U1Irrep n) ('U1Irrep n)
+-- @FilterNonTrivial U1 (Tensor U1 (DualRep U1 (AsList r)) (AsList q))@.
+-- The endo clause avoids GHC getting stuck on @Add (Negate z) z@.
+type family HomSectorList (r :: IrrepU1) (q :: IrrepU1) :: [(Z, Nat)] where
+  HomSectorList ('U1Irrep z) ('U1Irrep z) = '[ '(Zero, 1)]
+  HomSectorList ('U1Irrep z) ('U1Irrep w) =
+    FilterNonTrivial U1
+      (Tensor U1
+        (DualRep U1 (AsList ('U1Irrep z)))
+        (AsList ('U1Irrep w)))
 
-instance Show (IntertwinerIrrep r q) where
-  show ZeroMap       = "ZeroMap"
-  show (Scalar z)  = show z
+-- | An intertwiner is determined by its hom-sector list.
+--
+-- Future: @InterBlock@ for @'[ '(Zero, m) ]@ with @m > 1@, @InterCons@ for
+-- multiple sectors.
+data IntertwinerSectors (hom :: [(Z, Nat)]) (r :: IrrepU1) (q :: IrrepU1) where
+  InterNil    :: IntertwinerSectors '[] r q
+  InterScalar :: Complex Double -> IntertwinerSectors '[ '(Zero, 1)] r r
 
---------------------------------------------------------------------------------
--- Category of U(1) irreps
---------------------------------------------------------------------------------
+instance Show (IntertwinerSectors hom r q) where
+  show InterNil        = "InterNil"
+  show (InterScalar z) = show z
 
-instance Category IntertwinerIrrep where
-  type Object IntertwinerIrrep r = IrrepWitness r
+newtype Intertwiner (r :: IrrepU1) (q :: IrrepU1) = MkIntertwiner
+  { unIntertwiner :: IntertwinerSectors (HomSectorList r q) r q
+  }
+  deriving Show via (IntertwinerSectors (HomSectorList r q) r q)
 
-  id :: forall a. IrrepWitness a => IntertwinerIrrep a a
-  id = case irrepRefl @a of
-    Refl -> Scalar 1
-
-  (.) :: forall a b c.
-         ( IrrepWitness a, IrrepWitness b, IrrepWitness c )
-      => IntertwinerIrrep b c -> IntertwinerIrrep a b -> IntertwinerIrrep a c
-  (.) f g = case (irrepRefl @a, irrepRefl @b, irrepRefl @c) of
-    (Refl, Refl, Refl) -> compose f g
+-- | Compose after exposing @'U1Irrep z@ heads so @HomSectorList@ reduces.
+--
+-- When a factor is @InterNil@ but the composed hom is endomorphic, the zero
+-- map is @InterScalar 0@; GHC cannot prove this from @HomSectorList@ alone.
+composeVia
+  :: forall za zb zc a' b' c'.
+     (KnownZ za, KnownZ zb, KnownZ zc)
+  => a' :~: 'U1Irrep za
+  -> b' :~: 'U1Irrep zb
+  -> c' :~: 'U1Irrep zc
+  -> IntertwinerSectors (HomSectorList a' b') a' b'
+  -> IntertwinerSectors (HomSectorList b' c') b' c'
+  -> IntertwinerSectors (HomSectorList a' c') a' c'
+composeVia Refl Refl Refl ab bc = case (ab, bc) of
+  (InterScalar x, InterScalar y) -> unsafeCoerce (InterScalar (y * x))
+  _ | zVal (Proxy @za) == zVal (Proxy @zc) -> unsafeCoerce (InterScalar 0)
+    | otherwise -> unsafeCoerce InterNil
 
 compose
-  :: IntertwinerIrrep ('U1Irrep b) ('U1Irrep c)
-  -> IntertwinerIrrep ('U1Irrep a) ('U1Irrep b)
-  -> IntertwinerIrrep ('U1Irrep a) ('U1Irrep c)
-compose ZeroMap       _         = ZeroMap
-compose _           ZeroMap     = ZeroMap
-compose (Scalar y) (Scalar x) = Scalar (y * x)
+  :: forall a b c.
+     (IrrepObj a, IrrepObj b, IrrepObj c)
+  => Intertwiner b c
+  -> Intertwiner a b
+  -> Intertwiner a c
+compose (MkIntertwiner bc) (MkIntertwiner ab) =
+  MkIntertwiner (composeVia (objRefl @a) (objRefl @b) (objRefl @c) ab bc)
 
---------------------------------------------------------------------------------
--- Runtime witnesses
---------------------------------------------------------------------------------
+instance Category Intertwiner where
+  type Object Intertwiner r = IrrepObj r
 
-data SomeIrrepU1 where
-  SomeU1Irrep :: KnownNat n => Proxy n -> SomeIrrepU1
+  id :: forall a. IrrepObj a => Intertwiner a a
+  id = MkIntertwiner (endoScalar (objRefl @a))
+    where
+      endoScalar
+        :: r :~: 'U1Irrep z
+        -> IntertwinerSectors (HomSectorList r r) r r
+      endoScalar Refl = InterScalar 1
 
-instance Show SomeIrrepU1 where
-  show (SomeU1Irrep p) = "U1(" ++ show (natVal p) ++ ")"
+  (.) = compose
 
-class KnownIrrepU1 (r :: IrrepU1) where
-  irrepVal :: SomeIrrepU1
-
-instance KnownNat n => KnownIrrepU1 ('U1Irrep n) where
-  irrepVal = SomeU1Irrep (Proxy @n)
-
---------------------------------------------------------------------------------
--- U(1) group action as endomorphisms in the rep category
---------------------------------------------------------------------------------
-
--- | Phase factor @e^{i n \theta}@ for charge @n@.
-u1PhaseFactor :: forall n. KnownNat n => Double -> Complex Double
+-- | Phase factor @e^{i q \theta}@ for charge @q@.
+u1PhaseFactor :: forall z. KnownZ z => Double -> Complex Double
 u1PhaseFactor theta =
-  exp ((0 :+ 1) * (theta * fromIntegral (natVal (Proxy @n)) :+ 0))
+  exp ((0 :+ 1) * (fromIntegral (getZ @z) * theta :+ 0))
 
--- | U(1) acts on each irrep object via endomorphisms @r -> r@ in
--- @IntertwinerIrrep@. Group multiplication is composition; the identity
--- element is @Scalar 1@.
-class ActsOnIrrep (r :: IrrepU1) where
-  repMorphism :: Double -> IntertwinerIrrep r r
+-- | U(1) group action on representation spaces (not intertwiner morphisms).
+class IrrepObj r => ActsOnIrrep (r :: IrrepU1) where
+  repLinear :: Double -> LinearFunction (Complex Double) (RepFunctor r) (RepFunctor r)
 
-instance KnownNat n => ActsOnIrrep ('U1Irrep n) where
-  repMorphism theta = Scalar (u1PhaseFactor @n theta)
+instance KnownZ z => ActsOnIrrep ('U1Irrep z) where
+  repLinear theta =
+    LinearFunction $ \(RepFunctor v) -> RepFunctor (u1PhaseFactor @z theta *^ v)
 
--- | Linear representation obtained by applying the representation functor.
-repLinear
-  :: forall r.
-     ( ActsOnIrrep r, IrrepWitness r, KnownNat (IrrepCharge r) )
-  => Double
-  -> LinearFunction (Complex Double) (RepFunctor r) (RepFunctor r)
-repLinear theta = fmap (repMorphism @r theta)
-
---------------------------------------------------------------------------------
--- Functor to representation spaces
---------------------------------------------------------------------------------
-
--- | Bridge a type-level charge @n@ to the @Z@ index used by @Lin.IrrepU1@.
-type family U1Charge (r :: IrrepU1) :: Lin.U1Irreps where
-  U1Charge ('U1Irrep n) = 'Pos n
-
--- | The representation functor on objects: each @'U1Irrep n@ maps to a
--- one-dimensional complex vector space @Lin.IrrepU1 ('Pos n)@.
-newtype RepFunctor (r :: IrrepU1) = RepFunctor (Lin.IrrepU1 (U1Charge r))
+newtype RepFunctor (r :: IrrepU1) = RepFunctor (Lin.IrrepU1 (ObjCharge r))
   deriving newtype (Eq, Show, Num, Fractional, Floating)
 
-instance KnownNat (IrrepCharge r) => AdditiveGroup (RepFunctor r) where
+instance IrrepObj r => AdditiveGroup (RepFunctor r) where
   RepFunctor v ^+^ RepFunctor w = RepFunctor (v ^+^ w)
   zeroV = RepFunctor zeroV
   negateV (RepFunctor v) = RepFunctor (negateV v)
 
-instance KnownNat (IrrepCharge r) => VectorSpace (RepFunctor r) where
+instance IrrepObj r => VectorSpace (RepFunctor r) where
   type Scalar (RepFunctor r) = Complex Double
   μ *^ RepFunctor v = RepFunctor (μ *^ v)
 
-instance KnownNat (IrrepCharge r) => InnerSpace (RepFunctor r) where
+instance IrrepObj r => InnerSpace (RepFunctor r) where
   RepFunctor v <.> RepFunctor w = v <.> w
 
-instance KnownNat (IrrepCharge r) => Semimanifold (RepFunctor r) where
-  type Needle (RepFunctor r) = Needle (Lin.IrrepU1 (U1Charge r))
-  RepFunctor v .+~^ δ = undefined
+-- Minimal @TensorSpace@ stubs so @RepFunctor@ is a valid @Functor@ codomain.
+instance IrrepObj r => Semimanifold (RepFunctor r) where
+  type Needle (RepFunctor r) = Needle (Lin.IrrepU1 (ObjCharge r))
+  RepFunctor _ .+~^ _ = undefined
 
-instance KnownNat (IrrepCharge r) => PseudoAffine (RepFunctor r) where
-  RepFunctor v .-~! RepFunctor w = undefined
-  RepFunctor v .-~. RepFunctor w = undefined
+instance IrrepObj r => PseudoAffine (RepFunctor r) where
+  RepFunctor _ .-~! RepFunctor _ = undefined
+  RepFunctor _ .-~. RepFunctor _ = undefined
 
-instance KnownNat (IrrepCharge r) => DimensionAware (RepFunctor r) where
-  type StaticDimension (RepFunctor r) = StaticDimension (Lin.IrrepU1 (U1Charge r))
+instance IrrepObj r => DimensionAware (RepFunctor r) where
+  type StaticDimension (RepFunctor r) = StaticDimension (Lin.IrrepU1 (ObjCharge r))
   dimensionalityWitness = undefined
 
-instance (KnownNat (IrrepCharge r), IrrepCharge r ~ n, n ~ 1) => n `Dimensional` RepFunctor r where
+instance IrrepObj r => 1 `Dimensional` RepFunctor r where
   knownDimensionalitySing = sing
   unsafeFromArrayWithOffset i ar =
     RepFunctor (unsafeFromArrayWithOffset i ar)
   unsafeWriteArrayWithOffset ar i (RepFunctor v) =
     unsafeWriteArrayWithOffset ar i v
 
-instance KnownNat (IrrepCharge r) => TensorSpace (RepFunctor r) where
-  type TensorProduct (RepFunctor r) w = TensorProduct (Lin.IrrepU1 (U1Charge r)) w
+instance IrrepObj r => TensorSpace (RepFunctor r) where
+  type TensorProduct (RepFunctor r) w = TensorProduct (Lin.IrrepU1 (ObjCharge r)) w
   scalarSpaceWitness = undefined
   linearManifoldWitness = undefined
   zeroTensor = undefined
@@ -202,53 +193,64 @@ instance KnownNat (IrrepCharge r) => TensorSpace (RepFunctor r) where
   wellDefinedTensor = undefined
   vectorConjugate = undefined
 
--- | @IntertwinerIrrep@ is a subcategory of @LinearFunction (Complex Double)@:
---   * @Scalar z@ maps to multiplication by @z@
---   * @ZeroMap@ maps to the zero linear map (the only map into a trivial hom space)
-instance Functor RepFunctor IntertwinerIrrep (LinearFunction (Complex Double)) where
-  fmap morph = case morph of
-    ZeroMap ->
-      LinearFunction $ RepFunctor . const (Lin.IrrepU1 (konst 0))
-    Scalar z ->
-      LinearFunction $ \(RepFunctor v) -> RepFunctor (z *^ v)
+intertwinerLinear
+  :: forall a b.
+     (IrrepObj a, IrrepObj b)
+  => Intertwiner a b
+  -> LinearFunction (Complex Double) (RepFunctor a) (RepFunctor b)
+intertwinerLinear (MkIntertwiner sectors) = LinearFunction $ \case
+  RepFunctor v -> case sectors of
+    InterNil      -> RepFunctor (Lin.IrrepU1 (konst 0))
+    InterScalar z -> RepFunctor (z *^ v)
+
+instance Functor RepFunctor Intertwiner (LinearFunction (Complex Double)) where
+  fmap = intertwinerLinear
 
 --------------------------------------------------------------------------------
 -- Examples
 --------------------------------------------------------------------------------
 
--- charge 0 -> charge 1: no nonzero intertwiner
-zeroToOne :: IntertwinerIrrep ('U1Irrep 0) ('U1Irrep 1)
-zeroToOne = ZeroMap
+type ZeroToOneHom = HomSectorList ('U1Irrep 'Zero) ('U1Irrep ('Pos 1))
+type PhaseHom     = HomSectorList ('U1Irrep ('Pos 1)) ('U1Irrep ('Pos 1))
+type NegPosHom    = HomSectorList ('U1Irrep ('Neg 1)) ('U1Irrep ('Pos 1))
 
--- charge 1 -> charge 1: multiplication by i
-phase :: IntertwinerIrrep ('U1Irrep 1) ('U1Irrep 1)
-phase = Scalar (0 :+ 1)
+zeroToOneEmpty :: (ZeroToOneHom ~ '[]) => ()
+zeroToOneEmpty = ()
 
--- rotation by π/2 on charge +1 is the same endomorphism as @phase@
-phaseFromAction :: IntertwinerIrrep ('U1Irrep 1) ('U1Irrep 1)
-phaseFromAction = repMorphism @('U1Irrep 1) (pi / 2)
+phaseHom :: (PhaseHom ~ '[ '(Zero, 1)]) => ()
+phaseHom = ()
 
--- composition of group elements is composition of intertwiners
-composedAction :: IntertwinerIrrep ('U1Irrep 1) ('U1Irrep 1)
-composedAction = repMorphism @('U1Irrep 1) 1 . repMorphism @('U1Irrep 1) 2
+negPosHom :: (NegPosHom ~ '[]) => ()
+negPosHom = ()
 
--- composition: phase . phase = Scalar (-1)
-phaseSquared :: IntertwinerIrrep ('U1Irrep 1) ('U1Irrep 1)
+zeroToOne :: Intertwiner ('U1Irrep 'Zero) ('U1Irrep ('Pos 1))
+zeroToOne = MkIntertwiner InterNil
+
+phase :: Intertwiner ('U1Irrep ('Pos 1)) ('U1Irrep ('Pos 1))
+phase = MkIntertwiner (InterScalar (0 :+ 1))
+
+phaseSquared :: Intertwiner ('U1Irrep ('Pos 1)) ('U1Irrep ('Pos 1))
 phaseSquared = phase . phase
 
--- charge-1 representation space, and the linear map corresponding to @phase@
-repSpace1 :: RepFunctor ('U1Irrep 1)
+repSpace1 :: RepFunctor ('U1Irrep ('Pos 1))
 repSpace1 = RepFunctor (Lin.IrrepU1 (konst 1))
 
-phaseLinear
-  :: LinearFunction (Complex Double)
-       (RepFunctor ('U1Irrep 1))
-       (RepFunctor ('U1Irrep 1))
+phaseLinear :: LinearFunction (Complex Double)
+  (RepFunctor ('U1Irrep ('Pos 1))) (RepFunctor ('U1Irrep ('Pos 1)))
 phaseLinear = fmap phase
 
--- linear action by π/2 matches @phaseLinear@
-phaseLinearFromAction
-  :: LinearFunction (Complex Double)
-       (RepFunctor ('U1Irrep 1))
-       (RepFunctor ('U1Irrep 1))
-phaseLinearFromAction = repLinear @('U1Irrep 1) (pi / 2)
+phaseLinearFromAction :: LinearFunction (Complex Double)
+  (RepFunctor ('U1Irrep ('Pos 1))) (RepFunctor ('U1Irrep ('Pos 1)))
+phaseLinearFromAction = repLinear @('U1Irrep ('Pos 1)) (pi / 2)
+
+composedLinearAction :: LinearFunction (Complex Double)
+  (RepFunctor ('U1Irrep ('Pos 1))) (RepFunctor ('U1Irrep ('Pos 1)))
+composedLinearAction =
+  repLinear @('U1Irrep ('Pos 1)) 1 . repLinear @('U1Irrep ('Pos 1)) 2
+
+repSpaceNeg1 :: RepFunctor ('U1Irrep ('Neg 1))
+repSpaceNeg1 = RepFunctor (Lin.IrrepU1 (konst 1))
+
+negChargeAction :: LinearFunction (Complex Double)
+  (RepFunctor ('U1Irrep ('Neg 1))) (RepFunctor ('U1Irrep ('Neg 1)))
+negChargeAction = repLinear @('U1Irrep ('Neg 1)) (pi / 2)
