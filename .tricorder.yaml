@@ -1,0 +1,8 @@
+# Plain `cabal repl` (no --enable-multi-repl) to avoid the
+# singletons-base:setup.Cabal >=3.11 vs cabal.project.freeze ==3.10.3.0 conflict.
+# Single-component only, so we load the quantum library.
+session:
+  command: "cabal repl --builddir dist-newstyle/tricorder quantum:lib:quantum"
+
+observability:
+  log_file: /tmp/tricorder.log

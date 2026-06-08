@@ -13,26 +13,44 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Infinite where
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.VectorSpace.Free.FiniteSupportedSequence
-import Data.Complex (Complex)
-import GHC.TypeLits (KnownNat)
+import Data.Complex (Complex ((:+)))
+import Data.Proxy (Proxy (..))
+import Data.Coerce (coerce)
+import Data.List (foldl')
+import Data.Maybe (fromMaybe)
+import GHC.TypeLits (KnownNat, natVal, type (*))
+import qualified Test.QuickCheck as QC
+import Test.QuickCheck.Gen (unGen)
+import Test.QuickCheck.Random (mkQCGen)
 import Math.LinearMap.Category
   ( type (+>), type (⊗), LinearMap (..), Tensor (..), TensorSpace (..),
-    AdditiveGroup (..), VectorSpace (..), Scalar, getLinearMap )
+    AdditiveGroup (..), VectorSpace (..), Scalar, getLinearMap, getTensorProduct )
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Instances.Deriving ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Prelude hiding ((.), ($))
+import Control.Monad (replicateM)
+import qualified Control.Applicative as App
 import Control.Category.Constrained.Prelude
-import Numeric.LinearAlgebra.Static (C)
+import Numeric.LinearAlgebra.Static (C, M, Sized (..), create, extract)
+import qualified Numeric.LinearAlgebra as LA
+import Linear (V2(..))
 
 type Field = Complex Double
 type Bond = FinSuppSeq Field
+
+-- | Three-site physical Hilbert space @VP ⊗ VP ⊗ VP@ (left-associated).
+type Physical3 vp = (C vp ⊗ C vp) ⊗ C vp
+
+-- | Flattened dimension @vp³@ for the physical space above.
+type PhysicalDim3 vp = vp * vp * vp
 
 -- | Active support length of a bond vector (trailing zeros trimmed).
 activeDimBond :: Bond -> Int
@@ -66,43 +84,61 @@ offsetCodomainIntoBond
 offsetCodomainIntoBond n (LinearMap imgs) =
   LinearMap (offsetBondVec n imgs)
 
--- | Active bond dimension of a map whose domain is bond space.
-activeDimFromBond :: [a] -> Int
-activeDimFromBond = length
+isZeroBond :: Bond -> Bool
+isZeroBond (FinSuppSeq v) = U.all (== 0) v
 
--- | Block-embed the second map's bond *input* after the first map's active dimension.
-offsetDomainFromBond
-  :: AdditiveGroup w => Int -> (Bond +> w) -> (Bond +> w)
-offsetDomainFromBond n (LinearMap imgs) =
-  LinearMap (replicate n zeroV ++ imgs)
+activeDimCenterSite :: forall vp. KnownNat vp => [C vp ⊗ Bond] -> Int
+activeDimCenterSite imgs =
+  foldl'
+    (\acc (i, Tensor rows) ->
+       if V.any (not . isZeroBond) rows then i + 1 else acc)
+    0
+    (zip [0 ..] imgs)
+
+activeDimCenterOut :: [C vp ⊗ Bond] -> Int
+activeDimCenterOut imgs =
+  maximum $
+    0 :
+      [ activeDimBond row
+      | Tensor rows <- imgs
+      , row <- V.toList rows
+      ]
+
+activeDimRightSite :: forall vp. KnownNat vp => [C vp] -> Int
+activeDimRightSite imgs =
+  foldl' (\acc (i, v) -> if v == zeroV then acc else i + 1) 0 (zip [0 ..] imgs)
+
+padLinearMapDomain :: AdditiveGroup w => Int -> [w] -> [w]
+padLinearMapDomain chi imgs =
+  take chi (imgs ++ replicate (max 0 (chi - length imgs)) zeroV)
+
+padCenterDomain
+  :: forall vp. KnownNat vp => Int -> (Bond +> (C vp ⊗ Bond)) -> (Bond +> (C vp ⊗ Bond))
+padCenterDomain chi (LinearMap imgs) =
+  LinearMap (padLinearMapDomain chi imgs)
+
+padRightDomain
+  :: forall vp. KnownNat vp => Int -> (Bond +> C vp) -> (Bond +> C vp)
+padRightDomain chi (LinearMap imgs) =
+  LinearMap (padLinearMapDomain chi imgs)
+
+bondDimMPS :: forall vp. KnownNat vp => MPSClever vp -> Int
+bondDimMPS (MPSClever l c r) =
+  maximum
+    [ activeDimIntoBond (getLinearMap l)
+    , activeDimCenterSite (getLinearMap c)
+    , activeDimCenterOut (getLinearMap c)
+    , activeDimRightSite (getLinearMap r)
+    ]
 
 -- | Offset the bond leg inside a physical ⊗ bond tensor.
 offsetBondInTensor
   :: Int -> (C vp ⊗ Bond) -> (C vp ⊗ Bond)
 offsetBondInTensor n (Tensor tp) = Tensor (V.map (offsetBond n) tp)
 
--- | Block-embed a center-site map on both bond input and bond output legs.
-offsetCenterBond
-  :: forall vp. KnownNat vp => Int -> (Bond +> (C vp ⊗ Bond)) -> (Bond +> (C vp ⊗ Bond))
-offsetCenterBond n (LinearMap imgs) =
-  LinearMap (replicate n zeroTensor ++ map (offsetBondInTensor n) imgs)
-
 addIntoBond
-  :: KnownNat vp => (C vp +> Bond) -> (C vp +> Bond) -> (C vp +> Bond)
-addIntoBond f g =
-  f ^+^ offsetCodomainIntoBond (activeDimIntoBond (getLinearMap f)) g
-
-addFromBond
-  :: (AdditiveGroup w, TensorSpace w, Scalar w ~ Field) =>
-     (Bond +> w) -> (Bond +> w) -> (Bond +> w)
-addFromBond f g =
-  f ^+^ offsetDomainFromBond (activeDimFromBond (getLinearMap f)) g
-
-addCenterMap
-  :: forall vp. KnownNat vp =>
-     (Bond +> (C vp ⊗ Bond)) -> (Bond +> (C vp ⊗ Bond)) -> (Bond +> (C vp ⊗ Bond))
-addCenterMap f g =
-  f ^+^ offsetCenterBond (activeDimFromBond (getLinearMap f)) g
+  :: KnownNat vp => Int -> (C vp +> Bond) -> (C vp +> Bond) -> (C vp +> Bond)
+addIntoBond chiF f g = f ^+^ offsetCodomainIntoBond chiF g
 
 data MPSClever vp = MPSClever
   { leftMPSClever  :: C vp +> Bond
@@ -110,16 +146,29 @@ data MPSClever vp = MPSClever
   , rightMPSClever :: Bond +> C vp
   }
 
+instance KnownNat vp => Show (MPSClever vp) where
+  show _ = "MPSClever"
+
 zeroMPSClever :: KnownNat vp => MPSClever vp
 zeroMPSClever = MPSClever zeroV zeroV zeroV
 
 addMPSClever
   :: KnownNat vp => MPSClever vp -> MPSClever vp -> MPSClever vp
-addMPSClever (MPSClever l c r) (MPSClever l' c' r') =
-  MPSClever
-    (addIntoBond l l')
-    (addCenterMap c c')
-    (addFromBond r r')
+addMPSClever m1 m2 =
+  let chi1 = bondDimMPS m1
+      chi2 = bondDimMPS m2
+      MPSClever l1 c1 r1 = m1
+      MPSClever l2 c2 r2 = m2
+      c1' = padCenterDomain chi1 c1
+      c2' = padCenterDomain chi2 c2
+      r1' = padRightDomain chi1 r1
+      r2' = padRightDomain chi2 r2
+  in MPSClever
+       (addIntoBond chi1 l1 l2)
+       (LinearMap $
+          getLinearMap c1'
+            ++ map (offsetBondInTensor chi1) (getLinearMap c2'))
+       (LinearMap $ getLinearMap r1' ++ getLinearMap r2')
 
 scaleMPSClever :: KnownNat vp => Field -> MPSClever vp -> MPSClever vp
 scaleMPSClever μ (MPSClever l c r) =
@@ -137,3 +186,177 @@ instance KnownNat vp => VectorSpace (MPSClever vp) where
 {-# DEPRECATED addClever "Use (^+^) on MPSClever instead" #-}
 addClever :: KnownNat vp => MPSClever vp -> MPSClever vp -> MPSClever vp
 addClever = addMPSClever
+
+-- | Stack @vp@ column vectors into an @M vp vp@ (one row per physical index).
+matFromCVpRows :: forall vp. KnownNat vp => V.Vector (C vp) -> M vp vp
+matFromCVpRows cols =
+  fromMaybe (error "matFromCVpRows: create failed") $
+    create (LA.fromRows (map extract (V.toList cols)))
+
+-- | Contract the bond leg of one center-site tensor against @Bond +> C vp@.
+contractSiteTensor
+  :: forall vp
+   . KnownNat vp
+  => (Bond +> C vp) -> (C vp ⊗ Bond) -> (C vp ⊗ C vp)
+contractSiteTensor right (Tensor rows) =
+  Tensor (matFromCVpRows (V.map (right $) rows))
+
+-- | Contract center ⊗ right on the bond leg.
+contractCenterRight
+  :: forall vp
+   . KnownNat vp
+  => (Bond +> (C vp ⊗ Bond)) -> (Bond +> C vp) -> Bond +> (C vp ⊗ C vp)
+contractCenterRight (LinearMap centerImgs) right =
+  LinearMap (map (contractSiteTensor right) centerImgs)
+
+flattenBody2 :: forall vp. KnownNat vp => (C vp ⊗ C vp) -> LA.Vector Field
+flattenBody2 (Tensor m) = LA.flatten (extract m)
+
+-- | Fully contracted map @C vp +> (C vp ⊗ C vp)@.
+--
+-- Amplitude for @(s₁, s₂, s₃)@ is the @(s₂, s₃)@ component of @(stateMap mps) e_{s₁}@.
+stateMap
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp))
+  => MPSClever vp -> C vp +> (C vp ⊗ C vp)
+stateMap (MPSClever (LinearMap leftImgs) centerSite right) =
+  let contracted = V.map (contractCenterRight centerSite right $) leftImgs
+      rows = map (LA.toList . flattenBody2) (V.toList contracted)
+      mat = LA.fromRows (map LA.fromList rows)
+  in LinearMap (fromMaybe (error "stateMap: create failed") (create mat))
+
+-- | Alias for 'stateMap' emphasizing the linear-map viewpoint.
+mpsStateMap
+  :: (KnownNat vp, KnownNat (vp * vp)) => MPSClever vp -> C vp +> (C vp ⊗ C vp)
+mpsStateMap = stateMap
+
+-- | The state tensor in @VP ⊗ (VP ⊗ VP)@ (right-associated triple product).
+mpsToTensorNested
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp))
+  => MPSClever vp -> C vp ⊗ (C vp ⊗ C vp)
+mpsToTensorNested mps = coerce (stateMap mps)
+
+-- | The state vector in @VP ⊗ VP ⊗ VP@, i.e. @(VP ⊗ VP) ⊗ VP@.
+--
+-- Shares the same matrix storage as 'mpsToTensorNested'; index ordering in the
+-- flat vector is @(s₁, s₂, s₃) ↦ (s₁·vp + s₂)·vp + s₃@.
+mpsToPhysical3
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp))
+  => MPSClever vp -> Physical3 vp
+mpsToPhysical3 mps =
+  Tensor (getTensorProduct (mpsToTensorNested mps))
+
+-- | Same state as a flat @C (vp³)@ column vector.
+mpsToFlat
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => MPSClever vp -> C (PhysicalDim3 vp)
+mpsToFlat mps =
+  fromMaybe (error "mpsToFlat: create failed") $
+    create (LA.flatten (extract (getTensorProduct (mpsToPhysical3 mps))))
+
+-- | Small integer complexes for exact QuickCheck properties.
+smallComplex :: QC.Gen Field
+smallComplex = do
+  r <- QC.elements [-2 :: Int .. 2]
+  i <- QC.elements [-2 :: Int .. 2]
+  App.pure (fromIntegral r :+ fromIntegral i)
+
+genCvp :: forall vp. KnownNat vp => QC.Gen (C vp)
+genCvp = do
+  let n = fromIntegral (natVal (Proxy @vp))
+  xs <- replicateM n smallComplex
+  App.pure $
+    fromMaybe (error "genCvp: create failed") (create (LA.fromList xs))
+
+genBond :: QC.Gen Bond
+genBond = do
+  len <- QC.choose (0, 3)
+  FinSuppSeq App.<$> U.replicateM len smallComplex
+
+genBondDomainMap :: QC.Gen w -> QC.Gen (Bond +> w)
+genBondDomainMap wGen = do
+  chi <- QC.choose (0, 3)
+  LinearMap App.<$> replicateM chi wGen
+
+-- | Random MPS with bond rank up to @3@ (used by tests).
+genMPSClever :: forall vp. KnownNat vp => QC.Gen (MPSClever vp)
+genMPSClever = do
+  let n = fromIntegral (natVal (Proxy @vp))
+  left <- LinearMap App.<$> V.replicateM n genBond
+  centerSite <- genBondDomainMap (Tensor App.<$> V.replicateM n genBond)
+  right <- genBondDomainMap genCvp
+  App.pure (MPSClever left centerSite right)
+
+-- | Addition in MPS form agrees with addition in flattened physical space.
+prop_addThenFlatten
+  :: ( KnownNat vp
+     , KnownNat (vp * vp)
+     , KnownNat (vp * vp * vp)
+     )
+  => MPSClever vp -> MPSClever vp -> QC.Property
+prop_addThenFlatten m1 m2 =
+  mpsToFlat (m1 ^+^ m2) QC.=== mpsToFlat m1 ^+^ mpsToFlat m2
+
+prop_addThenFlattenVP2 :: QC.Property
+prop_addThenFlattenVP2 =
+  QC.forAll (genMPSClever @2) $ \m1 ->
+    QC.forAll (genMPSClever @2) $ \m2 ->
+      prop_addThenFlatten m1 m2
+
+prop_addThenFlattenVP3 :: QC.Property
+prop_addThenFlattenVP3 =
+  QC.forAll (genMPSClever @3) $ \m1 ->
+    QC.forAll (genMPSClever @3) $ \m2 ->
+      prop_addThenFlatten m1 m2
+
+runAddThenFlattenTests :: IO ()
+runAddThenFlattenTests = do
+  putStrLn "MPS addition commutes with flattening (vp = 2)..."
+  QC.quickCheck prop_addThenFlattenVP2
+  putStrLn "MPS addition commutes with flattening (vp = 3)..."
+  QC.quickCheck prop_addThenFlattenVP3
+
+
+-- | A concrete non-zero @MPSClever 2@ with bond dimension 1, flattened to @C 8@.
+test :: IO ()
+test = do 
+  print $ mpsToFlat nonZeroMPS
+  print $ mpsToFlat (nonZeroMPS ^+^ nonZeroMPS)
+  print $ mpsToFlat nonZeroMPS ^+^ mpsToFlat nonZeroMPS
+  where
+    nonZeroMPS :: MPSClever 2
+    nonZeroMPS = MPSClever leftMap centerMap rightMap
+
+    -- C 2 +> Bond: both physical basis vectors map to the length-1 bond [1].
+    leftMap = LinearMap (V.fromList [unit, unit])
+
+    -- Bond +> (C 2 ⊗ Bond): one bond-basis input, two physical rows.
+    centerMap = LinearMap [Tensor (V.fromList [unit, unit])]
+
+    -- Bond +> C 2: one bond-basis input mapping to a C 2 vector.
+    rightMap = LinearMap [cvec [1, 2]]
+
+    unit = FinSuppSeq (U.fromList [1])
+    cvec xs = fromMaybe (error "test: create failed") (create (LA.fromList xs))
+
+-- | Draw a single value from a 'QC.Gen' deterministically with a fixed seed.
+--
+-- @unGen :: Gen a -> QCGen -> Int -> a@ — the 'Int' is the QuickCheck size,
+-- which controls how large generated structures are.
+sampleWithSeed :: Int -> Int -> QC.Gen a -> a
+sampleWithSeed seed genSize gen = unGen gen (mkQCGen seed) genSize
+
+-- | Same as 'test', but on a random @MPSClever 2@ drawn from 'genMPSClever'
+-- with a fixed seed (so it is reproducible). Note: depending on the seed the
+-- draw can be the zero MPS, since 'genMPSClever' may pick bond dimension 0.
+testRandom :: IO ()
+testRandom = do
+  print $ mpsToFlat randomMPS
+  print $ mpsToFlat (randomMPS ^+^ randomMPS)
+  print $ mpsToFlat randomMPS ^+^ mpsToFlat randomMPS
+  where
+    randomMPS :: MPSClever 2
+    randomMPS = sampleWithSeed 42 10 genMPSClever

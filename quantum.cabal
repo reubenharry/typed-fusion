@@ -75,7 +75,11 @@ library
         Infinite
         Random
         ITensorTyped
+        ChargeEq
+        RepSingleton
+        HomBlock
         FunctorExperiment
+        GroundState
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -106,7 +110,8 @@ library
         vector,
         vector-sized,
         indexed-list-literals,
-        finite-typelits
+        finite-typelits,
+        ghc-typelits-knownnat
 
     -- Directories containing source files.
     hs-source-dirs:   src
@@ -139,4 +144,6 @@ test-suite quantum-test
     -- Test dependencies.
     build-depends:
         base ^>=4.19.2.0,
-        quantum
+        quantum,
+        QuickCheck,
+        vector-space
