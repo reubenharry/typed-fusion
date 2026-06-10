@@ -16,7 +16,7 @@
 {- HLINT ignore "Move brackets to avoid $" -}
 {- HLINT ignore "Redundant $" -}
 
-module SVD where
+module Experiments.SVD where
 
 import Math.LinearMap.Category.Class
 import Data.VectorSpace

@@ -60,26 +60,29 @@ library
 
     -- Modules exported by the library.
     exposed-modules:
-        Quantum
-        TensorNetwork
-        SVD
-        ConjugateGradient
-        Phi4
-        Orphans
-        Experiment
-        Experiment2
-        SU2
+        -- Roadmap spine (see ROADMAP.md)
         Utils
-        Example
-        General
-        Infinite
+        Orphans
         Random
-        ITensorTyped
         ChargeEq
         RepSingleton
         HomBlock
         FunctorExperiment
+        SU2
+        ITensorTyped
+        TensorNetwork
+        Infinite
         GroundState
+        MPS
+        -- Off-roadmap experiments / scratch (kept building, see src/Experiments/)
+        Experiments.General
+        Experiments.Experiment
+        Experiments.Experiment2
+        Experiments.Example
+        Experiments.Quantum
+        Experiments.ConjugateGradient
+        Experiments.Phi4
+        Experiments.SVD
 
     -- Modules included in this library but not exported.
     -- other-modules:

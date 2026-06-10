@@ -24,13 +24,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ConstraintKinds #-}
 
-module General where
+module Experiments.General where
 import Control.Functor.Constrained (Functor(fmap))
 import Orphans (U1Irreps, SU2Irreps)
 import Data.Kind (Type)
 import GHC.TypeLits (Nat, type (+), KnownNat)
 import Numeric.LinearAlgebra.Static (C, Sized (unwrap, fromList))
-import Experiment2 (Multiplicity, Product, Dim)
+import Experiments.Experiment2 (Multiplicity, Product, Dim)
 import SU2 (TensorIrrepRepSU2)
 import Utils (Add, HList (..), Z(..), getZ, KnownZ, Negate, Append, Scale)
 import Data.Singletons (Sing)

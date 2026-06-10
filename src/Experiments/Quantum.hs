@@ -21,7 +21,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {- HLINT ignore "Redundant $" -}
 
-module Quantum (someFunc, hoppingHamiltonianTwoSite) where
+module Experiments.Quantum (someFunc, hoppingHamiltonianTwoSite) where
 
 import Control.Category.Constrained (id, (.))
 import Math.LinearMap.Category (LinearMap(..), type (⊗), (⊕), InnerSpace ((<.>)), (<.>^), (<$|), euclideanNorm, Norm (Norm), Tensor (Tensor), DualVector, TensorSpace (TensorProduct), LinearSpace (..), VectorSpace (..), Scalar, AdditiveGroup (..), Semimanifold, type (+>), adjoint)

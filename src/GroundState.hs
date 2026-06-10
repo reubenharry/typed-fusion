@@ -14,6 +14,14 @@
 -- problem, and it lets us focus effort on defining the effective Hamiltonian
 -- rather than on a Krylov solver. A matrix-free / basis-independent version can
 -- replace this later (and move upstream into linearmap-family).
+--
+-- The solver is generic over the operand space @v@: any
+-- @(FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)@ works. In
+-- particular @v@ may itself be a /linear-map space/ (e.g. the MPS centre
+-- @(C b ⊗ C p) +> C b@), since linear maps form a first-class
+-- 'FiniteDimensional' vector space in linearmap-category. So an effective
+-- Hamiltonian @Heff :: (C b ⊗ C p +> C b) +> (C b ⊗ C p +> C b)@ — an
+-- endomorphism on a map-space — is solved directly, no flattening to @C n@.
 module GroundState
   ( toDenseMatrix
   , groundState
@@ -22,42 +30,43 @@ module GroundState
 
 import Prelude hiding (($))
 import Control.Arrow.Constrained (($))
-import Math.LinearMap.Category (type (+>))
--- Orphan instances making @C n@ a linearmap-category vector space / TensorSpace
--- (the @Num'@/@LinearSpace@ instances that @$@-application needs).
+import Math.LinearMap.Category
+  ( type (+>), FiniteDimensional (..), SubBasis, HilbertSpace )
+import Data.VectorSpace (InnerSpace (..), Scalar)
+-- Orphan instances making @C n@ (and tensors/maps over it) linearmap-category
+-- vector spaces / TensorSpaces (the instances that @$@-application and the
+-- FiniteDimensional/HilbertSpace machinery need).
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
-import Numeric.LinearAlgebra.Static (C, create, extract)
 import qualified Numeric.LinearAlgebra as H
 import Data.Complex (Complex)
-import GHC.TypeLits (KnownNat, natVal)
-import Data.Proxy (Proxy (..))
-import Data.Maybe (fromMaybe)
 
--- | The dimension of @C n@ as a value.
-cdim :: forall n. KnownNat n => Int
-cdim = fromIntegral (natVal (Proxy @n))
+-- | The standard basis vectors of @v@ (linearmap-category's canonical finite
+-- basis). For @C n@ and tensor/map spaces over it these have real 0/1 entries,
+-- which is what makes the matrix read-off below convention-free.
+basisOf :: forall v. FiniteDimensional v => [v]
+basisOf = enumerateSubBasis (entireBasis :: SubBasis v)
 
--- | @i@-th standard basis vector of @C n@.
-basisVec :: forall n. KnownNat n => Int -> C n
-basisVec i =
-  fromMaybe (error "GroundState.basisVec: create failed") $
-    create (H.fromList [ if j == i then 1 else 0 | j <- [0 .. cdim @n - 1] ])
-
--- | Materialise an endomorphism @C n +> C n@ as a dense complex matrix by
--- applying it to each standard basis vector. Column @i@ is @m@ applied to
--- @e_i@, so the matrix acts on the left in the usual convention
--- (@mat \<> v@). This makes the orientation unambiguous regardless of how the
--- 'LinearMap' stores its 'TensorProduct'.
-toDenseMatrix :: forall n. KnownNat n => (C n +> C n) -> H.Matrix (Complex Double)
-toDenseMatrix m =
-  H.fromColumns [ extract (m $ basisVec @n i) | i <- [0 .. cdim @n - 1] ]
+-- | Materialise an endomorphism @v +> v@ as a dense complex matrix in the
+-- canonical basis. Entry @(i, j)@ is the @i@-th coordinate of @f@ applied to
+-- the @j@-th basis vector, read off as @e_i \<.\> (f e_j)@. Because the basis
+-- vectors are real, this is the genuine operator matrix regardless of the
+-- inner product's conjugation convention.
+toDenseMatrix
+  :: forall v. (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)
+  => (v +> v) -> H.Matrix (Complex Double)
+toDenseMatrix f =
+  let es   = basisOf @v
+      cols = [ f $ e | e <- es ]            -- f e_j, as vectors in v
+  in H.fromLists [ [ ei <.> colj | colj <- cols ] | ei <- es ]
 
 -- | Full (real) spectrum of a Hermitian operator, ascending.
-spectrum :: forall n. KnownNat n => (C n +> C n) -> [Double]
-spectrum m =
-  let (vals, _) = H.eigSH (H.sym (toDenseMatrix m))
+spectrum
+  :: forall v. (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)
+  => (v +> v) -> [Double]
+spectrum f =
+  let (vals, _) = H.eigSH (H.sym (toDenseMatrix f))
   in reverse (H.toList vals)   -- eigSH returns descending; ascending is friendlier
 
 -- | Lowest eigenpair of a Hermitian operator: @(eigenvalue, eigenvector)@.
@@ -66,11 +75,16 @@ spectrum m =
 -- not-quite-Hermitian @Heff@ (e.g. from rounding) is handled gracefully — at
 -- the cost of masking a genuinely non-Hermitian bug, so callers should ensure
 -- @Heff@ really is Hermitian.
-groundState :: forall n. KnownNat n => (C n +> C n) -> (Double, C n)
-groundState m =
-  let (vals, vecs) = H.eigSH (H.sym (toDenseMatrix m))
+groundState
+  :: forall v. (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)
+  => (v +> v) -> (Double, v)
+groundState f =
+  let (vals, vecs) = H.eigSH (H.sym (toDenseMatrix f))
       idx          = H.minIndex vals
       eval         = vals `H.atIndex` idx
   in case drop idx (H.toColumns vecs) of
-       (evec : _) -> (eval, fromMaybe (error "GroundState.groundState: create failed") (create evec))
+       (evec : _) ->
+         let coords     = H.toList evec
+             (vec, _)   = recomposeSB (entireBasis :: SubBasis v) coords
+         in (eval, vec)
        []         -> error "GroundState.groundState: empty eigenvector set"

@@ -23,7 +23,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoStarIsType #-}
 
-module Example where
+module Experiments.Example where
 
 
 
@@ -48,7 +48,7 @@ import qualified Data.Vector as V
 -- import Orphans (IrrepSU2(..), Irreps, Group(..), Irrep(..))
 import qualified Data.Vector.Sized as VS
 import Data.IndexedListLiterals (IndexedListLiterals)
-import General
+import Experiments.General
 import Orphans hiding (U1, SU2, Irrep) 
 
 

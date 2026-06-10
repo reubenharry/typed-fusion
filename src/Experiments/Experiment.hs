@@ -14,7 +14,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
-module Experiment where
+module Experiments.Experiment where
 
 import Data.Kind (Type)
 import GHC.TypeLits

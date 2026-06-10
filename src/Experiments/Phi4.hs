@@ -24,7 +24,7 @@
 -- * __Potential.__ @\\sum_i V(\\phi_i)@ is local in the /site/ (vertex) basis: it is invariant
 --   under permutations of sites only if @V@ is the same on every site, but it is not a
 --   quadratic form and has no equally simple coordinate-free formula on @\\ell^2(V)@ alone.
-module Phi4 (
+module Experiments.Phi4 (
     Phi4Params (..),
     defaultPhi4Params,
     -- * List-based API (site values in list order)

@@ -5,7 +5,7 @@
 {-# LANGUAGE DataKinds #-}
 {- HLINT ignore "Redundant $" -}
 
-module ConjugateGradient where
+module Experiments.ConjugateGradient where
 
 import Math.LinearMap.Category (LinearMap(..), type (⊗), (⊕), InnerSpace ((<.>)), (<.>^), (<$|), euclideanNorm, Norm (Norm), Tensor (Tensor), DualVector, TensorSpace (TensorProduct), VectorSpace ((*^), Scalar), LinearSpace, AdditiveGroup ((^+^), zeroV), (^-^))
 import Linear (V2 (V2), V3 (V3), E (..))

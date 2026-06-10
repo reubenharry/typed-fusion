@@ -4,7 +4,7 @@
 
 ## 0. The thesis
 
-The unifying bet of this project is the same one TensorKit.jl makes, but pushed
+The unifying concept of this project is the same one TensorKit.jl makes, but pushed
 harder with Haskell's type system:
 
 > **A tensor is a morphism in a (dagger, braided) monoidal category whose objects
@@ -101,53 +101,107 @@ against an exact answer. No symmetry yet.
 
 ### Phase 0 — substrate decisions (RESOLVED 2026-06-07; see §7)
 - **D1 field**: ✅ **complex** (`Complex Double`).
-- **D2 MPS representation**: ✅ **`Infinite.MPSClever`** (vector-space MPS, growable
-  `FinSuppSeq` bond), generalised to keep the local Hilbert space abstract (§3).
+- **D2 MPS representation**: ✅ **typed `C b` bonds first** (a finite, fixed-length,
+  type-checked-bond MPS — the `TensorNetwork.MPS`-style representation, cleaned up per
+  §4a). The growable `FinSuppSeq`/`MPSClever` vector-space form is deferred to medium-term
+  (§5a): it has the bilinear-bond conjugation hazard and trades type-level bond checking
+  for growability — worth it later for state addition / adaptive χ, not for the first
+  correct DMRG.
+  - **Site orientation** (settled): **transfer / contraction** — each site is
+    `(C bₗ ⊗ C p) +> C bᵣ`, boundaries use `C 1`.
+  - **Conjugation** (settled): **per-site, explicit** via `vectorConjugate`; bras and
+    environments contract the conjugated tensor against the ket with bilinear ops.
 - **D3 eigensolver**: ✅ **dense hmatrix `eigSH`** for now (`GroundState.hs`) — the easy
   route: materialise the local operator `C n +> C n` as a dense complex matrix (by
   applying it to the standard basis) and use hmatrix's Hermitian solver. Verified on
   `diag(3,1,2)` → ground energy `1.0`, spectrum `[1,2,3]`. A matrix-free / basis-
   independent Lanczos can replace it later (and move upstream into `linearmap-family`).
 
-### Phase 1 — model & data types
-1. Pick a benchmark model with a known ground-state energy: **transverse-field Ising**
-   (exactly solvable) or **spin-½ AFM Heisenberg** (Bethe ansatz / finite-size ED).
-2. Represent the Hamiltonian as an **MPO** of `+>` morphisms (`MPO p b` already
-   sketched in `TensorNetwork.hs`). Build the model MPO concretely.
-3. Settle the finite-MPS type (per D2): left/center/right `+>` morphisms with a bond
-   space `b`. Concrete `C n` legs are fine (§3) — generalise the local space only when
-   symmetry lands (§5).
+**First concrete target: the typed 3-site MPS.** Build the whole pipeline below on a
+fixed **3-site**, typed-bond MPS (transfer orientation, §4a) before any generalisation.
+It exercises the full DMRG loop at minimal scale, and the contract-to-physical map gives
+a `C (p³)` oracle for every operation. N-site generalisation is §5a.
 
-### Phase 2 — environments
-4. Build left/right environment tensors by contraction, as honest `+>` morphisms.
-   Contraction = composition + `fmapTensor`/`transposeTensor` in the categorical API
-   (no index loops). This is where the basis-independent style earns its keep.
+### Phase 1 — the typed MPS type + map to physical space
+1. Define the 3-site MPS in transfer orientation (§4a): `(C 1 ⊗ C p) +> C b1`,
+   `(C b1 ⊗ C p) +> C b2`, `(C b2 ⊗ C p) +> C 1`, with `KnownNat` bonds `b1,b2`.
+   Settle the per-site tensor representation here (the concrete `+>`/`⊗` shape).
+2. **Map to physical space**: contract the three sites into the state
+   `C 1 +> (C p ⊗ C p ⊗ C p)` (≅ `C (p³)`), by composition along the bonds. This is the
+   oracle generator for all later tests.
 
-### Phase 3 — effective Hamiltonian & local solve (the crux)
-5. Assemble the single-site effective Hamiltonian `Heff :: local +> local` as a
-   *matrix-free* operator (a composition of environment + MPO contractions). Never
-   materialise it.
-6. Find its **lowest** eigenpair. DMRG needs only the ground state, so use a Lanczos /
-   `constructEigenSystem`-style Krylov iteration that consumes `Heff` as an operator.
-   Resolve D1/D3 here. (`eigen` returns the *full* spectrum and is real-only; we want
-   lowest-only and possibly complex — likely a small new function in the fork.)
+### Phase 2 — inner product, norm, dual (conjugation lives here)
+3. Define `mpsInner ψ φ` by contracting the **per-site-conjugated** bra of ψ against φ
+   (transfer matrices), conjugation via `vectorConjugate` only (never via `<.>`/`adjoint`,
+   which are bilinear/transpose — see memory `conjugation-conventions`). Define `norm` and
+   the bra/`dual` consistently.
+4. **Property tests** (mirroring `prop_addThenFlatten`):
+   - `mpsInner ψ φ === (mpsToPhysical ψ) <.> (mpsToPhysical φ)` — pins the convention
+     against `C n`'s correct sesquilinear `<.>`.
+   - `mpsInner ψ ψ` real and ≥ 0; `mpsInner ψ φ === conjugate (mpsInner φ ψ)`.
 
-### Phase 4 — truncation & gauge transport
-7. SVD the updated tensor, truncate the bond to χ, and transport the gauge centre
-   (`move` in `TensorNetwork.hs` already does this with hmatrix `svdTall`; either keep
-   the hmatrix kernel behind a clean interface, or use `Math.TensorNetwork.svd`).
-8. Bond growth/shrink: `Infinite.hs`'s `FinSuppSeq` bond is a clean way to let χ change
-   without retyping — consider adopting it as the bond representation.
+### Phase 3 — MPO + contraction
+5. **MPO** of `+>` morphisms in matching orientation (`MPO p b` is sketched in
+   `TensorNetwork.hs`); build a concrete benchmark model — **transverse-field Ising**
+   (exactly solvable) or **spin-½ AFM Heisenberg** (Bethe / ED).
+6. **MPS–MPO–MPS contraction** for `⟨ψ|H|φ⟩`, reusing the Phase-2 conjugated bra. Test the
+   expectation value against the dense `C (p³)` operator applied to the flattened state.
 
-### Phase 5 — driver & validation
-9. Left→right→left sweeping loop with energy-convergence stopping.
-10. **Validate**: ground-state energy vs exact (TFIM) / ED for small N; entanglement
-    entropy sanity; variance ⟨H²⟩−⟨H⟩². Add as QuickCheck/golden tests alongside the
-    existing `Infinite` property tests.
+### Phase 4 — effective Hamiltonian & local solve
+7. Build the per-site effective Hamiltonian by contracting the MPO with the left/right
+   **environments** (partial MPS–MPO–MPS contractions). Keep `Heff` as an endomorphism on
+   the site's own space (a map-space endo is fine — see `GroundState`); no flattening.
+8. Solve the lowest eigenpair with `GroundState.groundState` (✅ done, D3). First confirm
+   `Heff` is genuinely (conjugate-)Hermitian — `groundState` symmetrises, so a
+   non-Hermitian `Heff` would be silently masked; test `Heff` Hermiticity directly.
 
-**Exit criterion for "near-term done":** `dmrg model N chi` returns the correct
-ground-state energy for TFIM/Heisenberg to tolerance, with the algorithm written
-generically over the local Hilbert space.
+### Phase 5 — truncation, gauge transport, driver, validation
+9. SVD-truncate the bond to χ and transport the gauge centre (cf. `TensorNetwork.move`,
+   hmatrix `svdTall`; or `Math.TensorNetwork.svd`). With typed bonds, χ-change means a
+   bond-type change — handle via existentials or a fixed χ at the type level for now.
+10. Left→right→left sweep with energy-convergence stopping.
+11. **Validate**: ground-state energy vs exact (TFIM) / ED for 3 sites; ⟨H²⟩−⟨H⟩²
+    variance. Add as QuickCheck/golden tests next to the existing `Infinite` properties.
+
+**Exit criterion for "near-term done":** DMRG on the typed 3-site MPS returns the correct
+ground-state energy for the benchmark model to tolerance, with inner-product /
+expectation-value property tests green against the `C (p³)` oracle.
+
+---
+
+## 4a. Typed MPS design (settled) + Hilbert-space hygiene
+
+The substrate for the first DMRG is a **finite, typed-bond, 3-site** MPS. Decisions:
+
+### Site representation & orientation (settled: transfer / contraction)
+Each site is a linear map taking *incoming bond ⊗ physical* to *outgoing bond*:
+- left   : `(C 1  ⊗ C p) +> C b1`   (≅ `C p +> C b1`)
+- centre : `(C b1 ⊗ C p) +> C b2`
+- right  : `(C b2 ⊗ C p) +> C 1`
+
+Rationale: uniform bulk shape (clean N-site generalisation, §5a), natural left→right
+transfer-matrix contraction, and environments are just partial contractions. Bonds are
+typed `C b` (`KnownNat`), so bond-dimension mismatches are type errors — the deliberate
+contrast with the deferred untyped-`FinSuppSeq` `MPSClever`. Use distinct `b1,b2` (honest
+typing) rather than a single `b`.
+
+### Conjugation (settled: per-site, explicit)
+Measured conventions (memory `conjugation-conventions`): `<.>` on **`C n` is sesquilinear**
+(correct) but on `FinSuppSeq`/`linear` `V`-types is **bilinear**; `adjoint` is the
+**transpose, not the conjugate-transpose**. So:
+- Form the bra by conjugating **each site tensor** with `vectorConjugate`; contract the
+  conjugated bra against the ket using the ordinary bilinear ops. One conjugation point;
+  scales to MPO contraction and environments.
+- Never rely on `<.>`/`adjoint` to conjugate; never assume a bond `<.>` conjugates.
+- Keep the flattened-vector overlap (`mpsToPhysical ψ <.> mpsToPhysical φ`, which uses
+  `C n`'s correct `<.>`) as the **test oracle**, not the DMRG contraction path.
+
+### Still open (decide as they arise)
+- **Gauge / canonical form** — no orthonormality is enforced yet; DMRG gauge transport
+  (cf. `TensorNetwork.move`) and how χ-truncation changes a *typed* bond (existential vs
+  fixed χ) — see Phase 5.9.
+- **Legacy code** — the `V2/V3` paths in `TensorNetwork.hs` use the wrong (bilinear)
+  convention; treat as reference-only.
 
 ---
 
@@ -173,6 +227,18 @@ The point of §3 is that this phase touches almost no algorithm code.
    This is independent of symmetry and could even slot into Phase 1–2.
 5. **MPS-as-vector-space (`Infinite`)** generalises to symmetric MPS, enabling
    state addition / tangent vectors — the entry point to TDVP and excited-state methods.
+
+### 5a. From the 3-site typed MPS to N sites (and growable bonds)
+Generalise the fixed 3-site typed MPS (§4a) to arbitrary length: a sequence of uniform
+bulk tensors `(C bᵢ ⊗ C p) +> C bᵢ₊₁` plus boundary caps, preserving the map-to-physical
+oracle, the inner-product/dual definitions, and the DMRG sweep. Two sub-threads:
+- **Length** — list/vector of sites; existentially-typed or runtime-checked bonds so the
+  chain length and per-bond χ aren't fixed at compile time.
+- **Growable bonds / state addition** — revisit `Infinite.MPSClever`'s `FinSuppSeq` bond
+  and its `VectorSpace` instance (addition commutes with flattening) for adaptive χ and
+  tangent-space methods — *after* fixing its bilinear-bond conjugation (memory
+  `conjugation-conventions`). This is where the deferred D2 alternative comes back.
+This turns the 3-site proof-of-concept into a usable finite-system DMRG.
 
 ---
 
@@ -210,14 +276,20 @@ the headline payoff.
 - **D1 — Field.** ✅ **Complex** (`Complex Double`). Matches the existing code and the
   physics; cost is that native `eigen`/`svd` (real-only) can't be used directly →
   drives D3.
-- **D2 — MPS representation.** ✅ **`Infinite.MPSClever`** — vector-space instance with a
-  growable `FinSuppSeq` bond. `TensorNetwork.MPS`'s two-site scaffolding can be ported
-  onto it. Generalise the physical leg from `C vp` to an abstract local Hilbert space (§3).
+- **D2 — MPS representation.** ✅ **Typed `C b` bonds, finite 3-site, transfer
+  orientation, per-site explicit conjugation** (full design in §4a). The untyped
+  growable-`FinSuppSeq` `MPSClever` (vector-space instance) is **deferred to §5a** — kept
+  for state addition / adaptive χ later, but it carries the bilinear-bond conjugation
+  hazard and gives up type-level bond checking, so it's not the first-DMRG substrate.
 - **D3 — Eigensolver.** ✅ **Dense hmatrix `eigSH`** (`GroundState.hs`). Pragmatic and
-  done: build the dense matrix of `Heff :: C n +> C n` by basis application, solve with
-  hmatrix. Not basis-independent and materialises the operator, but it unblocks the
-  local solve and lets effort go to defining `Heff`. Replace with a matrix-free Lanczos
-  later if perf needs it (a good upstream `linearmap-family` contribution).
+  done: build the operator's dense matrix in the canonical `FiniteDimensional` basis
+  (entry `e_i <.> f e_j`; basis vectors are real so this is convention-free), solve with
+  hmatrix. `groundState :: (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex
+  Double) => (v +> v) -> (Double, v)` is **generic over `v`** — so `Heff` may be an
+  endomorphism on a *map-space* (e.g. the MPS centre `(C b ⊗ C p) +> C b`); no flattening
+  to `C n` needed, since linear maps are first-class `FiniteDimensional` spaces. Not
+  basis-independent and materialises the operator; a matrix-free Lanczos can replace it
+  later (good upstream `linearmap-family` contribution).
 - **D4 — Fork strategy (open).** With D3 going upstream, decide what else belongs in
   `linearmap-family` (a complex spectral module; a `DaggerCategory` class — already
   sketched in `Math.TensorNetwork`) vs in `quantum`. Default: spectral/categorical
@@ -256,14 +328,19 @@ the headline payoff.
 
 ## 9. Immediate next actions
 
-D1–D3 are resolved (§7). Concrete sequence:
+D1–D3 are resolved (§7). Concrete sequence (all on the **typed 3-site MPS**, §4/§4a):
 
-1. ✅ **Local ground-state solver** — `GroundState.hs`: `groundState :: KnownNat n =>
-   (C n +> C n) -> (Double, C n)` via dense hmatrix `eigSH`. Verified on `diag(3,1,2)`.
-2. **Use `MPSClever` with concrete `C vp` legs** (§3 — no premature abstraction). Port
-   the two-site solve scaffolding from `TensorNetwork.MPS` onto it.
-3. **TFIM as an MPO** of `+>` morphisms; build left/right environments by categorical
-   contraction (Phase 2); assemble `Heff :: C n +> C n` (Phase 3) and solve with (1).
-   ← *current focus: defining the effective Hamiltonian.*
-4. **Ground-state-energy test** vs exact TFIM (Phase 5 exit criterion); wire into the
-   existing QuickCheck suite next to the `Infinite` properties.
+1. ✅ **Local ground-state solver** — `GroundState.hs`: `groundState ::
+   (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double) => (v +> v) ->
+   (Double, v)` via dense hmatrix `eigSH`. Generic over `v` (incl. map-space endos).
+   Verified on `diag(3,1,2)` → `1.0`, spectrum `[1,2,3]`. Full build + tests green.
+2. ✅ **Typed 3-site MPS type + map-to-physical** (Phase 1) — `MPS.hs`:
+   `data MPS p b1 b2` (transfer orientation, typed bonds) + `mpsToFlat :: MPS p b1 b2 ->
+   C (p*p*p)`, contracting bonds by iterate-and-apply (`⊗` on vectors, `$` on maps; no
+   associators). Index order `(s₁·p+s₂)·p+s₃` matches `Infinite.mpsToFlat`. Smoke-tested
+   (`ones`→all 1s; right-site covector `[1,2]`→`[1,2,1,2,…]`, confirming bond contraction
+   and index order).
+3. **Inner product / norm / dual** with per-site `vectorConjugate` (Phase 2) + property
+   tests against `mpsToFlat`'s overlap. ← *current step.*
+4. **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3), then **`Heff` + `groundState`** (Phase 4),
+   then **sweep + energy validation** vs ED/exact (Phase 5).
