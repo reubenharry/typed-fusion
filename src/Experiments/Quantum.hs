@@ -32,7 +32,7 @@ import Control.Lens (Iso', (^.), _1, Ixed (ix), (^?))
 import Math.VectorSpace.DimensionAware
 import Data.Singletons (Sing, SingI (..), fromSing, sing)
 import Data.Singletons.TH (genSingletons)
-import TensorNetwork
+import MPS.DMRG.Concrete
 import qualified Test.QuickCheck as QC
 import Prelude hiding ((||), ($), id, (.))
 import Math.LinearMap.Asserted
@@ -55,8 +55,8 @@ import qualified Numeric.LinearAlgebra.Static as LA
 import qualified Numeric.LinearAlgebra.Static as G
 import qualified Control.Category.Constrained as C
 import Unsafe.Coerce (unsafeCoerce)
-import Orphans
-import Utils
+import Symmetry.Orphans
+import Symmetry.Utils
 
 -- todos 
 -- tensors of representations 

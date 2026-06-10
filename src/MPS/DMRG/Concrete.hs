@@ -20,7 +20,7 @@
 {- HLINT ignore "Move brackets to avoid $" -}
 {- HLINT ignore "Redundant $" -}
 
-module TensorNetwork where
+module MPS.DMRG.Concrete where
 
 import Math.LinearMap.Category.Class
 import Data.VectorSpace

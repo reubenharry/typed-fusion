@@ -25,7 +25,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Orphans where
+module Symmetry.Orphans where
 
 
 
@@ -38,7 +38,7 @@ import Control.Lens (Iso', (^.), _1, Ixed (ix), (^?))
 import Math.VectorSpace.DimensionAware
 import Data.Singletons (Sing, SingI (..), fromSing, sing)
 import Data.Singletons.TH (genSingletons)
-import TensorNetwork
+import MPS.DMRG.Concrete
 import qualified Test.QuickCheck as QC
 import Prelude hiding ((||), ($), id, (.))
 import Math.LinearMap.Asserted
@@ -65,7 +65,7 @@ import Data.Function (on)
 import qualified Numeric.LinearAlgebra.Static as G
 import qualified Control.Category.Constrained as C
 import Data.Kind (Type)
-import Utils (Z(..), Add(..))
+import Symmetry.Utils (Z(..), Add(..))
 
 
 data Z2 = Flip | Id

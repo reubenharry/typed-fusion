@@ -15,7 +15,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 
-module ITensorTyped where
+module ITensor.Typed where
 
 
 import Data.Kind (Type, Constraint)

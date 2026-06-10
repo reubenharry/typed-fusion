@@ -15,7 +15,7 @@
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
-module Infinite where
+module MPS.Infinite where
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U

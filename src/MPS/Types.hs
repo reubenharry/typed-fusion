@@ -26,7 +26,7 @@
 -- which 'mpsToFlat' evaluates by threading the bond vector through the three
 -- site maps (no morphism-level tensor products or associators needed — just
 -- vector tensoring '⊗' and map application '$').
-module MPS
+module MPS.Types
   ( MPS (..)
   , OpSite (..)
   , MPO (..)

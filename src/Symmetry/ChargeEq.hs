@@ -27,7 +27,7 @@
 -- recursion drive type-family reduction — GHC reduces a family on a known
 -- @'True@\/@'False@, but never on charge /apartness/. So we phrase 'LookupMult'
 -- and friends as a branch on 'ZEq' and decide that branch here.
-module ChargeEq
+module Symmetry.ChargeEq
   ( -- * Type-level equality
     OrdEq, NatEq, ZEq
     -- * Singleton-level deciders
@@ -44,7 +44,7 @@ import GHC.TypeLits (Nat, CmpNat)
 import qualified GHC.TypeNats
 import Data.Singletons (Sing)
 import Data.Singletons.TH (genSingletons, singDecideInstances)
-import Utils (Z(..))
+import Symmetry.Utils (Z(..))
 
 -- Charge singletons (@SZero@, @SPos@, @SNeg@) and @SDecide Z@ (used downstream by
 -- the @(%~)@ charge comparison in composition).

@@ -31,11 +31,11 @@ import Data.Kind (Type)
 import GHC.TypeLits
 import Numeric.LinearAlgebra.Static (M, Sized (..), C, vector, R, build)
 import Linear.V (V (..), Finite (toV))
-import Utils
+import Symmetry.Utils
 import Math.LinearMap.Category (type (-+>), type (+>), LinearMap (..), AdditiveGroup, VectorSpace, DimensionAware (..), Dimensional, TensorSpace, PseudoAffine, Semimanifold)
 import Control.Arrow.Constrained (EnhancedCat(..))
 import Data.VectorSpace (AdditiveGroup(..), VectorSpace (..))
-import Orphans (SU2Irreps, IrrepSU2)
+import Symmetry.Orphans (SU2Irreps, IrrepSU2)
 import Data.Data (Proxy(..))
 import Data.Complex (Complex (..))
 import Math.VectorSpace.DimensionAware (DimensionalityWitness(..), Dimensional (..))
@@ -45,11 +45,11 @@ import Data.Basis (HasBasis(..))
 import Linear (V2(..), V1 (..), V3 (..))
 import qualified Data.Vector as V
 -- import SU2 hiding (Irrep)
--- import Orphans (IrrepSU2(..), Irreps, Group(..), Irrep(..))
+-- import Symmetry.Orphans (IrrepSU2(..), Irreps, Group(..), Irrep(..))
 import qualified Data.Vector.Sized as VS
 import Data.IndexedListLiterals (IndexedListLiterals)
 import Experiments.General
-import Orphans hiding (U1, SU2, Irrep) 
+import Symmetry.Orphans hiding (U1, SU2, Irrep) 
 
 
 

@@ -1,8 +1,8 @@
 module Main (main) where
 
 import qualified Test.QuickCheck as QC
-import Infinite (prop_addThenFlattenVP2, prop_addThenFlattenVP3)
-import MPS
+import MPS.Infinite (prop_addThenFlattenVP2, prop_addThenFlattenVP3)
+import MPS.Types
   ( prop_innerMatchesFlat
   , prop_innerConjugateSymmetric
   , prop_normNonNegative

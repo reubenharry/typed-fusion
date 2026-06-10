@@ -23,7 +23,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoStarIsType #-}
 
-module Utils where 
+module Symmetry.Utils where 
 
 
 import Data.Kind (Type, Constraint)

@@ -61,18 +61,18 @@ library
     -- Modules exported by the library.
     exposed-modules:
         -- Roadmap spine (see ROADMAP.md)
-        Utils
-        Orphans
-        Random
-        ChargeEq
-        RepSingleton
-        HomBlock
-        FunctorExperiment
-        ITensorTyped
-        TensorNetwork
-        Infinite
+        Symmetry.Utils
+        Symmetry.Orphans
+        Symmetry.ChargeEq
+        Symmetry.RepSingleton
+        Symmetry.HomBlock
+        Symmetry.FunctorExperiment
+        ITensor.Typed
+        Random.Arbitrary
+        MPS.Types
+        MPS.Infinite
+        MPS.DMRG.Concrete
         GroundState
-        MPS
         -- Off-roadmap experiments / scratch (kept building, see src/Experiments/)
         Experiments.General
         Experiments.SU2

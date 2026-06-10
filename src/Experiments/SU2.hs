@@ -30,9 +30,9 @@ module Experiments.SU2 where
 import Data.Kind (Type)
 import GHC.TypeLits
 import Numeric.LinearAlgebra.Static (M, Sized (..), C)
-import Orphans (SU2Irreps, IrrepSU2)
+import Symmetry.Orphans (SU2Irreps, IrrepSU2)
 import Linear.V (V)
-import Utils (HList)
+import Symmetry.Utils (HList)
 
 
 -- todo: the Sector type should really have an abstract notion of a linear map

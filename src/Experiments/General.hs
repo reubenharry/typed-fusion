@@ -26,13 +26,13 @@
 
 module Experiments.General where
 import Control.Functor.Constrained (Functor(fmap))
-import Orphans (U1Irreps, SU2Irreps)
+import Symmetry.Orphans (U1Irreps, SU2Irreps)
 import Data.Kind (Type)
 import GHC.TypeLits (Nat, type (+), KnownNat)
 import Numeric.LinearAlgebra.Static (C, Sized (unwrap, fromList))
 import Experiments.Experiment2 (Multiplicity, Product, Dim)
 import Experiments.SU2 (TensorIrrepRepSU2)
-import Utils (Add, HList (..), Z(..), getZ, KnownZ, Negate, Append, Scale)
+import Symmetry.Utils (Add, HList (..), Z(..), getZ, KnownZ, Negate, Append, Scale)
 import Data.Singletons (Sing)
 import Data.Data (Proxy)
 import Data.Singletons.TH (genSingletons)

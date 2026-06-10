@@ -24,7 +24,7 @@
 -- singletons), so these products can't be solved from the literal types alone.
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
-module FunctorExperiment where
+module Symmetry.FunctorExperiment where
 
 import Prelude hiding ((.), (<>))
 import Data.Complex (Complex((:+)))
@@ -42,10 +42,10 @@ import Math.LinearMap.Category.Instances.Deriving ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static.Orphans ()
 import Numeric.LinearAlgebra.Static (C, konst)
-import Utils (Z(..), KnownZ, getZ, Append)
-import ChargeEq (ZEq, ZEqResult(..), sZEq)
-import RepSingleton (SRep(..), KnownRep(..))
-import HomBlock (HomBlockDim, U1HomBlock(..), composeBlock, zeroBlock, applyEndoAt)
+import Symmetry.Utils (Z(..), KnownZ, getZ, Append)
+import Symmetry.ChargeEq (ZEq, ZEqResult(..), sZEq)
+import Symmetry.RepSingleton (SRep(..), KnownRep(..))
+import Symmetry.HomBlock (HomBlockDim, U1HomBlock(..), composeBlock, zeroBlock, applyEndoAt)
 
 -- | A U(1) representation as a list of @(charge, multiplicity)@ sectors.
 type U1Rep = [(Z, Nat)]

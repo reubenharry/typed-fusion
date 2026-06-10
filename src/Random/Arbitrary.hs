@@ -18,11 +18,11 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Random where
+module Random.Arbitrary where
 
 import qualified Test.QuickCheck as QC
 import Data.Complex (Complex)
-import TensorNetwork
+import MPS.DMRG.Concrete
 import System.Random (RandomGen)
 import GHC.TypeLits (KnownNat, natVal)
 import Numeric.LinearAlgebra.Static (R, C, Sized (..), toComplex)

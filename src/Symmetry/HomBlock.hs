@@ -15,7 +15,7 @@
 --
 -- 'HomBlockDim' is the one knob a non-abelian (SU(2)) generalization turns: the
 -- per-pair fiber is @m * n@ for U(1), larger otherwise.
-module HomBlock
+module Symmetry.HomBlock
   ( HomBlockDim, EndoHomDim
   , U1HomBlock(..)
   , flattenMat, blockAsMat

@@ -31,11 +31,11 @@ import Data.Kind (Type)
 import GHC.TypeLits
 import Numeric.LinearAlgebra.Static (M, Sized (..), C)
 import Linear.V (V (..), Finite (toV))
-import Utils
+import Symmetry.Utils
 import Math.LinearMap.Category (type (-+>), type (+>), LinearMap (..), AdditiveGroup, VectorSpace, DimensionAware (..), Dimensional, TensorSpace, PseudoAffine, Semimanifold)
 import Control.Arrow.Constrained (EnhancedCat(..))
 import Data.VectorSpace (AdditiveGroup(..), VectorSpace (..))
-import Orphans hiding (Irrep)
+import Symmetry.Orphans hiding (Irrep)
 import Data.Data (Proxy(..))
 import Data.Complex (Complex)
 import Math.VectorSpace.DimensionAware (DimensionalityWitness(..), Dimensional (..))
