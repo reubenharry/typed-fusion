@@ -159,8 +159,16 @@ a `C (p³)` oracle for every operation. N-site generalisation is §5a.
 9. SVD-truncate the bond to χ and transport the gauge centre (cf. `TensorNetwork.move`,
    hmatrix `svdTall`; or `Math.TensorNetwork.svd`). With typed bonds, χ-change means a
    bond-type change — handle via existentials or a fixed χ at the type level for now.
-10. Left→right→left sweep with energy-convergence stopping.
-11. **Validate**: ground-state energy vs exact (TFIM) / ED for 3 sites; ⟨H²⟩−⟨H⟩²
+10. **MPS compression / bond-dimension reduction**: given a typed MPS, reduce a chosen
+    internal bond from @b@ to a target @χ@ by canonicalising around that bond, SVD'ing the
+    relevant bipartition, truncating singular values, and absorbing the leftover factor
+    into the neighbouring site. In the typed setting this is smooth when @χ@ is known at
+    compile time (`MPS p b1 b2 -> MPS p χ b2`, etc.); adaptive χ requires an existential
+    result (`SomeMPS p`) or a fixed maximum χ with an effective rank. Keep the flattened
+    `C (p³)` state as the oracle: truncation should minimise/track `||ψ - ψ_trunc||` and
+    preserve the state exactly when @χ ≥ rank@.
+11. Left→right→left sweep with energy-convergence stopping.
+12. **Validate**: ground-state energy vs exact (TFIM) / ED for 3 sites; ⟨H²⟩−⟨H⟩²
     variance. Add as QuickCheck/golden tests next to the existing `Infinite` properties.
 
 **Exit criterion for "near-term done":** DMRG on the typed 3-site MPS returns the correct
@@ -200,6 +208,10 @@ Measured conventions (memory `conjugation-conventions`): `<.>` on **`C n` is ses
 - **Gauge / canonical form** — no orthonormality is enforced yet; DMRG gauge transport
   (cf. `TensorNetwork.move`) and how χ-truncation changes a *typed* bond (existential vs
   fixed χ) — see Phase 5.9.
+- **Typed compression API** — for the 3-site prototype, prefer explicit statically-known
+  target dimensions first (e.g. `truncateLeftBond @χ`) so the result type records the new
+  bond dimension. Once the algorithm chooses χ from singular values, introduce a small
+  existential wrapper rather than pretending the dimension is statically known.
 - **Legacy code** — the `V2/V3` paths in `TensorNetwork.hs` use the wrong (bilinear)
   convention; treat as reference-only.
 
@@ -238,6 +250,11 @@ oracle, the inner-product/dual definitions, and the DMRG sweep. Two sub-threads:
   and its `VectorSpace` instance (addition commutes with flattening) for adaptive χ and
   tangent-space methods — *after* fixing its bilinear-bond conjugation (memory
   `conjugation-conventions`). This is where the deferred D2 alternative comes back.
+- **Untyped/adaptive compression** — in the `FinSuppSeq` bond representation, bond
+  reduction can be expressed as a runtime operation: compute the SVD rank/truncation
+  threshold, rewrite the finite-support bond vectors to the retained support, and return
+  another `MPS vp` without changing the Haskell type. This is the natural home for truly
+  adaptive χ once the typed prototype has fixed the conventions.
 This turns the 3-site proof-of-concept into a usable finite-system DMRG.
 
 ---

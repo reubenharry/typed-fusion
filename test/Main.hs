@@ -7,6 +7,7 @@ import MPS.Types
   , prop_innerConjugateSymmetric
   , prop_normNonNegative
   , prop_mpoInnerMatchesFlat
+  , prop_mpoApplyMPSMatchesFlat
   , prop_identityMPOMatchesInner
   )
 
@@ -28,6 +29,8 @@ main = do
   requireQC =<< QC.quickCheckResult prop_normNonNegative
   putStrLn "MPS-MPO-MPS contraction matches flattened operator..."
   requireQC =<< QC.quickCheckResult prop_mpoInnerMatchesFlat
+  putStrLn "MPO application in MPS form matches flattened operator..."
+  requireQC =<< QC.quickCheckResult prop_mpoApplyMPSMatchesFlat
   putStrLn "Identity MPO matches MPS inner product..."
   requireQC =<< QC.quickCheckResult prop_identityMPOMatchesInner
   putStrLn "All OK."
