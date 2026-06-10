@@ -23,7 +23,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoStarIsType #-}
 
-module SU2 where
+module Experiments.SU2 where
 
 
 

@@ -336,11 +336,12 @@ D1–D3 are resolved (§7). Concrete sequence (all on the **typed 3-site MPS**, 
    Verified on `diag(3,1,2)` → `1.0`, spectrum `[1,2,3]`. Full build + tests green.
 2. ✅ **Typed 3-site MPS type + map-to-physical** (Phase 1) — `MPS.hs`:
    `data MPS p b1 b2` (transfer orientation, typed bonds) + `mpsToFlat :: MPS p b1 b2 ->
-   C (p*p*p)`, contracting bonds by iterate-and-apply (`⊗` on vectors, `$` on maps; no
-   associators). Index order `(s₁·p+s₂)·p+s₃` matches `Infinite.mpsToFlat`. Smoke-tested
-   (`ones`→all 1s; right-site covector `[1,2]`→`[1,2,1,2,…]`, confirming bond contraction
-   and index order).
-3. **Inner product / norm / dual** with per-site `vectorConjugate` (Phase 2) + property
-   tests against `mpsToFlat`'s overlap. ← *current step.*
-4. **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3), then **`Heff` + `groundState`** (Phase 4),
-   then **sweep + energy validation** vs ED/exact (Phase 5).
+   C (p*p*p)`, contracting bonds through each site's dense `siteMat` in the settled
+   transfer orientation. Index order `(s₁·p+s₂)·p+s₃` matches `Infinite.mpsToFlat`.
+3. ✅ **Inner product / norm / dual** (Phase 2) — `mpsInner`, `mpsNorm`, and
+   `mpsConjugate`, with QuickCheck properties against `mpsToFlat`'s sesquilinear overlap.
+4. ✅/➡ **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3) — `MPO`, `mpoToMatrix`,
+   `mpoApplyFlat`, and `mpsMPOInner` are implemented and property-tested against the
+   flattened dense operator. Next: add a concrete benchmark MPO (TFIM or Heisenberg),
+   then **`Heff` + `groundState`** (Phase 4), then **sweep + energy validation** vs
+   ED/exact (Phase 5).

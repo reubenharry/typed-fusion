@@ -68,7 +68,6 @@ library
         RepSingleton
         HomBlock
         FunctorExperiment
-        SU2
         ITensorTyped
         TensorNetwork
         Infinite
@@ -76,6 +75,7 @@ library
         MPS
         -- Off-roadmap experiments / scratch (kept building, see src/Experiments/)
         Experiments.General
+        Experiments.SU2
         Experiments.Experiment
         Experiments.Experiment2
         Experiments.Example
