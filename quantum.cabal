@@ -69,9 +69,14 @@ library
         Symmetry.FunctorExperiment
         ITensor.Typed
         Random.Arbitrary
-        MPS.Types
-        MPS.Infinite
-        MPS.DMRG.Concrete
+        TensorNetwork.Dagger
+        TensorNetwork.Categorical
+        TensorNetwork.Categorical.Props
+        TensorNetwork.DMRG.Fixed3
+        TensorNetwork.MPS.Fixed3
+        TensorNetwork.MPS.Fixed3General
+        TensorNetwork.MPS.FinSupp3
+        TensorNetwork.DMRG.Concrete
         GroundState
         -- Off-roadmap experiments / scratch (kept building, see src/Experiments/)
         Experiments.General
@@ -85,7 +90,9 @@ library
         Experiments.SVD
 
     -- Modules included in this library but not exported.
-    -- other-modules:
+    other-modules:
+        TensorNetwork.MPS.Fixed3.Internal
+        TensorNetwork.MPS.Fixed3.Reference
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

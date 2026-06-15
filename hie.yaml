@@ -1,4 +1,7 @@
 # HLS must use cabal.project (local linearmap-hmatrix with COrphans).
+# Also set haskell.sessionLoading to singleComponent in .vscode/settings.json:
+# multi-repl conflicts with cabal.project.freeze (Cabal == 3.10.3.0).
 cradle:
   cabal:
     component: "lib:quantum"
+

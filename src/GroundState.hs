@@ -16,7 +16,7 @@
 -- replace this later (and move upstream into linearmap-family).
 --
 -- The solver is generic over the operand space @v@: any
--- @(FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)@ works. In
+-- @(FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double)@ works. In
 -- particular @v@ may itself be a /linear-map space/ (e.g. the MPS centre
 -- @(C b ⊗ C p) +> C b@), since linear maps form a first-class
 -- 'FiniteDimensional' vector space in linearmap-category. So an effective
@@ -31,7 +31,7 @@ module GroundState
 import Prelude hiding (($))
 import Control.Arrow.Constrained (($))
 import Math.LinearMap.Category
-  ( type (+>), FiniteDimensional (..), SubBasis, HilbertSpace )
+  ( type (+>), FiniteDimensional (..), SubBasis )
 import Data.VectorSpace (InnerSpace (..), Scalar)
 -- Orphan instances making @C n@ (and tensors/maps over it) linearmap-category
 -- vector spaces / TensorSpaces (the instances that @$@-application and the
@@ -54,7 +54,7 @@ basisOf = enumerateSubBasis (entireBasis :: SubBasis v)
 -- vectors are real, this is the genuine operator matrix regardless of the
 -- inner product's conjugation convention.
 toDenseMatrix
-  :: forall v. (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)
+  :: forall v. (FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double)
   => (v +> v) -> H.Matrix (Complex Double)
 toDenseMatrix f =
   let es   = basisOf @v
@@ -63,7 +63,7 @@ toDenseMatrix f =
 
 -- | Full (real) spectrum of a Hermitian operator, ascending.
 spectrum
-  :: forall v. (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)
+  :: forall v. (FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double)
   => (v +> v) -> [Double]
 spectrum f =
   let (vals, _) = H.eigSH (H.sym (toDenseMatrix f))
@@ -76,7 +76,7 @@ spectrum f =
 -- the cost of masking a genuinely non-Hermitian bug, so callers should ensure
 -- @Heff@ really is Hermitian.
 groundState
-  :: forall v. (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double)
+  :: forall v. (FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double)
   => (v +> v) -> (Double, v)
 groundState f =
   let (vals, vecs) = H.eigSH (H.sym (toDenseMatrix f))

@@ -1,0 +1,9 @@
+plugins:
+  importLens:
+    globalOn: false
+  codeRange:
+    globalOn: false
+  class:
+    globalOn: false
+  semanticTokens:
+    globalOn: false

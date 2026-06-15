@@ -32,8 +32,8 @@ The single most important design principle, which makes (b) cheap, is stated in 
 | `Sector` / fusion category interface (`one, ⊗, dual, N, F, R, FS, dim`) | well-typed representations | `General.hs`, `SU2.hs` | exploratory; type-level fusion for U(1) & SU(2) charges exists, no F/R symbols |
 | `GradedSpace{I}` + block-sparse morphism (Schur blocks) | intertwiners | `FunctorExperiment.hs` | **most mature**: U(1) intertwiners as block-sparse hom; `compose` is now singleton-recursive (no `unsafeCoerce`); `TensorSpace` via `ToC`. Next: multi-block `ApplyInterGo` (toward SU(2)) |
 | `TensorMap` with named legs + contraction/permute | typed ITensors | `ItensorTyped.hs` | leg-labelling, type-level contraction (`Difference`/`Intersection`), permutation *evidence* done; `permute`/`rawContract` are `error "TODO"` |
-| MPS/DMRG algorithm layer (à la MPSKit) | DMRG | `TensorNetwork.hs` | dense, complex-field; `move` (gauge) partly works via hmatrix SVD; `solveAtSite` effective-Hamiltonian + `eigen` is `undefined`/blocked |
-| Symmetric MPS as a vector space (tangent space, addition of states) | vector space of MPS | `Infinite.hs` | `MPSClever` is a genuine `VectorSpace`; growable bond via `FinSuppSeq`; QuickCheck: addition commutes with flattening |
+| MPS/DMRG algorithm layer (à la MPSKit) | DMRG | `TensorNetwork.DMRG.Concrete` | dense, complex-field; `move` (gauge) partly works via hmatrix SVD; `solveAtSite` effective-Hamiltonian + `eigen` is `undefined`/blocked |
+| Symmetric MPS as a vector space (tangent space, addition of states) | vector space of MPS | `TensorNetwork.MPS.FinSupp3` | `MPSClever` is a genuine `VectorSpace`; growable bond via `FinSuppSeq`; QuickCheck: addition commutes with flattening |
 
 TensorKit factors these as: `Sector` (in `TensorKitSectors.jl`) → `GradedSpace` →
 `ProductSpace`/`HomSpace` → `FusionTree` → `TensorMap`, with `MPSKit.jl`/`PEPSKit.jl`
@@ -66,8 +66,8 @@ not fixed. Inventory of what's directly usable for DMRG:
   — basis-independent iterative SVD (in `linearmap-family`, which we own).
 
 **The gap (decision-forcing):** every spectral primitive above is **real-scalar only**
-— `IEEE (Scalar v)` / `RealFloat` / `Scalar ~ Double`. But `TensorNetwork.hs` and
-`Infinite.hs` work over `Field = Complex Double`. `IEEE (Complex Double)` does not hold,
+— `IEEE (Scalar v)` / `RealFloat` / `Scalar ~ Double`. But `TensorNetwork.DMRG.Concrete`
+and `TensorNetwork.MPS.FinSupp3` work over `Field = Complex Double`. `IEEE (Complex Double)` does not hold,
 so `eigen euclideanNorm heff` over a complex space *cannot typecheck* — this is the
 concrete reason `solveAtSite` is stuck. See Decision D1.
 
@@ -142,7 +142,7 @@ a `C (p³)` oracle for every operation. N-site generalisation is §5a.
 
 ### Phase 3 — MPO + contraction
 5. **MPO** of `+>` morphisms in matching orientation (`MPO p b` is sketched in
-   `TensorNetwork.hs`); build a concrete benchmark model — **transverse-field Ising**
+   `TensorNetwork.MPS.Fixed3`); build a concrete benchmark model — **transverse-field Ising**
    (exactly solvable) or **spin-½ AFM Heisenberg** (Bethe / ED).
 6. **MPS–MPO–MPS contraction** for `⟨ψ|H|φ⟩`, reusing the Phase-2 conjugated bra. Test the
    expectation value against the dense `C (p³)` operator applied to the flattened state.
@@ -169,7 +169,7 @@ a `C (p³)` oracle for every operation. N-site generalisation is §5a.
     preserve the state exactly when @χ ≥ rank@.
 11. Left→right→left sweep with energy-convergence stopping.
 12. **Validate**: ground-state energy vs exact (TFIM) / ED for 3 sites; ⟨H²⟩−⟨H⟩²
-    variance. Add as QuickCheck/golden tests next to the existing `Infinite` properties.
+    variance. Add as QuickCheck/golden tests next to the existing `TensorNetwork.MPS.FinSupp3` properties.
 
 **Exit criterion for "near-term done":** DMRG on the typed 3-site MPS returns the correct
 ground-state energy for the benchmark model to tolerance, with inner-product /
@@ -204,6 +204,29 @@ Measured conventions (memory `conjugation-conventions`): `<.>` on **`C n` is ses
 - Keep the flattened-vector overlap (`mpsToPhysical ψ <.> mpsToPhysical φ`, which uses
   `C n`'s correct `<.>`) as the **test oracle**, not the DMRG contraction path.
 
+### Backend layout mismatch (blocking categorical path)
+
+`TensorNetwork.MPS.Fixed3` has two layers:
+
+| Layer | Role | Status |
+|---|---|---|
+| **Production** | `applySite`, `applyOpSite`, `mpsStateMap`/`mpsToFlat`, `transferStep`, `mpsInner`, `mpoTransferStep`, `mpsMPOInner`, `mpoApplyMPS` | **partial** — MPS + MPO site `$`, closed `mpoTransferStep` chain for `⟨ψ|H|φ⟩`, and `mpoApplyMPS` green; `mpoApplyFlat` still uses p⁶ element sum |
+| **Reference / oracle** | `Fixed3.Reference`: `siteCoeff`, `mpsInnerReference`, `mpsToFlatReference` (basis sums) | works; used for QuickCheck oracles |
+
+**Root cause:** the static `C n` backend stores a site map `(C bl ⊗ C p) +> C br` as a matrix of shape `bl × (br·p)` (bond-major rows, physical-minor columns within each outgoing-bond block). But `applyTensorLinMap` in `linearmap-hmatrix` (`COrphans.hs`) applies maps via `m #> flatten(t)`, which assumes a different indexing (`br·p == bl·p` when `bl ≠ br`). That is a **convention mismatch**, not a missing norm or a dagger issue.
+
+**Do not fix with `unsafeCoerce`.** Coercing matrix types to force the manual contraction loop is a sign the typed API and storage layout are out of sync. The correct fix is upstream in `linearmap-family`, making storage, `applyTensorLinMap`, `recomposeContraLinMapTensor`, and `composeLinear` agree on one documented layout.
+
+**Fix plan (ordered):**
+
+1. ✅ **Document the canonical layout** — `Numeric.LinearAlgebra.Static.MPSLayout` in `linearmap-hmatrix`: row `lB`, column `r·p + s`.
+2. ✅ **Fix `applyTensorLinMap`** (static case) — bond-major contraction in `COrphans` (no `unsafeCoerce`).
+3. ✅ **Regression test in `linearmap-hmatrix`** — `MPSLayoutTests`: categorical `$` vs oracle for `bl,br ∈ {1,2,4}`.
+4. ✅ **Categorical `applySite`** in `Fixed3` — `prop_applySiteMatchesCoeff` green.
+5. ➡ **Fix bra pullback for `transferStep` (categorical path):** `siteDagger` types `C br +> (C bl ⊗ C p)` but `DualVector (C bl ⊗ C p) ≠ C bl ⊗ C p` at the type level; `toArray` (`flatten∘tr`) vs `applyLinear` (`reshape`) disagree on tensor codomains. Either (a) a typed identification `DualVector (Tensor s u v) ≅ LinearMap s u (DualVector v)` used in contraction primitives, or (b) `contractLinearMapAgainst` / bilinear pairing that does not require pretending the dual tensor *is* the primal tensor. `TensorNetwork.Dagger.hilbertFromDual` is the right *conceptual* locus. **Workaround in place:** `transferStep` is built via `recomposeLinMap` from `matrixTransferCoeff`; bra conjugation uses `conjugateSite` (entry-wise `cmap conjugate`), not `vectorConjugate`.
+6. ✅ **Green `prop_innerMatchesFlat` / `prop_innerMatchesReference`** — Phase 2 done.
+7. ✅ **Module hygiene:** `Fixed3.Internal` (types + coefficient helpers), `Fixed3.Reference` (basis-sum oracles). Remaining: replace dense `mpoToMatrix` p⁶ loops with matmul on flattened layouts.
+
 ### Still open (decide as they arise)
 - **Gauge / canonical form** — no orthonormality is enforced yet; DMRG gauge transport
   (cf. `TensorNetwork.move`) and how χ-truncation changes a *typed* bond (existential vs
@@ -212,7 +235,7 @@ Measured conventions (memory `conjugation-conventions`): `<.>` on **`C n` is ses
   target dimensions first (e.g. `truncateLeftBond @χ`) so the result type records the new
   bond dimension. Once the algorithm chooses χ from singular values, introduce a small
   existential wrapper rather than pretending the dimension is statically known.
-- **Legacy code** — the `V2/V3` paths in `TensorNetwork.hs` use the wrong (bilinear)
+- **Legacy code** — the `V2/V3` paths in `TensorNetwork.DMRG.Concrete` use the wrong (bilinear)
   convention; treat as reference-only.
 
 ---
@@ -237,7 +260,7 @@ The point of §3 is that this phase touches almost no algorithm code.
    implement the two stubs `permute` (swaps + associators) and `rawContract`
    (categorical evaluation) on top of `linearmap-category`'s `transposeTensor`/`⊗`.
    This is independent of symmetry and could even slot into Phase 1–2.
-5. **MPS-as-vector-space (`Infinite`)** generalises to symmetric MPS, enabling
+5. **MPS-as-vector-space (`TensorNetwork.MPS.FinSupp3`)** generalises to symmetric MPS, enabling
    state addition / tangent vectors — the entry point to TDVP and excited-state methods.
 
 ### 5a. From the 3-site typed MPS to N sites (and growable bonds)
@@ -246,7 +269,7 @@ bulk tensors `(C bᵢ ⊗ C p) +> C bᵢ₊₁` plus boundary caps, preserving t
 oracle, the inner-product/dual definitions, and the DMRG sweep. Two sub-threads:
 - **Length** — list/vector of sites; existentially-typed or runtime-checked bonds so the
   chain length and per-bond χ aren't fixed at compile time.
-- **Growable bonds / state addition** — revisit `Infinite.MPSClever`'s `FinSuppSeq` bond
+- **Growable bonds / state addition** — revisit `TensorNetwork.MPS.FinSupp3.MPSClever`'s `FinSuppSeq` bond
   and its `VectorSpace` instance (addition commutes with flattening) for adaptive χ and
   tangent-space methods — *after* fixing its bilinear-bond conjugation (memory
   `conjugation-conventions`). This is where the deferred D2 alternative comes back.
@@ -325,7 +348,7 @@ the headline payoff.
 - *The monoidal/dagger/braided structure as actual `Category` instances* — we already
   build on `constrained-categories`; a symmetric tensor category becomes a literal
   `Monoidal`/`Braided`/`Dagger` instance (there's a `DaggerCategory` stub to grow).
-- *States as a `VectorSpace`* (`Infinite`) — makes tangent spaces / TDVP / excited-state
+- *States as a `VectorSpace`* (`TensorNetwork.MPS.FinSupp3`) — makes tangent spaces / TDVP / excited-state
   subspaces first-class; addition-commutes-with-flattening is already property-tested.
 - *Property-testing coherence laws* (pentagon/hexagon, gauge invariance) with QuickCheck.
 - *Basis independence* — `linearmap-category`'s entire reason for being; aligns exactly
@@ -351,14 +374,18 @@ D1–D3 are resolved (§7). Concrete sequence (all on the **typed 3-site MPS**, 
    (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double) => (v +> v) ->
    (Double, v)` via dense hmatrix `eigSH`. Generic over `v` (incl. map-space endos).
    Verified on `diag(3,1,2)` → `1.0`, spectrum `[1,2,3]`. Full build + tests green.
-2. ✅ **Typed 3-site MPS type + map-to-physical** (Phase 1) — `MPS.hs`:
-   `data MPS p b1 b2` (transfer orientation, typed bonds) + `mpsToFlat :: MPS p b1 b2 ->
-   C (p*p*p)`, contracting bonds through each site's dense `siteMat` in the settled
-   transfer orientation. Index order `(s₁·p+s₂)·p+s₃` matches `Infinite.mpsToFlat`.
-3. ✅ **Inner product / norm / dual** (Phase 2) — `mpsInner`, `mpsNorm`, and
-   `mpsConjugate`, with QuickCheck properties against `mpsToFlat`'s sesquilinear overlap.
-4. ✅/➡ **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3) — `MPO`, `mpoToMatrix`,
-   `mpoApplyFlat`, and `mpsMPOInner` are implemented and property-tested against the
-   flattened dense operator. Next: add a concrete benchmark MPO (TFIM or Heisenberg),
+2. ✅ **Typed 3-site MPS type + map-to-physical** (Phase 1) — `TensorNetwork.MPS.Fixed3`:
+   `data MPS p b1 b2` (transfer orientation, typed bonds) + categorical `mpsStateMap` /
+   `mpsToFlat :: MPS p b1 b2 -> C (p*p*p)` (bond threading via `applySite`, no p³ basis sum).
+   Index order `(s₁·p+s₂)·p+s₃` matches `TensorNetwork.MPS.FinSupp3.mpsToFlat`
+   (`prop_mpsToFlatMatchesReference` green).
+3. ✅ **Inner product / norm / dual** (Phase 2) — `mpsConjugate` (`conjugateSite`),
+   `transferStep`, and `mpsInner` are green against flattened and basis oracles
+   (`prop_innerMatchesFlat`, `prop_innerMatchesReference`, conjugate-symmetry, norm).
+   Categorical bra pullback (§4a step 5) remains future work; current `transferStep`
+   uses explicit matrix coefficients.
+4. ✅/➡ **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3) — categorical `applyOpSite`,
+   `mpoElement`, `mpoApplyMPS`, `mpoTransferStep`, and `mpsMPOInner` (closed transfer chain)
+   are green against basis, flat, and identity-MPO oracles. Next: add benchmark MPO (TFIM or Heisenberg),
    then **`Heff` + `groundState`** (Phase 4), then **sweep + energy validation** vs
    ED/exact (Phase 5).
