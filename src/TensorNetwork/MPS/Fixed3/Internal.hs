@@ -36,10 +36,10 @@ import Data.Proxy (Proxy (..))
 data Site (bl :: Nat) (p :: Nat) (br :: Nat) = Site
   { siteLin :: (C bl ⊗ C p) +> C br }
 
-data MPS (p :: Nat) (b1 :: Nat) (b2 :: Nat) = MPS
-  { siteL :: Site 1  p b1
-  , siteC :: Site b1 p b2
-  , siteR :: Site b2 p 1
+data MPS (p :: Nat) (b :: Nat)  = MPS
+  { siteL :: Site 1  p b
+  , siteC :: Site b p b
+  , siteR :: Site b p 1
   }
 
 -- | MPO site in transfer orientation: the domain physical leg is the
@@ -55,10 +55,10 @@ data MPS (p :: Nat) (b1 :: Nat) (b2 :: Nat) = MPS
 data OpSite (wl :: Nat) (p :: Nat) (wr :: Nat) = OpSite
   { opSiteLin :: (C wl ⊗ C p) +> (C wr ⊗ C p) }
 
-data MPO (p :: Nat) (w1 :: Nat) (w2 :: Nat) = MPO
-  { opL :: OpSite 1  p w1
-  , opC :: OpSite w1 p w2
-  , opR :: OpSite w2 p 1
+data MPO (p :: Nat) (w :: Nat) = MPO
+  { opL :: OpSite 1  p w
+  , opC :: OpSite w p w
+  , opR :: OpSite w p 1
   }
 
 -- | Dimension of @C n@ at the value level.

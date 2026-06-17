@@ -20,28 +20,31 @@ module TensorNetwork.MPS.FinSupp3 where
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.VectorSpace.Free.FiniteSupportedSequence
+import Data.Basis (HasBasis (..))
+import Data.Finite (Finite, finites, getFinite)
 import Data.Complex (Complex ((:+)))
 import Data.Proxy (Proxy (..))
 import Data.Coerce (coerce)
-import Data.List (foldl')
+import Data.List (foldl', intercalate)
 import Data.Maybe (fromMaybe)
 import GHC.TypeLits (KnownNat, natVal, type (*))
+import Data.VectorSpace (sumV)
 import qualified Test.QuickCheck as QC
 import Test.QuickCheck.Gen (unGen)
 import Test.QuickCheck.Random (mkQCGen)
 import Math.LinearMap.Category
-  ( type (+>), type (⊗), LinearMap (..), Tensor (..), TensorSpace (..),
+  ( type (+>), type (⊗), LinearMap (..), Tensor (..),
     AdditiveGroup (..), VectorSpace (..), Scalar, getLinearMap, getTensorProduct )
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Instances.Deriving ()
 import Math.LinearMap.Category.Backend.HMatrix ()
+import Numeric.LinearAlgebra.Static.COrphans ()
 import Prelude hiding ((.), ($))
 import Control.Monad (replicateM)
 import qualified Control.Applicative as App
 import Control.Category.Constrained.Prelude
-import Numeric.LinearAlgebra.Static (C, M, Sized (..), create, extract)
+import Numeric.LinearAlgebra.Static (C, M, Sized (..), create, extract, fromList)
 import qualified Numeric.LinearAlgebra as LA
-import Linear (V2(..))
 
 type Field = Complex Double
 type Bond = FinSuppSeq Field
@@ -257,6 +260,172 @@ mpsToFlat mps =
   fromMaybe (error "mpsToFlat: create failed") $
     create (LA.flatten (extract (getTensorProduct (mpsToPhysical3 mps))))
 
+vpDim :: forall vp. KnownNat vp => Int
+vpDim = fromIntegral (natVal (Proxy @vp))
+
+unitBond :: Bond
+unitBond = FinSuppSeq (U.fromList [1])
+
+basisCvp :: forall vp. KnownNat vp => Int -> C vp
+basisCvp i = fromList [ if j == i then 1 else 0 | j <- [0 .. vpDim @vp - 1] ]
+
+-- | Decode a flat physical index @k@ to @(s₁, s₂, s₃)@ matching 'mpsToFlat'.
+physicalIndices :: Int -> Int -> (Int, Int, Int)
+physicalIndices vp k =
+  let s3 = k `mod` vp
+      t  = k `div` vp
+      s2 = t `mod` vp
+      s1 = t `div` vp
+  in (s1, s2, s3)
+
+-- | Flatten a physical tensor to @C (vp³)@ (same index order as 'mpsToFlat').
+physicalToFlat
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Physical3 vp -> C (PhysicalDim3 vp)
+physicalToFlat phys =
+  fromMaybe (error "physicalToFlat: create failed") $
+    create (LA.flatten (extract (getTensorProduct phys)))
+
+-- | Flat @C (vp³)@ index of a 'Physical3' basis vector (linearmap storage order).
+basisFlatIndex
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Basis (Physical3 vp)
+  -> Int
+basisFlatIndex b =
+  let flat = physicalToFlat (basisValue b :: Physical3 vp)
+  in fromIntegral $
+       getFinite $
+         head [b' | (b', c) <- decompose @(C (PhysicalDim3 vp)) flat, c == 1]
+
+-- | Nested 'Basis (Physical3 vp)' label as site indices (via flat index).
+physicalIndicesFromBasis
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Basis (Physical3 vp)
+  -> (Int, Int, Int)
+physicalIndicesFromBasis b =
+  physicalIndices (vpDim @vp) (basisFlatIndex @vp b)
+
+flatBasisToPhysicalBasis
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Finite (PhysicalDim3 vp)
+  -> Basis (Physical3 vp)
+flatBasisToPhysicalBasis b =
+  head
+    [ bPhys
+    | bPhys <- allPhysicalBasis @vp
+    , basisFlatIndex bPhys == fromIntegral (getFinite b)
+    ]
+
+allPhysicalBasis :: forall vp. KnownNat vp => [Basis (Physical3 vp)]
+allPhysicalBasis =
+  [ ((b1, b2), b3)
+  | b1 <- finites @vp
+  , b2 <- finites @vp
+  , b3 <- finites @vp
+  ]
+
+-- | Product state @|s₁,s₂,s₃⟩@ as a bond-dimension-1 MPS.
+productMPSAtIndices
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Int -> Int -> Int -> MPS vp
+productMPSAtIndices s1 s2 s3 =
+  let vp = vpDim @vp
+      leftRows = V.generate vp (\j -> if j == s1 then unitBond else zeroV)
+      centerRows = V.generate vp (\j -> if j == s2 then unitBond else zeroV)
+  in MPS
+       (LinearMap leftRows)
+       (LinearMap [Tensor centerRows])
+       (LinearMap [basisCvp @vp s3])
+
+-- | Product state for a 'Physical3' basis label.
+productMPSFromBasis
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Basis (Physical3 vp) -> MPS vp
+productMPSFromBasis b =
+  let (s1, s2, s3) = physicalIndicesFromBasis b
+  in productMPSAtIndices s1 s2 s3
+
+-- | Canonical MPS section for a physical tensor.
+--
+-- Built in one pass from the physical coefficients (one bond index per
+-- nonzero term), so @mpsFromPhysical@ round-trips with 'mpsToPhysical3'.
+mpsFromPhysical
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Physical3 vp -> MPS vp
+mpsFromPhysical phys =
+  let vp = vpDim @vp
+      terms =
+        [ (physicalIndicesFromBasis b, c)
+        | (b, c) <- decompose phys
+        , c /= 0
+        ]
+  in case terms of
+       [] -> zeroMPS
+       _  ->
+         MPS
+           (LinearMap (mpsLeftRows vp terms))
+           (LinearMap (mpsCenterImgs vp terms))
+           (LinearMap (mpsRightImgs terms))
+
+mpsLeftRows :: Int -> [((Int, Int, Int), Field)] -> BondVec
+mpsLeftRows vp terms =
+  V.generate vp $ \s1 ->
+    FinSuppSeq $
+      U.fromList [ if s1 == s1' then c else 0 | ((s1', _, _), c) <- terms ]
+
+mpsCenterImgs :: Int -> [((Int, Int, Int), Field)] -> [C vp ⊗ Bond]
+mpsCenterImgs vp terms =
+  [ Tensor (V.generate vp $ \p -> if p == s2 then offsetBond i unitBond else zeroV)
+  | (i, ((_, s2, _), _)) <- zip [0 ..] terms
+  ]
+
+mpsRightImgs :: forall vp. KnownNat vp => [((Int, Int, Int), Field)] -> [C vp]
+mpsRightImgs terms = [ basisCvp @vp s3 | ((_, _, s3), _) <- terms ]
+
+instance
+  ( KnownNat vp
+  , KnownNat (vp * vp)
+  , KnownNat (PhysicalDim3 vp)
+  ) =>
+  HasBasis (MPS vp)
+  where
+  type Basis (MPS vp) = Basis (Physical3 vp)
+  basisValue b = mpsFromPhysical (basisValue b :: Physical3 vp)
+  decompose m = decompose (mpsToPhysical3 m)
+  decompose' m = decompose' (mpsToPhysical3 m)
+
+-- | Canonical MPS section for a flat @C (vp³)@ vector.
+mpsFromFlat
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => C (PhysicalDim3 vp) -> MPS vp
+mpsFromFlat = mpsFromPhysical . physicalFromFlat
+
+physicalFromFlat
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => C (PhysicalDim3 vp) -> Physical3 vp
+physicalFromFlat v =
+  sumV
+    [ c *^ (basisValue (flatBasisToPhysicalBasis b) :: Physical3 vp)
+    | (b, c) <- decompose @(C (PhysicalDim3 vp)) v
+    , c /= 0
+    ]
+
+-- | Reconstruct an MPS from its physical basis decomposition.
+--
+-- Round-trips with 'decompose' on physical space: @mpsToPhysical3 . canonicalMPS =
+-- mpsToPhysical3@.
+canonicalMPS :: (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp)) => MPS vp -> MPS vp
+canonicalMPS = mpsFromPhysical . mpsToPhysical3
+
 -- | Small integer complexes for exact QuickCheck properties.
 smallComplex :: QC.Gen Field
 smallComplex = do
@@ -312,13 +481,108 @@ prop_addThenFlattenVP3 =
     QC.forAll (genMPS @3) $ \m2 ->
       prop_addThenFlatten m1 m2
 
+prop_basisMPSMatchesPhysicalVP2 :: QC.Property
+prop_basisMPSMatchesPhysicalVP2 =
+  QC.forAll (QC.elements allPhysicalBasis2) $ \b ->
+    mpsToFlat (basisValue b :: MPS 2)
+      QC.=== physicalToFlat (basisValue b :: Physical3 2)
+
+prop_basisMPSMatchesPhysicalVP3 :: QC.Property
+prop_basisMPSMatchesPhysicalVP3 =
+  QC.forAll (QC.elements allPhysicalBasis3) $ \b ->
+    mpsToFlat (basisValue b :: MPS 3)
+      QC.=== physicalToFlat (basisValue b :: Physical3 3)
+
+prop_decomposePrimeMatchesPhysicalVP2 :: QC.Property
+prop_decomposePrimeMatchesPhysicalVP2 =
+  QC.forAll (genMPS @2) $ \(m :: MPS 2) ->
+    QC.forAll (QC.elements allPhysicalBasis2) $ \b ->
+      decompose' m b QC.=== decompose' (mpsToPhysical3 m) b
+
+prop_decomposePrimeMatchesPhysicalVP3 :: QC.Property
+prop_decomposePrimeMatchesPhysicalVP3 =
+  QC.forAll (genMPS @3) $ \(m :: MPS 3) ->
+    QC.forAll (QC.elements allPhysicalBasis3) $ \b ->
+      decompose' m b QC.=== decompose' (mpsToPhysical3 m) b
+
+allPhysicalBasis2 :: [Basis (Physical3 2)]
+allPhysicalBasis2 = allPhysicalBasis @2
+
+allPhysicalBasis3 :: [Basis (Physical3 3)]
+allPhysicalBasis3 = allPhysicalBasis @3
+
+prop_physicalRecomposeVP2 :: QC.Property
+prop_physicalRecomposeVP2 =
+  QC.forAll (genMPS @2) $ \(m :: MPS 2) ->
+    mpsToFlat (canonicalMPS @2 m) QC.=== mpsToFlat m
+
+prop_physicalRecomposeVP3 :: QC.Property
+prop_physicalRecomposeVP3 =
+  QC.forAll (genMPS @3) $ \(m :: MPS 3) ->
+    mpsToFlat (canonicalMPS @3 m) QC.=== mpsToFlat m
+
+prop_mpsFromFlatRoundTripVP2 :: QC.Property
+prop_mpsFromFlatRoundTripVP2 =
+  QC.forAll (genMPS @2) $ \(m :: MPS 2) ->
+    mpsToFlat (mpsFromFlat @2 (mpsToFlat m)) QC.=== mpsToFlat m
+
+prop_mpsFromFlatRoundTripVP3 :: QC.Property
+prop_mpsFromFlatRoundTripVP3 =
+  QC.forAll (genMPS @3) $ \(m :: MPS 3) ->
+    mpsToFlat (mpsFromFlat @3 (mpsToFlat m)) QC.=== mpsToFlat m
+
 runAddThenFlattenTests :: IO ()
 runAddThenFlattenTests = do
   putStrLn "MPS addition commutes with flattening (vp = 2)..."
   QC.quickCheck prop_addThenFlattenVP2
   putStrLn "MPS addition commutes with flattening (vp = 3)..."
   QC.quickCheck prop_addThenFlattenVP3
+  putStrLn "MPS physical basis vectors match Physical3 basis..."
+  QC.quickCheck prop_basisMPSMatchesPhysicalVP2
+  QC.quickCheck prop_basisMPSMatchesPhysicalVP3
+  putStrLn "MPS decompose' matches Physical3 decompose'..."
+  QC.quickCheck prop_decomposePrimeMatchesPhysicalVP2
+  QC.quickCheck prop_decomposePrimeMatchesPhysicalVP3
+  putStrLn "canonicalMPS round-trips on physical space..."
+  QC.quickCheck prop_physicalRecomposeVP2
+  QC.quickCheck prop_physicalRecomposeVP3
+  putStrLn "mpsFromFlat round-trips on physical space..."
+  QC.quickCheck prop_mpsFromFlatRoundTripVP2
+  QC.quickCheck prop_mpsFromFlatRoundTripVP3
 
+
+-- | Human-readable label for a 'Physical3' basis element.
+showPhysicalBasis
+  :: forall vp
+   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
+  => Basis (Physical3 vp)
+  -> String
+showPhysicalBasis b =
+  let (s1, s2, s3) = physicalIndicesFromBasis b
+  in "|" ++ intercalate "," (map show [s1, s2, s3]) ++ "⟩"
+
+-- | Sample a random @MPS 2@ and print one physical basis coefficient via
+-- 'decompose''.
+exampleDecomposeBasis :: IO ()
+exampleDecomposeBasis = do
+  let mps :: MPS 2 = sampleWithSeed 42 10 genMPS
+      -- product state |0,1,1⟩ in left-associated @(C 2 ⊗ C 2) ⊗ C 2@
+      b :: Basis (Physical3 2) = ((finites @2 !! 0, finites @2 !! 1), finites @2 !! 1)
+  putStrLn ("Random MPS (seed 42, size 10); bond dim = " ++ show (bondDimMPS mps))
+  putStrLn
+    ( "decompose' at "
+        ++ showPhysicalBasis @2 b
+        ++ " = "
+        ++ show (decompose' mps b)
+    )
+  putStrLn
+    ( "Same coefficient from mpsToPhysical3: "
+        ++ show (decompose' (mpsToPhysical3 mps) b)
+    )
+  putStrLn
+    ( "Flat amplitude vector: "
+        ++ show (extract (physicalToFlat (mpsToPhysical3 mps)))
+    )
 
 -- | A concrete non-zero @MPS 2@ with bond dimension 1, flattened to @C 8@.
 test :: IO ()

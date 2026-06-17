@@ -1,7 +1,22 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE NoStarIsType #-}
 module Main (main) where
 
 import qualified Test.QuickCheck as QC
-import TensorNetwork.MPS.FinSupp3 (prop_addThenFlattenVP2, prop_addThenFlattenVP3)
+import TensorNetwork.MPS.FinSupp3
+  ( prop_addThenFlattenVP2
+  , prop_addThenFlattenVP3
+  , prop_basisMPSMatchesPhysicalVP2
+  , prop_basisMPSMatchesPhysicalVP3
+  , prop_decomposePrimeMatchesPhysicalVP2
+  , prop_decomposePrimeMatchesPhysicalVP3
+  , prop_physicalRecomposeVP2
+  , prop_physicalRecomposeVP3
+  , prop_mpsFromFlatRoundTripVP2
+  , prop_mpsFromFlatRoundTripVP3
+  )
 import TensorNetwork.Categorical.Props
   ( prop_applyMatchesImages
   , prop_applyMatchesImagesTensorCodomain
@@ -32,10 +47,19 @@ import TensorNetwork.MPS.Fixed3
   , prop_mpoInnerMatchesFlat
   , prop_mpoApplyMPSMatchesFlat
   , prop_identityMPOMatchesInner
+  , prop_mpsFromFlatRoundTripP2
+  , prop_mpsFromFlatOnRandomFlatP2
+  , prop_mpsFromFlatRoundTripP3
+  , prop_canonicalMPSRoundTripP2
+  , prop_canonicalMPSRoundTripP3
   )
+import GHC.TypeLits (type (*))
 import TensorNetwork.DMRG.Fixed3
   ( prop_effectiveHMatchesInner
   , prop_effectiveHHermitian
+  , prop_flatLeftSVDMatchesSiteMatrix
+  , prop_groundStateMatchesDense
+  , prop_eigenMatchesDenseC4
   , tfimMPO
   , dmrg
   , sweep
@@ -105,6 +129,22 @@ main = do
   requireQC =<< QC.quickCheckResult prop_addThenFlattenVP2
   putStrLn "MPS addition commutes with flattening (vp = 3)..."
   requireQC =<< QC.quickCheckResult prop_addThenFlattenVP3
+  putStrLn "MPS physical basis vectors match Physical3 basis (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_basisMPSMatchesPhysicalVP2
+  putStrLn "MPS physical basis vectors match Physical3 basis (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_basisMPSMatchesPhysicalVP3
+  putStrLn "MPS decompose' matches Physical3 decompose' (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_decomposePrimeMatchesPhysicalVP2
+  putStrLn "MPS decompose' matches Physical3 decompose' (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_decomposePrimeMatchesPhysicalVP3
+  putStrLn "canonicalMPS round-trips on physical space (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_physicalRecomposeVP2
+  putStrLn "canonicalMPS round-trips on physical space (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_physicalRecomposeVP3
+  putStrLn "mpsFromFlat round-trips on physical space (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripVP2
+  putStrLn "mpsFromFlat round-trips on physical space (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripVP3
   putStrLn "Transfer step matches explicit matrix formula..."
   requireQC =<< QC.quickCheckResult prop_transferStepMatchesMatrix
   putStrLn "conjugateSite matches entry-wise matrix conjugation..."
@@ -129,10 +169,26 @@ main = do
   requireQC =<< QC.quickCheckResult prop_mpoApplyMPSMatchesFlat
   putStrLn "Identity MPO matches MPS inner product..."
   requireQC =<< QC.quickCheckResult prop_identityMPOMatchesInner
+  putStrLn "Fixed3 SVD mpsFromFlat round-trips (p = 2)..."
+  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripP2
+  putStrLn "Fixed3 SVD mpsFromFlat on random flat C^8 (p = 2)..."
+  requireQC =<< QC.quickCheckResult prop_mpsFromFlatOnRandomFlatP2
+  putStrLn "Fixed3 SVD mpsFromFlat round-trips (p = 3)..."
+  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripP3
+  putStrLn "Fixed3 SVD canonicalMPS round-trips (p = 2)..."
+  requireQC =<< QC.quickCheckResult prop_canonicalMPSRoundTripP2
+  putStrLn "Fixed3 SVD canonicalMPS round-trips (p = 3)..."
+  requireQC =<< QC.quickCheckResult prop_canonicalMPSRoundTripP3
   putStrLn "<y, Heff x> matches the full network contraction..."
   requireQC =<< QC.quickCheckResult prop_effectiveHMatchesInner
   putStrLn "Effective Hamiltonian is Hermitian (TFIM)..."
   requireQC =<< QC.quickCheckResult prop_effectiveHHermitian
+  putStrLn "Flat left-SVD layout matches siteMatrix oracle..."
+  requireQC =<< QC.quickCheckResult prop_flatLeftSVDMatchesSiteMatrix
+  putStrLn "groundState matches dense oracle on Heff..."
+  requireQC =<< QC.quickCheckResult prop_groundStateMatchesDense
+  putStrLn "eigen path matches dense oracle on C 4..."
+  requireQC =<< QC.quickCheckResult prop_eigenMatchesDenseC4
   putStrLn "DMRG matches dense ground energy (J=1, h=0.7)..."
   checkDMRG 1 0.7
   putStrLn "DMRG matches dense ground energy (J=0.5, h=1.3)..."

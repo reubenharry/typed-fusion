@@ -44,7 +44,7 @@ import Math.LinearMap.Category
   ( type (+>), type (⊗), Tensor
   , TensorSpace (..), LinearSpace (..)
   , tensorOfMaps, getAntilinearFunction
-  , LinearFunction, pattern LinearFunction, (-+$>) )
+  , LinearFunction, pattern LinearFunction, (-+$>), Dimensional )
 import Math.LinearMap.Coercion (lassocTensor, rassocTensor, (-+$=>))
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
@@ -98,6 +98,7 @@ oneC1 :: C 1
 oneC1 = konst 1
 
 -- | Pair a @C 1@ leg against @1@, leaving the scalar: @C 1 -+> ℂ@.
+-- TODO: presumably there should be a general map from a 1D space to the scalar field: i assume this is in linearmap-family somewhere
 scalarizeC1 :: LinearFunction ℂ (C 1) ℂ
 scalarizeC1 = applyDualVector -+$> oneC1
 
@@ -144,13 +145,23 @@ fuseBond = arr (LinearFunction (unsafeFromArray . asArray))
     asArray :: (C a ⊗ C b) -> VS.Vector ℂ
     asArray = toArray
 
+-- -- | Inverse of 'fuseBond': @C (a·b) +> (C a ⊗ C b)@.
+-- splitBond
+--   :: forall a b. (KnownNat a, KnownNat b, KnownNat (a * b))
+--   => C (a * b) +> (C a ⊗ C b)
+-- splitBond = arr (LinearFunction (unsafeFromArray . asArray))
+--   where
+--     asArray :: C (a * b) -> VS.Vector ℂ
+--     asArray = toArray
+
+
 -- | Inverse of 'fuseBond': @C (a·b) +> (C a ⊗ C b)@.
 splitBond
-  :: forall a b. (KnownNat a, KnownNat b, KnownNat (a * b))
-  => C (a * b) +> (C a ⊗ C b)
+  :: forall a b v1 v2 w. (LinearSpace v1, LinearSpace v2, LinearSpace w, KnownNat a, KnownNat b, KnownNat (a * b), (a*b) `Dimensional` w, a `Dimensional` v1, b `Dimensional` v2, Scalar v1 ~ ℂ, Scalar v2 ~ ℂ, Scalar w ~ ℂ)
+  => w +> (v1 ⊗ v2)
 splitBond = arr (LinearFunction (unsafeFromArray . asArray))
   where
-    asArray :: C (a * b) -> VS.Vector ℂ
+    asArray :: w -> VS.Vector ℂ
     asArray = toArray
 
 -- | Entry-wise complex conjugation of a linear map, via 'vectorConjugate' on

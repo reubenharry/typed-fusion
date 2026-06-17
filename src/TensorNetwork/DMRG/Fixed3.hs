@@ -33,34 +33,7 @@
 -- representation, both the recursion 'extendRight' (a partial trace over the
 -- physical leg) and the effective Hamiltonian (plain composition, see
 -- 'effectiveH') follow from cyclicity of the trace.
-module TensorNetwork.DMRG.Fixed3
-  ( -- * Spaces
-    Centre
-  , LeftEnv
-  , RightEnv
-    -- * Environments
-  , leftBoundary
-  , rightBoundary
-  , extendLeft
-  , extendRight
-    -- * Effective Hamiltonian and local solve
-  , effectiveH
-  , solveCentre
-    -- * Gauge transport
-  , normalizeLeft
-  , normalizeRight
-    -- * Sweeping
-  , energy
-  , sweep
-  , dmrg
-    -- * Benchmark model
-  , tfimMPO
-    -- * Validation (tests)
-  , denseGroundEnergy
-  , seededMPS222
-  , prop_effectiveHMatchesInner
-  , prop_effectiveHHermitian
-  ) where
+module TensorNetwork.DMRG.Fixed3 where
 
 import Prelude hiding (($), (.))
 import qualified Control.Category.Constrained as Cat
@@ -71,30 +44,36 @@ import Math.LinearMap.Category
   ( type (+>), type (⊗), (⊗)
   , TensorSpace (..), FiniteDimensional (..), SubBasis
   , sampleLinearFunction, contractTensorMap
-  , LinearFunction, pattern LinearFunction, (-+$>) )
+  , LinearFunction, pattern LinearFunction, (-+$>)
+  , getLinearMap, LinearMap (..), linearId, euclideanNorm )
 import Math.LinearMap.Coercion
   ( curryLinearMap, uncurryLinearMap, (-+$=>) )
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
-import Numeric.LinearAlgebra.Static (C, M, Sized (fromList, unwrap))
+import Numeric.LinearAlgebra.Static
+  ( C, M, R, Sized (fromList, unwrap, create, extract), Domain (diagR), complex )
+import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import qualified Numeric.LinearAlgebra as HM
-import GHC.TypeLits (KnownNat)
+import GHC.TypeLits (KnownNat, type (*))
+import Data.Maybe (fromMaybe)
 import Data.Complex (Complex ((:+)), conjugate, realPart, magnitude)
 import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), AdditiveGroup (zeroV), sumV)
 
 import TensorNetwork.MPS.Fixed3.Internal
   ( Site (..), MPS (..), OpSite (..), MPO (..), cdim, basis )
 import TensorNetwork.MPS.Fixed3
-  ( mpoTransferStep, opWire, mpsInner, mpsMPOInner
-  , mpoToMatrix, genMPS222, genMPO222 )
-import TensorNetwork.Categorical ((⊗^), lunit, lunitInv)
-import TensorNetwork.Dagger (dagger)
-import GroundState (groundState)
+  ( mpoTransferStep, opWire, mpsInner, mpsMPOInner, mpoToMatrix
+  , genMPS222, genMPO222, pauliX, pauliZ )
+import TensorNetwork.Categorical
+  ( (⊗^), lunit, lunitInv, swapMap, splitBond, fuseBond )
+import TensorNetwork.Dagger (dagger, transposeMap)
+import GroundState (groundState, groundStateDense, groundStateEigen)
 
 import qualified Test.QuickCheck as QC
 import Test.QuickCheck.Gen (unGen)
 import Test.QuickCheck.Random (mkQCGen)
+import TensorNetwork.MPS.Fixed3 (diagMap, leftSvdFactor, rightSvdFactor)
 
 --------------------------------------------------------------------------------
 -- Spaces
@@ -206,7 +185,7 @@ solveCentre
 solveCentre = groundState
 
 --------------------------------------------------------------------------------
--- Gauge transport (dense SVD kernel behind a layout-safe bridge)
+-- Gauge transport (SVD on flattened-domain compositions)
 --------------------------------------------------------------------------------
 
 -- | Dense matrix of a site map: row @(l·p + s)@ is the image of
@@ -240,50 +219,71 @@ siteFromMatrix m = Site (uncurryLinearMap -+$=> outer)
       fst (recomposeLinMap (entireBasis :: SubBasis (C bl))
             [ inner l | l <- [0 .. cdim @bl - 1] ])
 
--- | Bond endomorphism @e_k ↦ row k@ of the given matrix.
-endoFromRows
-  :: forall n. KnownNat n
-  => HM.Matrix (Complex Double) -> (C n +> C n)
-endoFromRows m =
-  fst (recomposeLinMap (entireBasis :: SubBasis (C n))
-        [ fromList (HM.toList r) | r <- HM.toRows m ])
+
+
+-- | Thin SVD via dynamic hmatrix, wrapping the factors as static matrices.
+-- Intended for tall @m × n@ site layouts (@m ≥ n@); callers must ensure this.
+svdTallC
+  :: forall m n. (KnownNat m, KnownNat n)
+  => M m n -> (M m n, R n, M n n)
+svdTallC mat =
+  let (u, s, v) = HM.thinSVD (extract mat)
+  in ( fromMaybe (error "svdTallC: u") $ create u
+     , fromMaybe (error "svdTallC: s") $ create s
+     , fromMaybe (error "svdTallC: v") $ create v
+     )
+
+-- | Wrap an @M bl (p·br)@ site matrix as a 'Site'.
+siteFromStorage
+  :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br))
+  => M bl (p * br) -> Site bl p br
+siteFromStorage = Site . siteLinearMap
+
+-- | Same site map with domain flattened to @C (bl·p)@ for tall SVD:
+-- @f ∘ swapMap ∘ splitBond@ (flat index @l·p + s@ via 'splitBond' @p @bl).
+siteForLeftSVD
+  :: forall bl p br.
+     ( KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * bl), KnownNat (bl * p)
+     , p * bl ~ bl * p )
+  => (C bl ⊗ C p) +> C br -> C (bl * p) +> C br
+siteForLeftSVD f = f . swapMap . splitBond @p @bl
+
+-- | Inverse of 'siteForLeftSVD': @g ∘ fuseBond @p @bl ∘ swapMap@.
+siteFromLeftSVD
+  :: forall bl p br.
+     (KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * bl), p * bl ~ bl * p)
+  => C (bl * p) +> C br -> (C bl ⊗ C p) +> C br
+siteFromLeftSVD g = g . fuseBond @p @bl . swapMap
 
 -- | Left-orthonormalize a site (requires @bl·p ≥ br@): thin SVD
 -- @M = U Σ V†@ of the @(bl·p) × br@ site matrix; the site becomes the
 -- isometry @U@ and the residual bond factor @Σ V†@ is returned, to be
 -- absorbed into the right neighbour as @next ∘ (factor ⊗^ id_p)@.
 normalizeLeft
-  :: (KnownNat bl, KnownNat p, KnownNat br)
+  :: forall bl p br.
+     ( KnownNat bl, KnownNat p, KnownNat br
+     , KnownNat (p * br), KnownNat (bl * p), KnownNat (p * bl), p * bl ~ bl * p )
   => Site bl p br -> (Site bl p br, C br +> C br)
-normalizeLeft site =
-  let m = siteMatrix site
-      (u, sv, v) = HM.thinSVD m
-      factor = HM.diag (HM.complex sv) HM.<> HM.tr v
-  in (siteFromMatrix u, endoFromRows factor)
+normalizeLeft (Site f) =
+  let (u, sv, v) = svdTallC @(bl * p) @br (getLinearMap (siteForLeftSVD f))
+  in ( Site (siteFromLeftSVD (LinearMap u))
+     , diagMap sv . transposeMap (LinearMap v)
+     )
 
 -- | Right-orthonormalize a site (requires @bl ≤ p·br@): thin SVD
--- @M₂ = U Σ V†@ of the @bl × (p·br)@ reshaped site matrix; the site becomes
+-- @M₂ = U Σ V†@ of the @bl × (p·br)@ storage matrix; the site becomes
 -- the co-isometry @V†@ and the residual bond factor @U Σ@ is returned, to be
 -- absorbed into the left neighbour as @factor ∘ prev@.
 normalizeRight
-  :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br)
+  :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br))
   => Site bl p br -> (C bl +> C bl, Site bl p br)
-normalizeRight site =
-  let p = cdim @p
-      bl = cdim @bl
-      br = cdim @br
-      rows' = HM.toRows (siteMatrix site)
-      m2 = HM.fromRows
-             [ HM.vjoin [ rows' !! (l * p + s) | s <- [0 .. p - 1] ]
-             | l <- [0 .. bl - 1] ]
-      (u, sv, v) = HM.thinSVD m2
-      vh = HM.tr v
-      vhRows = HM.toRows vh
-      m' = HM.fromRows
-             [ HM.subVector (s * br) br (vhRows !! l)
-             | l <- [0 .. bl - 1], s <- [0 .. p - 1] ]
-      factor = u HM.<> HM.diag (HM.complex sv)
-  in (endoFromRows factor, siteFromMatrix m')
+normalizeRight (Site f) =
+  let storage = getLinearMap f
+      (u, sv, v) = HM.thinSVD (extract storage)
+      uM = fromMaybe (error "normalizeRight: u") $ create u
+      svR = fromMaybe (error "normalizeRight: sv") $ create sv
+      vh = fromMaybe (error "normalizeRight: vh") $ create (HM.tr v)
+  in (rightSvdFactor uM svR, siteFromStorage @bl @p @br vh)
 
 --------------------------------------------------------------------------------
 -- Sweeping
@@ -291,8 +291,8 @@ normalizeRight site =
 
 -- | Rayleigh quotient @Re ⟨ψ|H|ψ⟩ / ⟨ψ|ψ⟩@ (gauge-independent).
 energy
-  :: ( KnownNat p, KnownNat w1, KnownNat w2, KnownNat b1, KnownNat b2 )
-  => MPO p w1 w2 -> MPS p b1 b2 -> Double
+  :: ( KnownNat p, KnownNat w, KnownNat b )
+  => MPO p w -> MPS p b -> Double
 energy mpo psi = realPart (mpsMPOInner psi mpo psi / mpsInner psi psi)
 
 -- | One full left→right→left sweep of single-site updates (sites 1, 2, 3, 2),
@@ -301,9 +301,11 @@ energy mpo psi = realPart (mpsMPOInner psi mpo psi / mpsInner psi psi)
 -- exact Rayleigh quotient, since its environments are isometric) and the
 -- updated MPS.
 sweep
-  :: forall p w1 w2 b1 b2.
-     ( KnownNat p, KnownNat w1, KnownNat w2, KnownNat b1, KnownNat b2 )
-  => MPO p w1 w2 -> MPS p b1 b2 -> (Double, MPS p b1 b2)
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (p * b), KnownNat (b * p), KnownNat (b * p)
+     , p * b ~ b * p, p * b ~ b * p )
+  => MPO p w -> MPS p b -> (Double, MPS p b)
 sweep (MPO o1 o2 o3) (MPS s1 s2 s3) =
   let -- Right-normalize so the orthogonality centre starts at site 1.
       (f3, s3r) = normalizeRight s3
@@ -333,13 +335,15 @@ sweep (MPO o1 o2 o3) (MPS s1 s2 s3) =
 
 -- | DMRG driver: sweep until the energy change drops below the tolerance or
 -- the sweep budget is exhausted.
-dmrg
-  :: ( KnownNat p, KnownNat w1, KnownNat w2, KnownNat b1, KnownNat b2 )
+dmrg  
+  :: ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (p * b), KnownNat (b * p), KnownNat (b * p)
+     , p * b ~ b * p, p * b ~ b * p )
   => Int                       -- ^ maximum number of sweeps
   -> Double                    -- ^ energy convergence tolerance
-  -> MPO p w1 w2
-  -> MPS p b1 b2
-  -> (Double, MPS p b1 b2)
+  -> MPO p w
+  -> MPS p b
+  -> (Double, MPS p b)
 dmrg maxSweeps tol mpo = go maxSweeps Nothing
   where
     go 0 mE psi = (maybe (energy mpo psi) id mE, psi)
@@ -361,13 +365,6 @@ unitMap i j =
   fst (recomposeLinMap (entireBasis :: SubBasis (C m))
         [ if k == i then basis @n j else zeroV | k <- [0 .. cdim @m - 1] ])
 
--- | Pauli matrices as physical-leg maps (data entry; both are symmetric, so
--- the transfer-orientation transpose is themselves).
-pauliX, pauliZ :: C 2 +> C 2
-pauliX = fst (recomposeLinMap (entireBasis :: SubBasis (C 2)) [basis @2 1, basis @2 0])
-pauliZ = fst (recomposeLinMap (entireBasis :: SubBasis (C 2))
-               [basis @2 0, (-1) *^ basis @2 1])
-
 -- | Transverse-field Ising on 3 sites, open boundaries:
 --
 --   @H = -J (σᶻ₁σᶻ₂ + σᶻ₂σᶻ₃) - h (σˣ₁ + σˣ₂ + σˣ₃)@
@@ -382,7 +379,7 @@ pauliZ = fst (recomposeLinMap (entireBasis :: SubBasis (C 2))
 tfimMPO
   :: Double                    -- ^ coupling J
   -> Double                    -- ^ transverse field h
-  -> MPO 2 3 3
+  -> MPO 2 3
 tfimMPO j h = MPO opL opC opR
   where
     jc = (-j) :+ 0
@@ -410,16 +407,22 @@ tfimMPO j h = MPO opL opC opR
 -- Validation helpers and properties
 --------------------------------------------------------------------------------
 
--- | Exact ground energy of the dense @C 8@ operator ('mpoToMatrix'),
+-- | Exact ground energy of the dense @C (p³)@ operator ('mpoToMatrix'),
 -- via the Hermitian eigensolver.
-denseGroundEnergy :: MPO 2 3 3 -> Double
+denseGroundEnergy
+  :: forall p w.
+     ( KnownNat p, KnownNat w, KnownNat (w * p)
+     , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
+     , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
+     , KnownNat (p * p), p * p ~ p * p )
+  => MPO p w -> Double
 denseGroundEnergy mpo =
-  let m = unwrap (mpoToMatrix mpo :: M 8 8)
+  let m = unwrap (mpoToMatrix mpo)
       (vals, _) = HM.eigSH (HM.sym m)
   in HM.minElement vals
 
 -- | Deterministic pseudo-random @MPS 2 2 2@ (Gaussian-integer entries).
-seededMPS222 :: Int -> MPS 2 2 2
+seededMPS222 :: Int -> MPS 2 2
 seededMPS222 seed = unGen genMPS222 (mkQCGen seed) 30
 
 -- | ⟨y, Heff x⟩ (Hilbert–Schmidt, via the library inner product on the
@@ -438,8 +441,8 @@ prop_effectiveHMatchesInner =
     in lhs QC.=== rhs
 
 -- | For a Hermitian MPO (TFIM) the effective Hamiltonian is Hermitian:
--- ⟨x, Heff y⟩ = conj ⟨y, Heff x⟩. Tested explicitly because
--- 'GroundState.groundState' symmetrises and would mask a violation.
+-- ⟨x, Heff y⟩ = conj ⟨y, Heff x⟩. Tested explicitly because a solver that
+-- symmetrises would mask a violation.
 -- (Up to floating-point rounding: unlike the Gaussian-integer site entries,
 -- the TFIM couplings are not exact in binary.)
 prop_effectiveHHermitian :: QC.Property
@@ -455,3 +458,37 @@ prop_effectiveHHermitian =
         scale = 1 + magnitude lhs + magnitude rhs
     in QC.counterexample (show lhs ++ " /≈ " ++ show rhs)
          (magnitude (lhs - rhs) <= 1e-9 * scale)
+
+-- | Flattening the domain via @swapMap ∘ splitBond@ yields the same @(bl·p) × br@
+-- matrix as the application-based 'siteMatrix' oracle.
+prop_flatLeftSVDMatchesSiteMatrix :: QC.Property
+prop_flatLeftSVDMatchesSiteMatrix =
+  QC.forAll genMPS222 $ \(MPS s122 s222 s221) ->
+    extract (getLinearMap (siteForLeftSVD @1 @2 @2 (siteLin s122)))
+      QC.=== siteMatrix @1 @2 @2 s122
+      QC..&&. extract (getLinearMap (siteForLeftSVD @2 @2 @2 (siteLin s222)))
+              QC.=== siteMatrix @2 @2 @2 s222
+      QC..&&. extract (getLinearMap (siteForLeftSVD @2 @2 @1 (siteLin s221)))
+              QC.=== siteMatrix @2 @2 @1 s221
+
+-- | Map-space 'groundState' agrees with the dense oracle on TFIM effective
+-- Hamiltonians (interim: both use 'groundStateDense' until map-space 'eigen'
+-- is unblocked).
+prop_groundStateMatchesDense :: QC.Property
+prop_groundStateMatchesDense =
+  QC.forAll genMPS222 $ \(MPS s1 _ s3) ->
+    let MPO o1 o2 o3 = tfimMPO 1 0.7
+        l1 = extendLeft leftBoundary s1 o1 s1
+        r3 = extendRight @2 s3 o3 s3 rightBoundary
+        heff = effectiveH @2 l1 o2 r3
+        (eEigen, _) = groundState heff
+        (eDense, _) = groundStateDense heff
+    in eEigen QC.=== eDense
+
+-- | On a 'HilbertSpace' (@C 4@), the 'eigen' path matches the dense oracle.
+prop_eigenMatchesDenseC4 :: QC.Property
+prop_eigenMatchesDenseC4 =
+  let f = (2 :: Complex Double) *^ (linearId :: C 4 +> C 4)
+      (eEigen, _) = groundStateEigen euclideanNorm f
+      (eDense, _) = groundStateDense f
+  in eEigen QC.=== eDense QC..&&. eEigen QC.=== 2

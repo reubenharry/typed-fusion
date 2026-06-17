@@ -115,30 +115,30 @@ env3Coeff env lB lW lK =
 --------------------------------------------------------------------------------
 
 amplitude
-  :: forall p b1 b2.
-     ( KnownNat p, KnownNat b1, KnownNat b2
-     , KnownNat (p * b1), KnownNat (p * b2), KnownNat (p * 1) )
-  => MPS p b1 b2 -> Int -> Int -> Int -> Complex Double
+  :: forall p b.
+     ( KnownNat p, KnownNat b
+     , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1) )
+  => MPS p b -> Int -> Int -> Int -> Complex Double
 amplitude (MPS sL sC sR) s1 s2 s3 =
-  let v1 = applySite @1 @p @b1 sL one1 s1
-      v2 = applySite @b1 @p @b2 sC v1 s2
-      r  = applySite @b2 @p @1 sR v2 s3
+  let v1 = applySite @1 @p @b sL one1 s1
+      v2 = applySite @b @p @b sC v1 s2
+      r  = applySite @b @p @1 sR v2 s3
   in unwrap r VS.! 0
 
 -- | Dense operator matrix element @H[t₁,t₂,t₃; s₁,s₂,s₃] = ⟨t|H|s⟩@ via bond
 -- threading (transfer orientation: @t@ enters the domain, @s@ is read off).
 mpoElement
-  :: forall p w1 w2.
-     ( KnownNat p, KnownNat w1, KnownNat w2
-     , KnownNat (w1 * p), KnownNat (w2 * p), KnownNat (1 * p) )
-  => MPO p w1 w2
+  :: forall p w.
+     ( KnownNat p, KnownNat w, KnownNat w
+     , KnownNat (w * p), KnownNat (1 * p) )
+  => MPO p w
   -> Int -> Int -> Int
   -> Int -> Int -> Int
   -> Complex Double
 mpoElement (MPO l c r) t1 t2 t3 s1 s2 s3 =
-  let v1 = applyOpSite @1 @p @w1 l one1 t1 s1
-      v2 = applyOpSite @w1 @p @w2 c v1 t2 s2
-      v3 = applyOpSite @w2 @p @1 r v2 t3 s3
+  let v1 = applyOpSite @1 @p @w l one1 t1 s1
+      v2 = applyOpSite @w @p @w c v1 t2 s2
+      v3 = applyOpSite @w @p @1 r v2 t3 s3
   in unwrap v3 VS.! 0
 
 --------------------------------------------------------------------------------
@@ -147,10 +147,10 @@ mpoElement (MPO l c r) t1 t2 t3 s1 s2 s3 =
 
 -- | Physical state as @C p ⊗ (C p ⊗ C p)@ via explicit basis sum (oracle).
 mpsToTensorReference
-  :: forall p b1 b2.
-     ( KnownNat p, KnownNat b1, KnownNat b2
-     , KnownNat (p * b1), KnownNat (p * b2), KnownNat (p * 1) )
-  => MPS p b1 b2 -> C p ⊗ (C p ⊗ C p)
+  :: forall p b.
+     ( KnownNat p, KnownNat b, KnownNat b
+     , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1) )
+  => MPS p b -> C p ⊗ (C p ⊗ C p)
 mpsToTensorReference mps =
   sumV
     [ amplitude mps s1 s2 s3 *^ (basis @p s1 ⊗ (basis @p s2 ⊗ basis @p s3))
@@ -164,10 +164,10 @@ flatIndex3 p s1 s2 s3 = s1 + p * s2 + p * p * s3
 -- | Flattened physical state @C (p³)@ in the canonical co-lexicographic
 -- order, @(s₁,s₂,s₃) ↦ s₁ + p·s₂ + p²·s₃@ (oracle).
 mpsToFlatReference
-  :: forall p b1 b2.
-     ( KnownNat p, KnownNat b1, KnownNat b2, KnownNat (p * p * p)
-     , KnownNat (p * b1), KnownNat (p * b2), KnownNat (p * 1) )
-  => MPS p b1 b2 -> C (p * p * p)
+  :: forall p b.
+     ( KnownNat p, KnownNat b, KnownNat (p * p * p)
+     , KnownNat (p * b), KnownNat (p * 1) )
+  => MPS p b -> C (p * p * p)
 mpsToFlatReference mps =
   fromList
     [ amplitude mps s1 s2 s3
@@ -176,12 +176,12 @@ mpsToFlatReference mps =
 
 -- | Reference implementation of ⟨ψ|φ⟩ as an explicit physical-basis sum.
 mpsInnerReference
-  :: forall p a1 a2.
+  :: forall p a.
      ( KnownNat p
-     , KnownNat a1, KnownNat a2
-     , KnownNat (p * a1), KnownNat (p * a2)
+     , KnownNat a, KnownNat a
+     , KnownNat (p * a), KnownNat (p * a)
      , KnownNat (p * 1) )
-  => MPS p a1 a2 -> MPS p a1 a2 -> Complex Double
+  => MPS p a -> MPS p a -> Complex Double
 mpsInnerReference psi phi =
   sum
     [ conjugate (amplitude psi s1 s2 s3) * amplitude phi s1 s2 s3
@@ -192,15 +192,15 @@ mpsInnerReference psi phi =
 
 -- | Reference @⟨ψ|H|φ⟩@ as an explicit physical-basis sum (oracle).
 mpsMPOInnerReference
-  :: forall p a1 a2 w1 w2 b1 b2.
+  :: forall p a w b.
      ( KnownNat p
-     , KnownNat a1, KnownNat a2, KnownNat b1, KnownNat b2
-     , KnownNat w1, KnownNat w2
-     , KnownNat (p * a1), KnownNat (p * a2)
-     , KnownNat (p * b1), KnownNat (p * b2)
+     , KnownNat a, KnownNat b
+     , KnownNat w, KnownNat w
+     , KnownNat (p * a), KnownNat (p * a)
+     , KnownNat (p * b), KnownNat (p * b)
      , KnownNat (p * 1)
-     , KnownNat (w1 * p), KnownNat (w2 * p), KnownNat (1 * p) )
-  => MPS p a1 a2 -> MPO p w1 w2 -> MPS p b1 b2 -> Complex Double
+     , KnownNat (w * p), KnownNat (w * p), KnownNat (1 * p) )
+  => MPS p a -> MPO p w -> MPS p b -> Complex Double
 mpsMPOInnerReference psi mpo phi =
   sum
     [ conjugate (amplitude psi t1 t2 t3)
@@ -264,15 +264,15 @@ matrixMPOTransferCoeff bra op ket env rB rW rK =
 -- | Matrix form of the 3-site MPO on flattened physical states; row index
 -- @t₁ + p·t₂ + p²·t₃@, column index @s₁ + p·s₂ + p²·s₃@ ('flatIndex3').
 mpoToMatrix
-  :: forall p w1 w2.
-     ( KnownNat p, KnownNat w1, KnownNat w2, KnownNat (p * p * p)
-     , KnownNat (w1 * p), KnownNat (w2 * p), KnownNat (1 * p) )
-  => MPO p w1 w2 -> M (p * p * p) (p * p * p)
+  :: forall p w.
+     ( KnownNat p, KnownNat w, KnownNat (p * p * p)
+     , KnownNat (w * p), KnownNat (1 * p) )
+  => MPO p w -> M (p * p * p) (p * p * p)
 mpoToMatrix mpo =
   fromList
     [ mpoElement mpo t1 t2 t3 s1 s2 s3
-    | t3 <- ix, t2 <- ix, t1 <- ix     -- row index, first index fastest
-    , s3 <- ix, s2 <- ix, s1 <- ix     -- column index, ditto
+    | t3 <- ix, t2 <- ix, t1 <- ix
+    , s3 <- ix, s2 <- ix, s1 <- ix
     ]
   where
     p = cdim @p
@@ -280,10 +280,10 @@ mpoToMatrix mpo =
 
 -- | Apply an MPO to a flattened physical state by explicit summation.
 mpoApplyFlat
-  :: forall p w1 w2.
-     ( KnownNat p, KnownNat w1, KnownNat w2, KnownNat (p * p * p)
-     , KnownNat (w1 * p), KnownNat (w2 * p), KnownNat (1 * p) )
-  => MPO p w1 w2 -> C (p * p * p) -> C (p * p * p)
+  :: forall p w.
+     ( KnownNat p, KnownNat w, KnownNat (p * p * p)
+     , KnownNat (w * p), KnownNat (1 * p) )
+  => MPO p w -> C (p * p * p) -> C (p * p * p)
 mpoApplyFlat mpo v =
   fromList
     [ sum

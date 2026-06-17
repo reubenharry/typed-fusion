@@ -1,6 +1,6 @@
 # Roadmap: a symmetry-aware, basis-independent DMRG in Haskell
 
-*Status: living document. Last updated 2026-06-07.*
+*Status: living document. Last updated 2026-06-15.*
 
 ## 0. The thesis
 
@@ -32,7 +32,7 @@ The single most important design principle, which makes (b) cheap, is stated in 
 | `Sector` / fusion category interface (`one, ⊗, dual, N, F, R, FS, dim`) | well-typed representations | `General.hs`, `SU2.hs` | exploratory; type-level fusion for U(1) & SU(2) charges exists, no F/R symbols |
 | `GradedSpace{I}` + block-sparse morphism (Schur blocks) | intertwiners | `FunctorExperiment.hs` | **most mature**: U(1) intertwiners as block-sparse hom; `compose` is now singleton-recursive (no `unsafeCoerce`); `TensorSpace` via `ToC`. Next: multi-block `ApplyInterGo` (toward SU(2)) |
 | `TensorMap` with named legs + contraction/permute | typed ITensors | `ItensorTyped.hs` | leg-labelling, type-level contraction (`Difference`/`Intersection`), permutation *evidence* done; `permute`/`rawContract` are `error "TODO"` |
-| MPS/DMRG algorithm layer (à la MPSKit) | DMRG | `TensorNetwork.DMRG.Concrete` | dense, complex-field; `move` (gauge) partly works via hmatrix SVD; `solveAtSite` effective-Hamiltonian + `eigen` is `undefined`/blocked |
+| MPS/DMRG algorithm layer (à la MPSKit) | DMRG | `TensorNetwork.DMRG.Fixed3` | typed 3-site DMRG green (TFIM); local solve still dense `eigSH`; gauge SVD via `getLinearMap`; `Concrete` is legacy |
 | Symmetric MPS as a vector space (tangent space, addition of states) | vector space of MPS | `TensorNetwork.MPS.FinSupp3` | `MPSClever` is a genuine `VectorSpace`; growable bond via `FinSuppSeq`; QuickCheck: addition commutes with flattening |
 
 TensorKit factors these as: `Sector` (in `TensorKitSectors.jl`) → `GradedSpace` →
@@ -58,18 +58,24 @@ not fixed. Inventory of what's directly usable for DMRG:
   `Norm`/`Seminorm`, `euclideanNorm`, `orthogonalComplementProj`.
 
 **Spectral / factorization**
-- `eigen :: (FiniteDimensional v, HilbertSpace v, IEEE (Scalar v)) => (v+>v) -> [(Scalar v, v)]`
-- `constructEigenSystem` / `roughEigenSystem` — matrix-free Krylov eigenbasis builder
-  (this is the DMRG-relevant one: it only applies `f`, never materialises a matrix).
+- `eigen :: (FiniteDimensional v, IEEE (RealPart (Scalar v)), …) => Norm v -> (v+>v) -> [(Scalar v, v)]`
+  — matrix-free Krylov + Givens decoupling; accepts an arbitrary `Norm`, not only
+  `euclideanNorm`.
+- `constructEigenSystem` / `roughEigenSystem` / `finishEigenSystem` — lower-level
+  eigenbasis builders (only apply `f`, never materialise the operator matrix).
+- `densifyNorm` — upgrades a `Norm` to act via `sampleLinearFunction` (dense norm
+  operator; useful for Krylov orthonormalisation on map spaces).
 - `Math.TensorNetwork.svd :: (Scalar v ~ Double, Scalar w ~ Double, HilbertSpace v,
   HilbertSpace w, Monad m) => InitialVectors m v -> (v -+> w) -> Int -> m [SVDPendants v w]`
   — basis-independent iterative SVD (in `linearmap-family`, which we own).
 
-**The gap (decision-forcing):** every spectral primitive above is **real-scalar only**
-— `IEEE (Scalar v)` / `RealFloat` / `Scalar ~ Double`. But `TensorNetwork.DMRG.Concrete`
-and `TensorNetwork.MPS.FinSupp3` work over `Field = Complex Double`. `IEEE (Complex Double)` does not hold,
-so `eigen euclideanNorm heff` over a complex space *cannot typecheck* — this is the
-concrete reason `solveAtSite` is stuck. See Decision D1.
+**Gaps relevant to DMRG:**
+- `euclideanNorm` requires `Coercible v (DualVector v)` (`HilbertSpace`). Map-space
+  centres `(C bₗ ⊗ C p) +> C bᵣ` are `InnerSpace` (Frobenius / Hilbert–Schmidt) but
+  **not** `HilbertSpace` — so `eigen euclideanNorm heff` does not typecheck on the
+  MPS centre. Fix: supply a custom `Norm` derived from `<.>` (see D3 migration, §4b).
+- Complex scalars: `eigen` needs `IEEE (RealPart (Scalar v))`, satisfied by
+  `Complex Double`; the old `Concrete` blocker was real-only `svd`, not `eigen` per se.
 
 ---
 
@@ -111,11 +117,11 @@ against an exact answer. No symmetry yet.
     `(C bₗ ⊗ C p) +> C bᵣ`, boundaries use `C 1`.
   - **Conjugation** (settled): **per-site, explicit** via `vectorConjugate`; bras and
     environments contract the conjugated tensor against the ket with bilinear ops.
-- **D3 eigensolver**: ✅ **dense hmatrix `eigSH`** for now (`GroundState.hs`) — the easy
-  route: materialise the local operator `C n +> C n` as a dense complex matrix (by
-  applying it to the standard basis) and use hmatrix's Hermitian solver. Verified on
-  `diag(3,1,2)` → ground energy `1.0`, spectrum `[1,2,3]`. A matrix-free / basis-
-  independent Lanczos can replace it later (and move upstream into `linearmap-family`).
+- **D3 eigensolver**: ✅ **interim — dense hmatrix `eigSH`** (`GroundState.hs`): materialise
+  the operator in the `FiniteDimensional` basis (`toDenseMatrix`) and solve with hmatrix.
+  Verified on `diag(3,1,2)` → ground energy `1.0`, spectrum `[1,2,3]`. ➡ **Target —
+  matrix-free `eigen`** with a Hilbert–Schmidt `Norm` on map-space centres (§4b); keep
+  `toDenseMatrix` as an oracle only.
 
 **First concrete target: the typed 3-site MPS.** Build the whole pipeline below on a
 fixed **3-site**, typed-bond MPS (transfer orientation, §4a) before any generalisation.
@@ -151,14 +157,50 @@ a `C (p³)` oracle for every operation. N-site generalisation is §5a.
 7. Build the per-site effective Hamiltonian by contracting the MPO with the left/right
    **environments** (partial MPS–MPO–MPS contractions). Keep `Heff` as an endomorphism on
    the site's own space (a map-space endo is fine — see `GroundState`); no flattening.
-8. Solve the lowest eigenpair with `GroundState.groundState` (✅ done, D3). First confirm
-   `Heff` is genuinely (conjugate-)Hermitian — `groundState` symmetrises, so a
-   non-Hermitian `Heff` would be silently masked; test `Heff` Hermiticity directly.
+8. Solve the lowest eigenpair with `GroundState.groundState` (✅ done, D3 interim). First
+   confirm `Heff` is genuinely (conjugate-)Hermitian — `groundState` symmetrises via
+   `H.sym`, so a non-Hermitian `Heff` would be silently masked; test Hermiticity directly
+   (`prop_effectiveHHermitian` ✅).
+
+### Phase 4b — migrate local solve to matrix-free `eigen` (planned)
+
+Replace the dense `toDenseMatrix` + `eigSH` path in `GroundState.groundState` with
+linearmap's `eigen`, keeping `Heff` as a map-space endomorphism (no flattening to `C n`).
+
+**Why not `getLinearMap`?** Unlike gauge-transport SVD (where `getLinearMap` after
+`siteForLeftSVD` matches the numerical layout), `getLinearMap heff` exposes backend
+tensor storage (e.g. `2×32`), not the `8×8` operator matrix in the HS basis that
+`toDenseMatrix` builds. `eigen` avoids materialising either matrix.
+
+**Steps (ordered):**
+
+1. **Define a Hilbert–Schmidt norm** on the centre / generic `InnerSpace v`:
+   `Norm v` from the existing Frobenius inner product (`‖v‖ = √(realPart (v <.> v))`).
+   `euclideanNorm` is unavailable when `DualVector v ≁ v` (map spaces, tensors). Likely
+   home: `GroundState.hs` first; candidate for upstreaming to `linearmap-family` as
+   `frobeniusNorm` / `innerProductNorm` (D4).
+2. **Pass it to `eigen`** — `eigen (densifyNorm hsNorm) heff` for Krylov
+   orthonormalisation; only operator *applications* `heff $ v`, never a full matrix build.
+3. **Reimplement `groundState` / `spectrum`** — lowest eigenpair via `minimumBy` on
+   `|λ|`; drop `H.sym` (eigen assumes Hermitian input; symmetrisation masked bugs under
+   the dense path — rely on `prop_effectiveHHermitian` instead).
+4. **Keep `toDenseMatrix` exported** — regression oracle only; not used in the solve path.
+5. **Property tests** — `prop_groundStateMatchesToDenseMatrix` on TFIM `Heff` at each site;
+   existing DMRG energy checks vs `denseGroundEnergy` must stay green.
+6. **Accuracy budget** — `eigen` is a tradeoff (two `finishEigenSystem` passes over a
+   `roughEigenSystem` approximation); tune Krylov tolerance or call
+   `constructEigenSystem` / `finishEigenSystem` directly if the sweep is sensitive.
+
+**Exit criterion:** `groundState` uses `eigen` only; `toDenseMatrix` remains for tests;
+DMRG ground energy unchanged within tolerance.
 
 ### Phase 5 — truncation, gauge transport, driver, validation
 9. SVD-truncate the bond to χ and transport the gauge centre (cf. `TensorNetwork.move`,
-   hmatrix `svdTall`; or `Math.TensorNetwork.svd`). With typed bonds, χ-change means a
-   bond-type change — handle via existentials or a fixed χ at the type level for now.
+   hmatrix `svdTall`; or `Math.TensorNetwork.svd`). ✅ **Typed 3-site path** in
+   `TensorNetwork.DMRG.Fixed3`: `normalizeLeft` / `normalizeRight` use `getLinearMap` +
+   categorical flatten (`siteForLeftSVD`); `prop_flatLeftSVDMatchesSiteMatrix` green.
+   With typed bonds, χ-change means a bond-type change — handle via existentials or a
+   fixed χ at the type level for now.
 10. **MPS compression / bond-dimension reduction**: given a typed MPS, reduce a chosen
     internal bond from @b@ to a target @χ@ by canonicalising around that bond, SVD'ing the
     relevant bipartition, truncating singular values, and absorbing the leftover factor
@@ -167,9 +209,11 @@ a `C (p³)` oracle for every operation. N-site generalisation is §5a.
     result (`SomeMPS p`) or a fixed maximum χ with an effective rank. Keep the flattened
     `C (p³)` state as the oracle: truncation should minimise/track `||ψ - ψ_trunc||` and
     preserve the state exactly when @χ ≥ rank@.
-11. Left→right→left sweep with energy-convergence stopping.
+11. Left→right→left sweep with energy-convergence stopping. ✅ `sweep` / `dmrg` in
+    `TensorNetwork.DMRG.Fixed3`.
 12. **Validate**: ground-state energy vs exact (TFIM) / ED for 3 sites; ⟨H²⟩−⟨H⟩²
-    variance. Add as QuickCheck/golden tests next to the existing `TensorNetwork.MPS.FinSupp3` properties.
+    variance. ✅ TFIM ground energy vs `denseGroundEnergy` (`checkDMRG` in `test/Main.hs`).
+    Remaining: ⟨H²⟩−⟨H⟩² variance; generalise beyond TFIM.
 
 **Exit criterion for "near-term done":** DMRG on the typed 3-site MPS returns the correct
 ground-state energy for the benchmark model to tolerance, with inner-product /
@@ -314,26 +358,22 @@ the headline payoff.
 ## 7. Cross-cutting decisions
 
 - **D1 — Field.** ✅ **Complex** (`Complex Double`). Matches the existing code and the
-  physics; cost is that native `eigen`/`svd` (real-only) can't be used directly →
-  drives D3.
+  physics. Native `svd` in `Math.TensorNetwork` remains real-only; complex local solve
+  uses dense `eigSH` for now, migrating to `eigen` with a custom HS `Norm` (D3, §4b).
 - **D2 — MPS representation.** ✅ **Typed `C b` bonds, finite 3-site, transfer
   orientation, per-site explicit conjugation** (full design in §4a). The untyped
   growable-`FinSuppSeq` `MPSClever` (vector-space instance) is **deferred to §5a** — kept
   for state addition / adaptive χ later, but it carries the bilinear-bond conjugation
   hazard and gives up type-level bond checking, so it's not the first-DMRG substrate.
-- **D3 — Eigensolver.** ✅ **Dense hmatrix `eigSH`** (`GroundState.hs`). Pragmatic and
-  done: build the operator's dense matrix in the canonical `FiniteDimensional` basis
-  (entry `e_i <.> f e_j`; basis vectors are real so this is convention-free), solve with
-  hmatrix. `groundState :: (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex
-  Double) => (v +> v) -> (Double, v)` is **generic over `v`** — so `Heff` may be an
-  endomorphism on a *map-space* (e.g. the MPS centre `(C b ⊗ C p) +> C b`); no flattening
-  to `C n` needed, since linear maps are first-class `FiniteDimensional` spaces. Not
-  basis-independent and materialises the operator; a matrix-free Lanczos can replace it
-  later (good upstream `linearmap-family` contribution).
-- **D4 — Fork strategy (open).** With D3 going upstream, decide what else belongs in
-  `linearmap-family` (a complex spectral module; a `DaggerCategory` class — already
-  sketched in `Math.TensorNetwork`) vs in `quantum`. Default: spectral/categorical
-  primitives upstream, physics models and the DMRG driver in `quantum`.
+- **D3 — Eigensolver.** ✅ **Interim: dense hmatrix `eigSH`** (`GroundState.hs`) —
+  materialise via `toDenseMatrix`, solve with hmatrix. Generic over map-space endos
+  (`Heff :: Centre +> Centre`); no flattening to `C n`. ➡ **Target: matrix-free
+  `eigen`** with a custom Hilbert–Schmidt `Norm` (§4b). `toDenseMatrix` stays as a test
+  oracle; the solve path stops building dense operator matrices.
+- **D4 — Fork strategy (open).** Candidates for `linearmap-family`: Hilbert–Schmidt /
+  Frobenius `Norm` from `InnerSpace`; complex spectral helpers; `DaggerCategory` (already
+  sketched in `Math.TensorNetwork`). Physics models and the DMRG driver stay in
+  `quantum`.
 
 ---
 
@@ -384,8 +424,12 @@ D1–D3 are resolved (§7). Concrete sequence (all on the **typed 3-site MPS**, 
    (`prop_innerMatchesFlat`, `prop_innerMatchesReference`, conjugate-symmetry, norm).
    Categorical bra pullback (§4a step 5) remains future work; current `transferStep`
    uses explicit matrix coefficients.
-4. ✅/➡ **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3) — categorical `applyOpSite`,
-   `mpoElement`, `mpoApplyMPS`, `mpoTransferStep`, and `mpsMPOInner` (closed transfer chain)
-   are green against basis, flat, and identity-MPO oracles. Next: add benchmark MPO (TFIM or Heisenberg),
-   then **`Heff` + `groundState`** (Phase 4), then **sweep + energy validation** vs
-   ED/exact (Phase 5).
+4. ✅ **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3) — categorical `applyOpSite`,
+   `mpoElement`, `mpoApplyMPS`, `mpoTransferStep`, and `mpsMPOInner` green; TFIM MPO in
+   `TensorNetwork.DMRG.Fixed3`.
+5. ✅ **Effective Hamiltonian + local solve** (Phase 4) — `effectiveH`, `solveCentre` /
+   `groundState`; `prop_effectiveHMatchesInner`, `prop_effectiveHHermitian` green.
+6. ✅ **Sweep + validation** (Phase 5) — `sweep`, `dmrg`, SVD gauge transport via
+   `getLinearMap`; TFIM ground energy vs `denseGroundEnergy` green.
+7. ➡ **Migrate `groundState` to `eigen`** (Phase 4b) — Hilbert–Schmidt `Norm`; keep
+   `toDenseMatrix` as oracle; re-run DMRG validation.
