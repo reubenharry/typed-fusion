@@ -294,7 +294,7 @@ rightGaugeMPS
    . ( KnownNat l, KnownNat p, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
   => MPS p b l -> MPS p b l
-rightGaugeMPS = go (chainLength @l) Cat.id 
+rightGaugeMPS = go (chainLength @l) Cat.id
   where
     n = chainLength @l
     go k bondIn mpsAcc
@@ -401,25 +401,17 @@ moveLeft z@MPSZipper{centreIndex = i, theMPS = mps, theMPO = mpo, rightEnv = r}
             i wit mpo mps' r cn (getOp i mpo)
     in z { centreIndex = i - 1, theMPS = mps', leftEnv = l', rightEnv = r' }
 
-fromZipper3 :: MPSZipper p b w 1 -> MPS p b 1
-fromZipper3 MPSZipper{theMPS} = theMPS
-
-toZipperGeneral
+toZipper
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
   => MPO p w l -> MPS p b l -> MPSZipper p b w l
-toZipperGeneral mpo mps =
+toZipper mpo mps =
   let mps' = rightGaugeMPS mps
       rEnv = buildRightEnvFromSite 2 mpo mps'
   in MPSZipper mpo mps' 1 (LeftEnvFirst leftBoundary) (RightEnvBulk rEnv)
 
-toZipper
-  :: forall p w b
-   . ( KnownNat p, KnownNat w, KnownNat b
-     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-  => MPO3 p w -> MPS p b 1 -> MPSZipper p b w 1
-toZipper = toZipperGeneral
+
 
 solveCenterAt
   :: forall p w b l
@@ -449,10 +441,10 @@ sweepSchedule
   -> MPS p b l
   -> (Double, MPS p b l)
 sweepSchedule mpo step mps0 =
-  let z0 = toZipperGeneral mpo mps0
+  let z0 = toZipper mpo mps0
       n = chainLength @l
-      zRight = foldl (\z _ -> step (moveRight z)) (step z0) [1 .. n - 1]
-      zFinal = foldl (\z _ -> step (moveLeft z)) zRight [1 .. n - 2]
+      zRight = (iterate (step . moveRight) (step z0) !! (n - 1))
+      zFinal = (iterate (step . moveLeft) zRight !! (n - 2))
   in (centreEnergy zFinal, theMPS zFinal)
 
 
@@ -473,7 +465,7 @@ sweep mpo psi0 =
 
 -- | DMRG driver: sweep until the energy change drops below the tolerance or
 -- the sweep budget is exhausted.
-dmrg  
+dmrg
   :: ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (p * b), KnownNat (b * p), KnownNat (b * p)
      , p * b ~ b * p, p * b ~ b * p )
@@ -494,7 +486,7 @@ dmrg maxSweeps tol mpo sweepFunction = go maxSweeps Nothing
 
 -- | DMRG driver in 'SvdM' (run with 'runSvdM' and a fixed seed).
 dmrgM
-  :: forall p w b m. 
+  :: forall p w b m.
     (Monad m, KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p)
      , p * b ~ b * p )
