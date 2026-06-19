@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE GADTs #-}
 
 -- | Core types for the typed-bond 3-site MPS\/MPO.
 --
@@ -18,6 +19,10 @@ module TensorNetwork.MPS.Fixed3.Internal
   , MPS (..)
   , OpSite (..)
   , MPO (..)
+  , MPSGeneral (..)
+  , MPOGeneral (..)
+  , ChainLength
+  , Vector
   , cdim
   , basis
   , one1
@@ -28,8 +33,9 @@ import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C, Sized (fromList))
-import GHC.TypeLits (KnownNat, Nat, natVal)
+import GHC.TypeLits (KnownNat, Nat, type (+), natVal)
 import Data.Proxy (Proxy (..))
+import Data.Vector.Sized (Vector)
 
 -- | MPS site in transfer orientation: @incoming-bond ⊗ physical ↦
 -- outgoing-bond@.
@@ -41,6 +47,24 @@ data MPS (p :: Nat) (b :: Nat)  = MPS
   , siteC :: Site b p b
   , siteR :: Site b p 1
   }
+
+-- | Open-boundary MPS with @l@ bulk sites (@Site b p b@) between the typed
+-- end sites. Chain length is @n = l + 2@; we require @l ≥ 1@ (so @n ≥ 3@).
+data MPSGeneral (p :: Nat) (b :: Nat) (l :: Nat) = MPSGeneral
+  { siteLGeneral :: Site 1 p b
+  , sitesC :: Vector l (Site b p b)
+  , siteRGeneral :: Site b p 1
+  }
+
+-- | Matching layout for the MPO on the same chain.
+data MPOGeneral (p :: Nat) (w :: Nat) (l :: Nat) = MPOGeneral
+  { opLGeneral :: OpSite 1 p w
+  , opsC :: Vector l (OpSite w p w)
+  , opRGeneral :: OpSite w p 1
+  }
+
+-- | Total site count for @l@ bulk sites.
+type ChainLength l = l + 2
 
 -- | MPO site in transfer orientation: the domain physical leg is the
 -- operator /output/ (bra-side) index @t@, the codomain physical leg the

@@ -69,6 +69,7 @@ import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), AdditiveGroup (
 
 import TensorNetwork.MPS.Fixed3.Internal
   ( Site (..), MPS (..), OpSite (..), MPO (..), cdim, basis )
+import TensorNetwork.MPS.Fixed3.Reference (opSiteCoeff)
 import TensorNetwork.MPS.Fixed3
   ( mpoTransferStep, opWire, mpsInner, mpsMPOInner, mpoToMatrix
   , genMPS222, genMPO222, pauliX, pauliZ )
@@ -79,7 +80,9 @@ import GroundState (groundState, groundStateDense, groundStateEigen)
 import TensorNetwork.DMRG.Spine (HList (..))
 import qualified TensorNetwork.DMRG.Spine as Spine
 import TensorNetwork.DMRG.Chain
-  ( AssembleFromZipper (..), assembleZipper, mps3FromChain, mpoSiteAt )
+  ( AssembleMPS3FromZipper (..), assembleMPS3FromZipper, mpoSiteAt
+  , mps3ToGeneral, mps3FromGeneral, mpo3ToGeneral, mpo3FromGeneral
+  , getSite, setSite, SomeSite (..) )
 import TensorNetwork.DMRG.SiteLists
   ( LeftBond, RightBond, LeftMPOBond, RightMPOBond
   , LeftSites, RightSites, SiteAt, OpSiteAt )
@@ -588,9 +591,9 @@ moveLeftBody3 z@MPSZipper{centre, leftSpine, rightSpine} =
 
 -- | Assemble an 'MPS' from zipper spines and centre.
 fromZipper
-  :: forall p b w i. (KnownNat b, AssembleFromZipper i) => MPSZipper3 p b w i -> MPS p b
+  :: forall p b w i. (KnownNat b, AssembleMPS3FromZipper i) => MPSZipper3 p b w i -> MPS p b
 fromZipper MPSZipper{leftSpine, centre, rightSpine} =
-  mps3FromChain (assembleZipper @i leftSpine centre rightSpine)
+  assembleMPS3FromZipper @i leftSpine centre rightSpine
 
 -- | Right-normalize sites 2–3 and build the site-1 zipper (orthogonality
 -- centre at the left end), matching the prologue of 'sweep'.
@@ -872,3 +875,66 @@ prop_eigenMatchesDenseC4 =
       (eEigen, _) = groundStateEigen euclideanNorm f
       (eDense, _) = groundStateDense f
   in eEigen QC.=== eDense QC..&&. eEigen QC.=== 2
+
+prop_mps3GeneralRoundTrip :: QC.Property
+prop_mps3GeneralRoundTrip =
+  QC.forAll genMPS222 $ \(MPS s1 s2 s3) ->
+    case mps3FromGeneral (mps3ToGeneral (MPS s1 s2 s3)) of
+      MPS s1' s2' s3' ->
+        siteMapsEqual s1 s1'
+        QC..&&. siteMapsEqual s2 s2'
+        QC..&&. siteMapsEqual s3 s3'
+
+prop_mpo3GeneralRoundTrip :: QC.Property
+prop_mpo3GeneralRoundTrip =
+  QC.forAll genMPO222 $ \(MPO o1 o2 o3) ->
+    case mpo3FromGeneral (mpo3ToGeneral (MPO o1 o2 o3)) of
+      MPO o1' o2' o3' ->
+        opMapsEqual o1 o1'
+        QC..&&. opMapsEqual o2 o2'
+        QC..&&. opMapsEqual o3 o3'
+
+prop_mpsGeneralGetSite :: QC.Property
+prop_mpsGeneralGetSite =
+  QC.forAll genMPS222 $ \(MPS s1 s2 s3) ->
+    let g = mps3ToGeneral (MPS s1 s2 s3)
+    in case (getSite 1 g, getSite 2 g, getSite 3 g) of
+         (SiteLeft a, SiteBulk b, SiteRight c) ->
+           siteMapsEqual s1 a
+           QC..&&. siteMapsEqual s2 b
+           QC..&&. siteMapsEqual s3 c
+         _ -> QC.property False
+
+prop_mpsGeneralSetSiteRoundTrip :: QC.Property
+prop_mpsGeneralSetSiteRoundTrip =
+  QC.forAll genMPS222 $ \mps@(MPS s1 s2 s3) ->
+    let g = mps3ToGeneral mps
+        g' = setSite 1 (SiteLeft s1)
+             (setSite 2 (SiteBulk s2) (setSite 3 (SiteRight s3) g))
+    in case mps3FromGeneral g' of
+         MPS s1' s2' s3' ->
+           siteMapsEqual s1 s1'
+           QC..&&. siteMapsEqual s2 s2'
+           QC..&&. siteMapsEqual s3 s3'
+
+siteMapsEqual
+  :: forall bl p br
+   . ( KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br) )
+  => Site bl p br -> Site bl p br -> QC.Property
+siteMapsEqual (Site f) (Site g) =
+  extract (getLinearMap f) QC.=== extract (getLinearMap g)
+
+opMapsEqual
+  :: forall wl p wr
+   . ( KnownNat wl, KnownNat p, KnownNat wr, KnownNat (wr * p) )
+  => OpSite wl p wr -> OpSite wl p wr -> QC.Property
+opMapsEqual o1 o2 =
+  foldr (QC..&&.) (QC.property True)
+    [ opSiteCoeff @wl @p @wr o1 l sIn r sOut
+        QC.===
+      opSiteCoeff @wl @p @wr o2 l sIn r sOut
+    | l <- [0 .. cdim @wl - 1]
+    , sIn <- [0 .. cdim @p - 1]
+    , r <- [0 .. cdim @wr - 1]
+    , sOut <- [0 .. cdim @p - 1]
+    ]

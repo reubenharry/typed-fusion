@@ -1,28 +1,36 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 
--- | n-site MPS/MPO as typed heterogeneous chains, and zipper reassembly.
+-- | General-length MPS/MPO storage, indexing, and 3-site record bridges.
 module TensorNetwork.DMRG.Chain
-  ( -- * Chain types
-    MPSn
-  , MPOn
+  ( -- * Chain length
+    chainLength
+    -- * Site / operator roles
+  , SomeSite (..)
+  , SomeOpSite (..)
+    -- * Indexing
+  , getSite
+  , setSite
+  , getOp
+  , setOp
     -- * 3-site record bridge
-  , mps3ToChain
-  , mps3FromChain
-  , mpo3ToChain
-  , mpo3FromChain
-    -- * Zipper assembly
-  , assembleZipperSites
-  , AssembleFromZipper (..)
+  , mps3ToGeneral
+  , mps3FromGeneral
+  , mpo3ToGeneral
+  , mpo3FromGeneral
+    -- * Zipper reassembly (3-site, until zipper uses 'MPSGeneral' directly)
+  , AssembleMPS3FromZipper (..)
+  , assembleMPS3FromZipper
     -- * Indexed updates on the 3-site record
   , PatchMPSAt (..)
   , patchMPSAt
@@ -30,92 +38,157 @@ module TensorNetwork.DMRG.Chain
   , mpoSiteAt
   ) where
 
-import Data.Kind (Type)
-import GHC.TypeLits (Nat, KnownNat)
+import GHC.TypeLits (Nat, KnownNat, natVal)
+import Data.Proxy (Proxy (..))
+import Data.Maybe (fromMaybe)
+import Data.List (splitAt)
+import Data.Vector.Sized (Vector, fromList, toList)
 import TensorNetwork.DMRG.Spine (HList (..))
-import TensorNetwork.DMRG.SiteLists
-  ( AllSites, AllOpSites, LeftSites, RightSites, SiteAt, OpSiteAt
-  , ZipperAssembled, Append )
-import TensorNetwork.MPS.Fixed3.Internal (MPS (..), MPO (..))
+import qualified TensorNetwork.DMRG.Spine as Spine
+import TensorNetwork.DMRG.SiteLists (LeftSites, RightSites, SiteAt, OpSiteAt)
+import TensorNetwork.MPS.Fixed3.Internal
+  ( Site (..), MPS (..), OpSite (..), MPO (..)
+  , MPSGeneral (..), MPOGeneral (..), ChainLength )
 
--- | An @n@-site open-boundary MPS as a typed site spine.
-type MPSn n p b = HList (AllSites n p b)
+bulkAt :: Int -> Vector l a -> a
+bulkAt j v = toList v !! j
 
--- | An @n@-site open-boundary MPO as a typed operator spine.
-type MPOn n p w = HList (AllOpSites n p w)
+bulkUpdate :: forall l a. KnownNat l => Int -> a -> Vector l a -> Vector l a
+bulkUpdate j x v =
+  fromMaybe (error "bulkUpdate: length mismatch") (fromList (pre ++ x : post))
+  where
+    (pre, _:post) = splitAt j (toList v)
 
-class AppendHList (xs :: [Type]) (ys :: [Type]) where
-  appendHList :: HList xs -> HList ys -> HList (Append xs ys)
+-- | Value-level chain length (@l + 2@ bulk + boundary sites).
+chainLength :: forall l. KnownNat l => Int
+chainLength = fromIntegral (natVal (Proxy @l)) + 2
 
-instance AppendHList '[] ys where
-  appendHList HNil ys = ys
+-- | A site drawn from an 'MPSGeneral', tagged by its bond layout.
+data SomeSite p b where
+  SiteLeft  :: Site 1 p b -> SomeSite p b
+  SiteBulk  :: Site b p b -> SomeSite p b
+  SiteRight :: Site b p 1 -> SomeSite p b
 
-instance AppendHList xs ys => AppendHList (x ': xs) ys where
-  appendHList (x :& xs') ys = x :& appendHList xs' ys
+data SomeOpSite p w where
+  OpLeft  :: OpSite 1 p w -> SomeOpSite p w
+  OpBulk  :: OpSite w p w -> SomeOpSite p w
+  OpRight :: OpSite w p 1 -> SomeOpSite p w
 
--- | Reassemble the full site chain from a DMRG zipper at centre @i@.
-assembleZipperSites
-  :: forall n p b i
-   . ( ZipperAssembled n p b i ~ AllSites n p b
-     , AppendHList (LeftSites n p b i) '[SiteAt n p b i]
-     , AppendHList
-         (Append (LeftSites n p b i) '[SiteAt n p b i])
-         (RightSites n p b i)
-     )
-  => HList (LeftSites n p b i)
-  -> SiteAt n p b i
-  -> HList (RightSites n p b i)
-  -> MPSn n p b
-assembleZipperSites ls centre rs =
-  appendHList (appendHList ls (centre :& HNil)) rs
+-- | Read site @i@ (1-based, @1 ≤ i ≤ chainLength@).
+getSite
+  :: forall p b l
+   . KnownNat l
+  => Int
+  -> MPSGeneral p b l
+  -> SomeSite p b
+getSite i mps
+  | i == 1 = SiteLeft (siteLGeneral mps)
+  | i == chainLength @l = SiteRight (siteRGeneral mps)
+  | i >= 2 && i <= chainLength @l - 1 = SiteBulk (bulkAt (i - 2) (sitesC mps))
+  | otherwise =
+      error ("getSite: index " ++ show i ++ " out of range 1.." ++ show (chainLength @l))
 
--- | Assemble a zipper at a known centre index (needed when @i@ is not concrete).
-class AssembleFromZipper (i :: Nat) where
-  assembleZipper
+-- | Write site @i@ (1-based). The 'SomeSite' constructor must match @i@.
+setSite
+  :: forall p b l
+   . KnownNat l
+  => Int
+  -> SomeSite p b
+  -> MPSGeneral p b l
+  -> MPSGeneral p b l
+setSite 1 (SiteLeft s) mps = mps { siteLGeneral = s }
+setSite i (SiteBulk s) mps
+  | i >= 2 && i <= chainLength @l - 1 =
+      mps { sitesC = bulkUpdate (i - 2) s (sitesC mps) }
+  | otherwise = siteIndexError @l "setSite" i
+setSite i (SiteRight s) mps
+  | i == chainLength @l = mps { siteRGeneral = s }
+  | otherwise = siteIndexError @l "setSite" i
+setSite i _ _ = siteIndexError @l "setSite" i
+
+siteIndexError :: forall l a. KnownNat l => String -> Int -> a
+siteIndexError what i =
+  error (what ++ ": index " ++ show i ++ " out of range 1.." ++ show (chainLength @l))
+
+getOp
+  :: forall p w l
+   . KnownNat l
+  => Int
+  -> MPOGeneral p w l
+  -> SomeOpSite p w
+getOp i mpo
+  | i == 1 = OpLeft (opLGeneral mpo)
+  | i == chainLength @l = OpRight (opRGeneral mpo)
+  | i >= 2 && i <= chainLength @l - 1 = OpBulk (bulkAt (i - 2) (opsC mpo))
+  | otherwise =
+      error ("getOp: index " ++ show i ++ " out of range 1.." ++ show (chainLength @l))
+
+setOp
+  :: forall p w l
+   . KnownNat l
+  => Int
+  -> SomeOpSite p w
+  -> MPOGeneral p w l
+  -> MPOGeneral p w l
+setOp 1 (OpLeft o) mpo = mpo { opLGeneral = o }
+setOp i (OpBulk o) mpo
+  | i >= 2 && i <= chainLength @l - 1 =
+      mpo { opsC = bulkUpdate (i - 2) o (opsC mpo) }
+  | otherwise = siteIndexError @l "setOp" i
+setOp i (OpRight o) mpo
+  | i == chainLength @l = mpo { opRGeneral = o }
+  | otherwise = siteIndexError @l "setOp" i
+setOp i _ _ = siteIndexError @l "setOp" i
+
+mps3ToGeneral :: MPS p b -> MPSGeneral p b 1
+mps3ToGeneral (MPS s1 s2 s3) =
+  MPSGeneral s1 (fromMaybe (error "mps3ToGeneral: bulk vector") (fromList [s2])) s3
+
+mps3FromGeneral :: MPSGeneral p b 1 -> MPS p b
+mps3FromGeneral (MPSGeneral s1 bulk s3) = MPS s1 (bulkAt 0 bulk) s3
+
+mpo3ToGeneral :: MPO p w -> MPOGeneral p w 1
+mpo3ToGeneral (MPO o1 o2 o3) =
+  MPOGeneral o1 (fromMaybe (error "mpo3ToGeneral: bulk vector") (fromList [o2])) o3
+
+mpo3FromGeneral :: MPOGeneral p w 1 -> MPO p w
+mpo3FromGeneral (MPOGeneral o1 bulk o3) = MPO o1 (bulkAt 0 bulk) o3
+
+class AssembleMPS3FromZipper (i :: Nat) where
+  assembleMPS3FromZipper
     :: forall p b. KnownNat b
     => HList (LeftSites 3 p b i)
     -> SiteAt 3 p b i
     -> HList (RightSites 3 p b i)
-    -> MPSn 3 p b
+    -> MPS p b
 
-instance AssembleFromZipper 1 where
-  assembleZipper
+instance AssembleMPS3FromZipper 1 where
+  assembleMPS3FromZipper
     :: forall p b. KnownNat b
     => HList (LeftSites 3 p b 1)
     -> SiteAt 3 p b 1
     -> HList (RightSites 3 p b 1)
-    -> MPSn 3 p b
-  assembleZipper ls c rs = assembleZipperSites @3 @p @b @1 ls c rs
+    -> MPS p b
+  assembleMPS3FromZipper HNil c rs =
+    MPS c (Spine.spineHead rs) (Spine.spineHead (Spine.spineTail rs))
 
-instance AssembleFromZipper 2 where
-  assembleZipper
+instance AssembleMPS3FromZipper 2 where
+  assembleMPS3FromZipper
     :: forall p b. KnownNat b
     => HList (LeftSites 3 p b 2)
     -> SiteAt 3 p b 2
     -> HList (RightSites 3 p b 2)
-    -> MPSn 3 p b
-  assembleZipper ls c rs = assembleZipperSites @3 @p @b @2 ls c rs
+    -> MPS p b
+  assembleMPS3FromZipper (s1 :& HNil) c (s3 :& HNil) = MPS s1 c s3
 
-instance AssembleFromZipper 3 where
-  assembleZipper
+instance AssembleMPS3FromZipper 3 where
+  assembleMPS3FromZipper
     :: forall p b. KnownNat b
     => HList (LeftSites 3 p b 3)
     -> SiteAt 3 p b 3
     -> HList (RightSites 3 p b 3)
-    -> MPSn 3 p b
-  assembleZipper ls c rs = assembleZipperSites @3 @p @b @3 ls c rs
-
-mps3ToChain :: MPS p b -> MPSn 3 p b
-mps3ToChain (MPS s1 s2 s3) = s1 :& s2 :& s3 :& HNil
-
-mps3FromChain :: MPSn 3 p b -> MPS p b
-mps3FromChain (s1 :& s2 :& s3 :& HNil) = MPS s1 s2 s3
-
-mpo3ToChain :: MPO p w -> MPOn 3 p w
-mpo3ToChain (MPO o1 o2 o3) = o1 :& o2 :& o3 :& HNil
-
-mpo3FromChain :: MPOn 3 p w -> MPO p w
-mpo3FromChain (o1 :& o2 :& o3 :& HNil) = MPO o1 o2 o3
+    -> MPS p b
+  assembleMPS3FromZipper (s1 :& s2 :& HNil) c HNil = MPS s1 s2 c
 
 class PatchMPSAt (i :: Nat) where
   patchMPSAtImpl

@@ -60,6 +60,10 @@ import TensorNetwork.DMRG.Fixed3
   , prop_flatLeftSVDMatchesSiteMatrix
   , prop_dmrgGroundEnergyMatchesDense
   , prop_eigenMatchesDenseC4
+  , prop_mps3GeneralRoundTrip
+  , prop_mpo3GeneralRoundTrip
+  , prop_mpsGeneralGetSite
+  , prop_mpsGeneralSetSiteRoundTrip
   , tfimMPO
   , dmrg
   , sweep
@@ -189,6 +193,14 @@ main = do
   requireQC =<< QC.quickCheckResult prop_dmrgGroundEnergyMatchesDense
   putStrLn "eigen path matches dense oracle on C 4..."
   requireQC =<< QC.quickCheckResult prop_eigenMatchesDenseC4
+  putStrLn "MPSGeneral round-trips with MPS (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_mps3GeneralRoundTrip
+  putStrLn "MPOGeneral round-trips with MPO (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_mpo3GeneralRoundTrip
+  putStrLn "MPSGeneral getSite returns correct sites..."
+  requireQC =<< QC.quickCheckResult prop_mpsGeneralGetSite
+  putStrLn "MPSGeneral setSite round-trips..."
+  requireQC =<< QC.quickCheckResult prop_mpsGeneralSetSiteRoundTrip
   putStrLn "DMRG matches dense ground energy (J=1, h=0.7)..."
   checkDMRG 1 0.7
   putStrLn "DMRG matches dense ground energy (J=0.5, h=1.3)..."
