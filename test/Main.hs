@@ -53,6 +53,13 @@ import TensorNetwork.MPS.Fixed3
   , prop_canonicalMPSRoundTripP2
   , prop_canonicalMPSRoundTripP3
   )
+import TensorNetwork.DMRG.Zipper
+  ( prop_toZipperMatchesLegacy
+  , prop_moveRightMatchesLegacy
+  , prop_moveLeftMatchesLegacy
+  , prop_solveCenterAtMatchesLegacy
+  , prop_centreEnergyMatchesLegacy
+  )
 import TensorNetwork.DMRG.SiteIndex
   ( prop_getSiteSingMatchesGetSite
   , prop_setSiteSingRoundTrip
@@ -206,6 +213,16 @@ main = do
   requireQC =<< QC.quickCheckResult prop_setSiteSingRoundTrip
   putStrLn "SiteIndex solveCentreSing matches solveCentre..."
   requireQC =<< QC.quickCheckResult prop_solveCentreSingMatchesSolveCentre
+  putStrLn "Zipper toZipper matches legacy (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_toZipperMatchesLegacy
+  putStrLn "Zipper moveRight matches legacy (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_moveRightMatchesLegacy
+  putStrLn "Zipper moveLeft matches legacy (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_moveLeftMatchesLegacy
+  putStrLn "Zipper solveCenterAt matches legacy (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_solveCenterAtMatchesLegacy
+  putStrLn "Zipper centreEnergy matches legacy (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_centreEnergyMatchesLegacy
   putStrLn "DMRG matches dense ground energy (J=1, h=0.7)..."
   checkDMRG 1 0.7
   putStrLn "DMRG matches dense ground energy (J=0.5, h=1.3)..."

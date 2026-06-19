@@ -22,6 +22,7 @@ module TensorNetwork.DMRG.Env
   , LeftEnvAtCentre (..)
   , RightEnvAtCentre (..)
   , buildLeftEnvUpTo
+  , bulkLeftEnvUpTo
   , buildRightEnvFromSite
   , updateEnvsMoveRight
   , updateEnvsMoveLeft
@@ -121,6 +122,20 @@ buildLeftEnvUpTo j mpo mps
   | otherwise =
       LeftEnvBulk
         (foldl (extendLeftBulkSite mpo mps) (extendLeftFirstSite mpo mps) [2 .. j - 1])
+
+bulkLeftEnvUpTo
+  :: forall p w b l
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+  => Int
+  -> MPO p w l
+  -> MPS p b l
+  -> LeftEnv w b b
+bulkLeftEnvUpTo j mpo mps
+  | j <= 1 =
+      error ("bulkLeftEnvUpTo: index " ++ show j ++ " must be at least 2")
+  | j == 2 = extendLeftFirstSite mpo mps
+  | otherwise =
+      foldl (extendLeftBulkSite mpo mps) (extendLeftFirstSite mpo mps) [2 .. j - 1]
 
 extendLeftFirstSite
   :: forall p w b l
