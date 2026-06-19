@@ -371,186 +371,196 @@ departRight
 departRight = snd . normalizeRight
 
 --------------------------------------------------------------------------------
--- Environment recipes (Tier 1 — boundary vs interior updates)
+-- Environment recipes and zipper moves (generic in @i@ for @n = 3@)
 --------------------------------------------------------------------------------
 
-class MoveRightEnvs (i :: Nat) where
-  updateEnvsMoveRight
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPO p w
-    -> LeftEnvAt 3 w b i
-    -> Site (LeftBond 3 b i) p (RightBond 3 b i)
-    -> OpSiteAt 3 p w i
-    -> RightSpine 3 p b (i + 1)
-    -> ( LeftEnvAt 3 w b (i + 1), RightEnvAt 3 w b (i + 1) )
-
-instance MoveRightEnvs 1 where
-  updateEnvsMoveRight
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPO p w -> LeftEnvAt 3 w b 1 -> Site 1 p b -> OpSiteAt 3 p w 1
-    -> RightSpine 3 p b 2 -> (LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2)
-  updateEnvsMoveRight mpo l c1n o1 rs =
-    let s3 = Spine.spineHead rs
-    in ( extendLeft l c1n o1 c1n
-       , extendRight @p s3 (mpoSiteAt @3 mpo) s3 rightBoundary
-       )
-
-instance MoveRightEnvs 2 where
-  updateEnvsMoveRight
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPO p w -> LeftEnvAt 3 w b 2 -> Site b p b -> OpSiteAt 3 p w 2
-    -> RightSpine 3 p b 3 -> (LeftEnvAt 3 w b 3, RightEnvAt 3 w b 3)
-  updateEnvsMoveRight _ l c2n o2 _ =
-    (extendLeft l c2n o2 c2n, rightBoundary)
-
-class MoveLeftEnvs (i :: Nat) where
-  updateEnvsMoveLeft
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPO p w
-    -> RightEnvAt 3 w b i
-    -> Site (LeftBond 3 b i) p (RightBond 3 b i)
-    -> OpSiteAt 3 p w i
-    -> LeftSpine 3 p b i
-    -> ( LeftEnvAt 3 w b (i - 1), RightEnvAt 3 w b (i - 1) )
-
-instance MoveLeftEnvs 2 where
-  updateEnvsMoveLeft
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPO p w -> RightEnvAt 3 w b 2 -> Site b p b -> OpSiteAt 3 p w 2
-    -> LeftSpine 3 p b 2 -> (LeftEnvAt 3 w b 1, RightEnvAt 3 w b 1)
-  updateEnvsMoveLeft mpo r c2n _ _ =
-    ( leftBoundary
-    , extendRight @p c2n (mpoSiteAt @2 mpo) c2n r
-    )
-
-instance MoveLeftEnvs 3 where
-  updateEnvsMoveLeft
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPO p w -> RightEnvAt 3 w b 3 -> Site b p 1 -> OpSiteAt 3 p w 3
-    -> LeftSpine 3 p b 3 -> (LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2)
-  updateEnvsMoveLeft mpo _ c3n _ ls =
-    let s1 = Spine.spineHead ls
-    in ( extendLeft leftBoundary s1 (mpoSiteAt @1 mpo) s1
-       , extendRight @p c3n (mpoSiteAt @3 mpo) c3n rightBoundary
-       )
-
-class MoveRightCentreOp (i :: Nat) where
-  centreOpAfterMoveRight :: forall p w. MPO p w -> OpSiteAt 3 p w (i + 1)
-
-instance MoveRightCentreOp 1 where
-  centreOpAfterMoveRight = mpoSiteAt @2
-
-instance MoveRightCentreOp 2 where
-  centreOpAfterMoveRight = mpoSiteAt @3
-
-class MoveLeftCentreOp (i :: Nat) where
-  centreOpAfterMoveLeft :: forall p w. MPO p w -> OpSiteAt 3 p w (i - 1)
-
-instance MoveLeftCentreOp 2 where
-  centreOpAfterMoveLeft = mpoSiteAt @1
-
-instance MoveLeftCentreOp 3 where
-  centreOpAfterMoveLeft = mpoSiteAt @2
-
--- | Finish a move right after gauge transport and spine shuffle.
-finishMoveRight
-  :: forall i p w b
-   . ( MoveRightEnvs i, MoveRightCentreOp i
-     , KnownNat p, KnownNat w, KnownNat b
+updateEnvsMoveRight1
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-  => MPSZipper3 p b w i
-  -> Site (LeftBond 3 b i) p (RightBond 3 b i)
-  -> Site (LeftBond 3 b (i + 1)) p (RightBond 3 b (i + 1))
-  -> LeftSpine 3 p b (i + 1)
-  -> RightSpine 3 p b (i + 1)
-  -> MPSZipper3 p b w (i + 1)
-finishMoveRight z@MPSZipper{..} cn newCentre newLeft newRight =
-  let (l', r') = updateEnvsMoveRight @i @p @w @b theMPO leftEnv cn centreOp newRight
+  => MPO p w
+  -> LeftEnvAt 3 w b 1
+  -> SiteAt 3 p b 1
+  -> OpSiteAt 3 p w 1
+  -> RightSpine 3 p b 2
+  -> ( LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2 )
+updateEnvsMoveRight1 mpo l cn op rs =
+  let s3 = Spine.spineHead rs
+  in ( extendLeft l cn op cn
+     , extendRight @p s3 (mpoSiteAt @3 mpo) s3 rightBoundary
+     )
+
+updateEnvsMoveRight2
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPO p w
+  -> LeftEnvAt 3 w b 2
+  -> SiteAt 3 p b 2
+  -> OpSiteAt 3 p w 2
+  -> RightSpine 3 p b 3
+  -> ( LeftEnvAt 3 w b 3, RightEnvAt 3 w b 3 )
+updateEnvsMoveRight2 _ l cn op _ =
+  (extendLeft l cn op cn, rightBoundary)
+
+updateEnvsMoveLeft2
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPO p w
+  -> RightEnvAt 3 w b 2
+  -> SiteAt 3 p b 2
+  -> OpSiteAt 3 p w 2
+  -> LeftSpine 3 p b 2
+  -> ( LeftEnvAt 3 w b 1, RightEnvAt 3 w b 1 )
+updateEnvsMoveLeft2 mpo r cn _ _ =
+  ( leftBoundary
+  , extendRight @p cn (mpoSiteAt @2 mpo) cn r
+  )
+
+updateEnvsMoveLeft3
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPO p w
+  -> RightEnvAt 3 w b 3
+  -> SiteAt 3 p b 3
+  -> OpSiteAt 3 p w 3
+  -> LeftSpine 3 p b 3
+  -> ( LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2 )
+updateEnvsMoveLeft3 mpo _ cn _ ls =
+  let s1 = Spine.spineHead ls
+  in ( extendLeft leftBoundary s1 (mpoSiteAt @1 mpo) s1
+     , extendRight @p cn (mpoSiteAt @3 mpo) cn rightBoundary
+     )
+
+finishMoveRight1
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 1
+  -> SiteAt 3 p b 1
+  -> SiteAt 3 p b 2
+  -> LeftSpine 3 p b 2
+  -> RightSpine 3 p b 2
+  -> MPSZipper3 p b w 2
+finishMoveRight1 z@MPSZipper{..} cn newCentre newLeft newRight =
+  let (l', r') = updateEnvsMoveRight1 theMPO leftEnv cn centreOp newRight
   in z
        { leftEnv = l'
        , rightEnv = r'
        , leftSpine = newLeft
        , centre = newCentre
        , rightSpine = newRight
-       , centreOp = centreOpAfterMoveRight @i theMPO
+       , centreOp = mpoSiteAt @2 theMPO
        }
 
--- | Finish a move left after gauge transport and spine shuffle.
-finishMoveLeft
-  :: forall i p w b
-   . ( MoveLeftEnvs i, MoveLeftCentreOp i
-     , KnownNat p, KnownNat w, KnownNat b
+finishMoveRight2
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-  => MPSZipper3 p b w i
-  -> Site (LeftBond 3 b i) p (RightBond 3 b i)
-  -> Site (LeftBond 3 b (i - 1)) p (RightBond 3 b (i - 1))
-  -> LeftSpine 3 p b (i - 1)
-  -> RightSpine 3 p b (i - 1)
-  -> MPSZipper3 p b w (i - 1)
-finishMoveLeft z@MPSZipper{..} cn newCentre newLeft newRight =
-  let (l', r') = updateEnvsMoveLeft @i @p @w @b theMPO rightEnv cn centreOp leftSpine
+  => MPSZipper3 p b w 2
+  -> SiteAt 3 p b 2
+  -> SiteAt 3 p b 3
+  -> LeftSpine 3 p b 3
+  -> RightSpine 3 p b 3
+  -> MPSZipper3 p b w 3
+finishMoveRight2 z@MPSZipper{..} cn newCentre newLeft newRight =
+  let (l', r') = updateEnvsMoveRight2 theMPO leftEnv cn centreOp newRight
   in z
        { leftEnv = l'
        , rightEnv = r'
        , leftSpine = newLeft
        , centre = newCentre
        , rightSpine = newRight
-       , centreOp = centreOpAfterMoveLeft @i theMPO
+       , centreOp = mpoSiteAt @3 theMPO
        }
 
-class MoveRightBody (i :: Nat) where
-  moveRightBody
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w i -> MPSZipper3 p b w (i + 1)
+finishMoveLeft2
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 2
+  -> SiteAt 3 p b 2
+  -> SiteAt 3 p b 1
+  -> LeftSpine 3 p b 1
+  -> RightSpine 3 p b 1
+  -> MPSZipper3 p b w 1
+finishMoveLeft2 z@MPSZipper{..} cn newCentre newLeft newRight =
+  let (l', r') = updateEnvsMoveLeft2 theMPO rightEnv cn centreOp leftSpine
+  in z
+       { leftEnv = l'
+       , rightEnv = r'
+       , leftSpine = newLeft
+       , centre = newCentre
+       , rightSpine = newRight
+       , centreOp = mpoSiteAt @1 theMPO
+       }
 
-instance MoveRightBody 1 where
-  moveRightBody z@MPSZipper{centre, leftSpine, rightSpine} =
-    let cn = departLeft centre
-    in finishMoveRight @1 z cn
-         (Spine.spineHead rightSpine)
-         (Spine.snocSpine leftSpine cn)
-         (Spine.spineTail rightSpine)
+finishMoveLeft3
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 3
+  -> SiteAt 3 p b 3
+  -> SiteAt 3 p b 2
+  -> LeftSpine 3 p b 2
+  -> RightSpine 3 p b 2
+  -> MPSZipper3 p b w 2
+finishMoveLeft3 z@MPSZipper{..} cn newCentre newLeft newRight =
+  let (l', r') = updateEnvsMoveLeft3 theMPO rightEnv cn centreOp leftSpine
+  in z
+       { leftEnv = l'
+       , rightEnv = r'
+       , leftSpine = newLeft
+       , centre = newCentre
+       , rightSpine = newRight
+       , centreOp = mpoSiteAt @2 theMPO
+       }
 
-instance MoveRightBody 2 where
-  moveRightBody z@MPSZipper{centre, leftSpine, rightSpine} =
-    let cn = departLeft centre
-    in finishMoveRight @2 z cn
-         (Spine.spineHead rightSpine)
-         (Spine.snocSpine leftSpine cn)
-         (Spine.spineTail rightSpine)
+moveRightBody1
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 1 -> MPSZipper3 p b w 2
+moveRightBody1 z@MPSZipper{centre, leftSpine, rightSpine} =
+  let cn = departLeft centre
+  in finishMoveRight1 z cn
+       (Spine.spineHead rightSpine)
+       (Spine.snocSpine leftSpine cn)
+       (Spine.spineTail rightSpine)
 
-class MoveLeftBody (i :: Nat) where
-  moveLeftBody
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w i -> MPSZipper3 p b w (i - 1)
+moveRightBody2
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 2 -> MPSZipper3 p b w 3
+moveRightBody2 z@MPSZipper{centre, leftSpine, rightSpine} =
+  let cn = departLeft centre
+  in finishMoveRight2 z cn
+       (Spine.spineHead rightSpine)
+       (Spine.snocSpine leftSpine cn)
+       (Spine.spineTail rightSpine)
 
-instance MoveLeftBody 2 where
-  moveLeftBody z@MPSZipper{centre, leftSpine, rightSpine} =
-    let cn = departRight centre
-        (newCentre, newLeft) = Spine.popLeftSpine leftSpine
-    in finishMoveLeft @2 z cn newCentre newLeft (Spine.consSpine cn rightSpine)
+moveLeftBody2
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 2 -> MPSZipper3 p b w 1
+moveLeftBody2 z@MPSZipper{centre, leftSpine, rightSpine} =
+  let cn = departRight centre
+      (newCentre, newLeft) = Spine.popLeftSpine leftSpine
+  in finishMoveLeft2 z cn newCentre newLeft (Spine.consSpine cn rightSpine)
 
-instance MoveLeftBody 3 where
-  moveLeftBody z@MPSZipper{centre, leftSpine, rightSpine} =
-    let cn = departRight centre
-        (newCentre, newLeft) = Spine.popLeftSpine leftSpine
-    in finishMoveLeft @3 z cn newCentre newLeft (Spine.consSpine cn rightSpine)
+moveLeftBody3
+  :: forall p w b
+   . ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 3 -> MPSZipper3 p b w 2
+moveLeftBody3 z@MPSZipper{centre, leftSpine, rightSpine} =
+  let cn = departRight centre
+      (newCentre, newLeft) = Spine.popLeftSpine leftSpine
+  in finishMoveLeft3 z cn newCentre newLeft (Spine.consSpine cn rightSpine)
 
 --------------------------------------------------------------------------------
 -- MPS bridge and local solve
@@ -613,22 +623,15 @@ class ZipperSite (i :: Nat) where
     :: forall p w b
      . ( KnownNat p, KnownNat w, KnownNat b )
     => MPSZipper3 p b w i -> MPSZipper3 p b w i
-  -- centreEnergy
-  --   :: forall p w b
-  --    . ( KnownNat p, KnownNat w, KnownNat b )
-  --   => MPSZipper3 p b w i -> Double
 
 instance ZipperSite 1 where
   solveCenterAt = solveCenterAtImpl @3 @_ @_ @_ @1
-  -- centreEnergy = centreEnergyImpl @3 @_ @_ @_ @1
 
 instance ZipperSite 2 where
   solveCenterAt = solveCenterAtImpl @3 @_ @_ @_ @2
-  -- centreEnergy = centreEnergyImpl @3 @_ @_ @_ @2
 
 instance ZipperSite 3 where
   solveCenterAt = solveCenterAtImpl @3 @_ @_ @_ @3
-  -- centreEnergy = centreEnergyImpl @3 @_ @_ @_ @3
 
 -- | One left→right→left sweep expressed as zipper moves.
 --
@@ -649,9 +652,9 @@ sweepSchedule
 sweepSchedule mpo step psi0 =
   let z0 = toZipper mpo psi0
       z1 = step z0
-      z2 = step (moveRightBody z1)
-      z3 = step (moveRightBody z2)
-      z4 = step (moveLeftBody z3)
+      z2 = step (moveRightBody1 z1)
+      z3 = step (moveRightBody2 z2)
+      z4 = step (moveLeftBody3 z3)
   in (centreEnergyImpl z4, fromZipper z4)
 
 
