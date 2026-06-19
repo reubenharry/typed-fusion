@@ -47,7 +47,8 @@ module TensorNetwork.MPS.Fixed3.Reference
 import Prelude hiding (($))
 import Control.Arrow.Constrained (($))
 import TensorNetwork.MPS.Fixed3.Internal
-  ( Site (..), MPS (..), OpSite (..), MPO (..), cdim, basis, one1 )
+  ( Site (..), MPS (..), OpSite (..), MPO (..), cdim, basis, one1
+  , MPS3, MPO3, withMPS3, withMPO3 )
 import Math.LinearMap.Category
   ( type (+>), type (⊗), (⊗) )
 import Math.LinearMap.Category.Instances ()
@@ -118,12 +119,13 @@ amplitude
   :: forall p b.
      ( KnownNat p, KnownNat b
      , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1) )
-  => MPS p b -> Int -> Int -> Int -> Complex Double
-amplitude (MPS sL sC sR) s1 s2 s3 =
-  let v1 = applySite @1 @p @b sL one1 s1
-      v2 = applySite @b @p @b sC v1 s2
-      r  = applySite @b @p @1 sR v2 s3
-  in unwrap r VS.! 0
+  => MPS3 p b -> Int -> Int -> Int -> Complex Double
+amplitude mps s1 s2 s3 =
+  withMPS3 mps $ \sL sC sR ->
+    let v1 = applySite @1 @p @b sL one1 s1
+        v2 = applySite @b @p @b sC v1 s2
+        r  = applySite @b @p @1 sR v2 s3
+    in unwrap r VS.! 0
 
 -- | Dense operator matrix element @H[t₁,t₂,t₃; s₁,s₂,s₃] = ⟨t|H|s⟩@ via bond
 -- threading (transfer orientation: @t@ enters the domain, @s@ is read off).
@@ -131,15 +133,16 @@ mpoElement
   :: forall p w.
      ( KnownNat p, KnownNat w, KnownNat w
      , KnownNat (w * p), KnownNat (1 * p) )
-  => MPO p w
+  => MPO3 p w
   -> Int -> Int -> Int
   -> Int -> Int -> Int
   -> Complex Double
-mpoElement (MPO l c r) t1 t2 t3 s1 s2 s3 =
-  let v1 = applyOpSite @1 @p @w l one1 t1 s1
-      v2 = applyOpSite @w @p @w c v1 t2 s2
-      v3 = applyOpSite @w @p @1 r v2 t3 s3
-  in unwrap v3 VS.! 0
+mpoElement mpo t1 t2 t3 s1 s2 s3 =
+  withMPO3 mpo $ \l c r ->
+    let v1 = applyOpSite @1 @p @w l one1 t1 s1
+        v2 = applyOpSite @w @p @w c v1 t2 s2
+        v3 = applyOpSite @w @p @1 r v2 t3 s3
+    in unwrap v3 VS.! 0
 
 --------------------------------------------------------------------------------
 -- Whole-state oracles (explicit basis sums)
@@ -150,7 +153,7 @@ mpsToTensorReference
   :: forall p b.
      ( KnownNat p, KnownNat b, KnownNat b
      , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1) )
-  => MPS p b -> C p ⊗ (C p ⊗ C p)
+  => MPS3 p b -> C p ⊗ (C p ⊗ C p)
 mpsToTensorReference mps =
   sumV
     [ amplitude mps s1 s2 s3 *^ (basis @p s1 ⊗ (basis @p s2 ⊗ basis @p s3))
@@ -167,7 +170,7 @@ mpsToFlatReference
   :: forall p b.
      ( KnownNat p, KnownNat b, KnownNat (p * p * p)
      , KnownNat (p * b), KnownNat (p * 1) )
-  => MPS p b -> C (p * p * p)
+  => MPS3 p b -> C (p * p * p)
 mpsToFlatReference mps =
   fromList
     [ amplitude mps s1 s2 s3
@@ -181,7 +184,7 @@ mpsInnerReference
      , KnownNat a, KnownNat a
      , KnownNat (p * a), KnownNat (p * a)
      , KnownNat (p * 1) )
-  => MPS p a -> MPS p a -> Complex Double
+  => MPS3 p a -> MPS3 p a -> Complex Double
 mpsInnerReference psi phi =
   sum
     [ conjugate (amplitude psi s1 s2 s3) * amplitude phi s1 s2 s3
@@ -200,7 +203,7 @@ mpsMPOInnerReference
      , KnownNat (p * b), KnownNat (p * b)
      , KnownNat (p * 1)
      , KnownNat (w * p), KnownNat (w * p), KnownNat (1 * p) )
-  => MPS p a -> MPO p w -> MPS p b -> Complex Double
+  => MPS3 p a -> MPO3 p w -> MPS3 p b -> Complex Double
 mpsMPOInnerReference psi mpo phi =
   sum
     [ conjugate (amplitude psi t1 t2 t3)
@@ -267,7 +270,7 @@ mpoToMatrix
   :: forall p w.
      ( KnownNat p, KnownNat w, KnownNat (p * p * p)
      , KnownNat (w * p), KnownNat (1 * p) )
-  => MPO p w -> M (p * p * p) (p * p * p)
+  => MPO3 p w -> M (p * p * p) (p * p * p)
 mpoToMatrix mpo =
   fromList
     [ mpoElement mpo t1 t2 t3 s1 s2 s3
@@ -283,7 +286,7 @@ mpoApplyFlat
   :: forall p w.
      ( KnownNat p, KnownNat w, KnownNat (p * p * p)
      , KnownNat (w * p), KnownNat (1 * p) )
-  => MPO p w -> C (p * p * p) -> C (p * p * p)
+  => MPO3 p w -> C (p * p * p) -> C (p * p * p)
 mpoApplyFlat mpo v =
   fromList
     [ sum

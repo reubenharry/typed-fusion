@@ -42,7 +42,8 @@ import Math.LinearMap.Category
 import Math.LinearMap.Category.Instances.Deriving ()
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import TensorNetwork.MPS.Fixed3.Internal
-  ( Site (..), MPS (..), OpSite (..), MPO (..), one1, cdim, basis )
+  ( Site (..), MPS (..), OpSite (..), MPO (..), one1, cdim, basis
+  , MPS3, MPO3, mps3, mpo3, withMPS3, withMPO3 )
 import TensorNetwork.MPS.Fixed3.Reference
   ( applySite, applyOpSite, siteCoeff, opSiteCoeff, envCoeff, env3Coeff
   , matrixTransferCoeff, matrixMPOTransferCoeff
@@ -80,7 +81,7 @@ import Test.QuickCheck.Random (mkQCGen)
 mpsToTensor
   :: forall p b.
      ( KnownNat p, KnownNat b )
-  => MPS p b -> C p ⊗ (C p ⊗ C p)
+  => MPS3 p b -> C p ⊗ (C p ⊗ C p)
 mpsToTensor mps =
   ( rassocMap
       . ((lunit ⊗^ idC @p) ⊗^ idC @p)
@@ -101,12 +102,12 @@ mpsFromPhysical
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1)
      , KnownNat (b * p), p * b ~ b * p )
-  => Physical3 p -> MPS p b
+  => Physical3 p -> MPS3 p b
 mpsFromPhysical tensor =
   let (leftFactor, rest) = svdSplitTensor @p @p @p @b ((LinearMap . getTensorProduct) tensor)
       (centerFactor, rightFactor) =
         svdSplit @(b * p) @p @b (restForSecondCut @p @b rest)
-  in MPS
+  in mps3
        (leftSiteFromFactor leftFactor)
        (Site (siteFromLeftSVD @b centerFactor))
        (rightSiteFromFactor rightFactor)
@@ -118,12 +119,14 @@ mpsFromPhysical tensor =
 mpsInner
   :: forall p a.
      ( KnownNat p, KnownNat a )
-  => MPS p a -> MPS p a -> Complex Double
-mpsInner (MPS lB cB rB) (MPS lK cK rK) =
-  trace -+$>
-    ( transferStep @p rB rK $
-        transferStep @p cB cK $
-          transferStep @p lB lK Cat.id )
+  => MPS3 p a -> MPS3 p a -> Complex Double
+mpsInner mps1 mps2 =
+  withMPS3 mps1 $ \lB cB rB ->
+  withMPS3 mps2 $ \lK cK rK ->
+    trace -+$>
+      ( transferStep @p rB rK $
+          transferStep @p cB cK $
+            transferStep @p lB lK Cat.id )
 
 
 
@@ -140,10 +143,10 @@ mpsInner (MPS lB cB rB) (MPS lK cK rK) =
 instance (KnownNat bl, KnownNat p, KnownNat br) => Show (Site bl p br) where
   show _ = "Site"
 
-instance Show (MPS p b) where
+instance Show (MPS p b l) where
   show _ = "MPS"
 
-instance Show (MPO p w) where
+instance Show (MPO p w l) where
   show _ = "MPO"
 
 instance (KnownNat wl, KnownNat p, KnownNat wr) => Show (OpSite wl p wr) where
@@ -196,9 +199,10 @@ createOrFail x = fromMaybe (error "createOrFail") (create x)
 mpsChainMap
   :: forall p b.
      ( KnownNat p, KnownNat b )
-  => MPS p b -> ((((C 1 ⊗ C p) ⊗ C p) ⊗ C p) +> C 1)
-mpsChainMap (MPS (Site l) (Site c) (Site r)) =
-  r . ((c . (l ⊗^ idC @p)) ⊗^ idC @p)
+  => MPS3 p b -> ((((C 1 ⊗ C p) ⊗ C p) ⊗ C p) +> C 1)
+mpsChainMap mps =
+  withMPS3 mps $ \(Site l) (Site c) (Site r) ->
+    r . ((c . (l ⊗^ idC @p)) ⊗^ idC @p)
 
 
 
@@ -210,7 +214,7 @@ mpsToFlat
   :: forall p b.
      ( KnownNat p, KnownNat b
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p) )
-  => MPS p b -> C (p * p * p)
+  => MPS3 p b -> C (p * p * p)
 mpsToFlat mps =
   unsafeFromArray (toArray (mpsToTensor mps) :: VS.Vector (Complex Double))
 
@@ -334,7 +338,7 @@ mpsFromPhysicalFlat
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1)
      , KnownNat (b * p), p * b ~ b * p )
-  => C (p * p * p) -> MPS p b
+  => C (p * p * p) -> MPS3 p b
 mpsFromPhysicalFlat = mpsFromPhysical . physicalFromFlat
 
 -- -- | Encode a flat @C (p³)@ vector as an MPS.
@@ -344,7 +348,7 @@ mpsFromPhysicalFlat = mpsFromPhysical . physicalFromFlat
 --      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
 --      , KnownNat (p * b1), KnownNat (p * b2), KnownNat (p * 1)
 --      , KnownNat (b1 * p), p * b1 ~ b1 * p )
---   => C (p * p * p) -> MPS p b
+--   => C (p * p * p) -> MPS3 p b
 -- mpsFromFlat = mpsFromPhysicalFlat
 
 -- | Re-encode an MPS from its physical tensor (SVD gauge).
@@ -354,7 +358,7 @@ canonicalMPS
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1)
      , KnownNat (b * p), p * b ~ b * p )
-  => MPS p b -> MPS p b
+  => MPS3 p b -> MPS3 p b
 canonicalMPS = mpsFromPhysical . mpsToTensor
 
 --------------------------------------------------------------------------------
@@ -375,9 +379,10 @@ conjugateSite (Site f) = Site (conjugateMap f)
 -- | The conjugated MPS — i.e. the bra ⟨ψ| as a (still ket-oriented) MPS.
 mpsConjugate
   :: (KnownNat p, KnownNat b)
-  => MPS p b -> MPS p b
-mpsConjugate (MPS l c r) =
-  MPS (conjugateSite l) (conjugateSite c) (conjugateSite r)
+  => MPS3 p b -> MPS3 p b
+mpsConjugate mps =
+  withMPS3 mps $ \l c r ->
+    mps3 (conjugateSite l) (conjugateSite c) (conjugateSite r)
 
 -- | One transfer-matrix update for ⟨ψ|φ⟩. The environment maps the bra bond
 -- to the ket bond; the bra site enters via 'dagger' (the only conjugation):
@@ -398,7 +403,7 @@ transferStep (Site bra) (Site ket) env =
 -- | The MPS norm @√⟨ψ|ψ⟩@.
 mpsNorm
   :: (KnownNat p, KnownNat b)
-  => MPS p b -> Double
+  => MPS3 p b -> Double
 mpsNorm psi = sqrt (realPart (mpsInner psi psi))
 
 --------------------------------------------------------------------------------
@@ -460,12 +465,14 @@ mpoApplyMPS
   :: forall p w b.
      ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (w * b) )
-  => MPO p w -> MPS p b -> MPS p (w * b)
-mpoApplyMPS (MPO lOp cOp rOp) (MPS lSite cSite rSite) =
-  MPS
+  => MPO3 p w -> MPS3 p b -> MPS3 p (w * b)
+mpoApplyMPS mpo mps =
+  withMPO3 mpo $ \lOp cOp rOp ->
+  withMPS3 mps $ \lSite cSite rSite ->
+    mps3
       (applyOpSiteToSite @1 @p @w @1 @b lOp lSite)
-    (applyOpSiteToSite @w @p @w @b @b cOp cSite)
-    (applyOpSiteToSite @w @p @1 @b @1 rOp rSite)
+      (applyOpSiteToSite @w @p @w @b @b cOp cSite)
+      (applyOpSiteToSite @w @p @1 @b @1 rOp rSite)
 
 -- | ⟨ψ|H|φ⟩ via left-to-right MPO–MPS transfer contraction: start from the
 -- inverse left unitor as the boundary environment, take three
@@ -475,19 +482,22 @@ mpsMPOInner
      ( KnownNat p
      , KnownNat a, KnownNat b
      , KnownNat w )
-  => MPS p a -> MPO p w -> MPS p b -> Complex Double
-mpsMPOInner (MPS lB cB rB) (MPO lOp cOp rOp) (MPS lK cK rK) =
-  trace -+$>
-    ( lunit
-        . ( mpoTransferStep @p rB rOp rK $
-              mpoTransferStep @p cB cOp cK $
-                mpoTransferStep @p lB lOp lK (lunitInv @(C 1)) ) )
+  => MPS3 p a -> MPO3 p w -> MPS3 p b -> Complex Double
+mpsMPOInner mpsB mpo mpsK =
+  withMPS3 mpsB $ \lB cB rB ->
+  withMPO3 mpo $ \lOp cOp rOp ->
+  withMPS3 mpsK $ \lK cK rK ->
+    trace -+$>
+      ( lunit
+          . ( mpoTransferStep @p rB rOp rK $
+                mpoTransferStep @p cB cOp cK $
+                  mpoTransferStep @p lB lOp lK (lunitInv @(C 1)) ) )
 
 -- | The identity operator as a bond-dimension-one MPO.
-identityMPO :: forall p. KnownNat p => MPO p 1
+identityMPO :: forall p. KnownNat p => MPO3 p 1
 identityMPO =
   let identSite = OpSite (Cat.id :: (C 1 ⊗ C p) +> (C 1 ⊗ C p))
-  in MPO identSite identSite identSite
+  in mpo3 identSite identSite identSite
 
 -- | Apply an MPO to a physical tensor: 'mpsFromPhysical' encode,
 -- 'mpoApplyMPS', then 'mpsToTensor' decode. The MPO step and decode are
@@ -498,7 +508,7 @@ mpoApplyPhysical
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
      , KnownNat (p * p), p * p ~ p * p )
-  => MPO p w -> Physical3 p -> Physical3 p
+  => MPO3 p w -> Physical3 p -> Physical3 p
 mpoApplyPhysical mpo =
   mpsToTensor . mpoApplyMPS mpo . mpsFromPhysical @p @p
 
@@ -510,7 +520,7 @@ mpoApplyFlat
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
      , KnownNat (p * p), p * p ~ p * p )
-  => MPO p w -> C (p * p * p) -> C (p * p * p)
+  => MPO3 p w -> C (p * p * p) -> C (p * p * p)
 mpoApplyFlat mpo =
   mpsToFlat . mpoApplyMPS mpo . mpsFromPhysicalFlat @p @p
 
@@ -522,7 +532,7 @@ mpoToMatrix
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
      , KnownNat (p * p), p * p ~ p * p )
-  => MPO p w -> M (p * p * p) (p * p * p)
+  => MPO3 p w -> M (p * p * p) (p * p * p)
 mpoToMatrix mpo =
   createOrFail
     (toDenseMatrix (sampleLinearFunction -+$> LinearFunction (mpoApplyFlat mpo)))
@@ -610,12 +620,12 @@ genSite = do
   pure (Site lin)
 
 -- | Random @MPS 2 2 2@ (physical dim 2, both bonds 2).
-genMPS222 :: QC.Gen (MPS 2 2)
-genMPS222 = MPS <$> genSite @1 @2 @2 <*> genSite @2 @2 @2 <*> genSite @2 @2 @1
+genMPS222 :: QC.Gen (MPS3 2 2)
+genMPS222 = mps3 <$> genSite @1 @2 @2 <*> genSite @2 @2 @2 <*> genSite @2 @2 @1
 
 -- | Random @MPS 3 3 3@ (physical dim 3, both bonds 3).
-genMPS333 :: QC.Gen (MPS 3 3)
-genMPS333 = MPS <$> genSite @1 @3 @3 <*> genSite @3 @3 @3 <*> genSite @3 @3 @1
+genMPS333 :: QC.Gen (MPS3 3 3)
+genMPS333 = mps3 <$> genSite @1 @3 @3 <*> genSite @3 @3 @3 <*> genSite @3 @3 @1
 
 -- | Random MPO site in the linearmap-category basis order.
 genOpSite
@@ -627,8 +637,8 @@ genOpSite = do
   pure (OpSite lin)
 
 -- | Random @MPO 2 2 2@ (physical dim 2, both operator bonds 2).
-genMPO222 :: QC.Gen (MPO 2 2)
-genMPO222 = MPO <$> genOpSite @1 @2 @2 <*> genOpSite @2 @2 @2 <*> genOpSite @2 @2 @1
+genMPO222 :: QC.Gen (MPO3 2 2)
+genMPO222 = mpo3 <$> genOpSite @1 @2 @2 <*> genOpSite @2 @2 @2 <*> genOpSite @2 @2 @1
 
 -- | 'applySite' is linear in the bond and matches the coefficient oracle.
 prop_applySiteMatchesCoeff :: QC.Property

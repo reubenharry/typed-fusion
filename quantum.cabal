@@ -72,14 +72,11 @@ library
         TensorNetwork.Dagger
         TensorNetwork.Categorical
         TensorNetwork.Categorical.Props
-        TensorNetwork.DMRG.Spine
-        TensorNetwork.DMRG.SiteLists
-        TensorNetwork.DMRG.SiteIndex
         TensorNetwork.DMRG.Chain
+        TensorNetwork.DMRG.Env
         TensorNetwork.DMRG.Fixed3
         TensorNetwork.DMRG.Fixed3SVD
         TensorNetwork.MPS.Fixed3
-        TensorNetwork.MPS.Fixed3General
         TensorNetwork.MPS.FinSupp3
         TensorNetwork.DMRG.Concrete
         GroundState

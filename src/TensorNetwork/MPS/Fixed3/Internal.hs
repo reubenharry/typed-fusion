@@ -8,7 +8,7 @@
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE GADTs #-}
 
--- | Core types for the typed-bond 3-site MPS\/MPO.
+-- | Core types for typed-bond open-boundary MPS/MPO chains.
 --
 -- Only types and standard-basis data-entry helpers live here. All
 -- coefficient-level computation is in "TensorNetwork.MPS.Fixed3.Reference"
@@ -19,8 +19,12 @@ module TensorNetwork.MPS.Fixed3.Internal
   , MPS (..)
   , OpSite (..)
   , MPO (..)
-  , MPSGeneral (..)
-  , MPOGeneral (..)
+  , MPS3
+  , MPO3
+  , mps3
+  , mpo3
+  , withMPS3
+  , withMPO3
   , ChainLength
   , Vector
   , cdim
@@ -35,33 +39,63 @@ import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C, Sized (fromList))
 import GHC.TypeLits (KnownNat, Nat, type (+), natVal)
 import Data.Proxy (Proxy (..))
-import Data.Vector.Sized (Vector)
+import Data.Maybe (fromMaybe)
+import Data.Vector.Sized (Vector, toList)
+import qualified Data.Vector.Sized as VS
 
 -- | MPS site in transfer orientation: @incoming-bond ⊗ physical ↦
 -- outgoing-bond@.
 data Site (bl :: Nat) (p :: Nat) (br :: Nat) = Site
   { siteLin :: (C bl ⊗ C p) +> C br }
 
-data MPS (p :: Nat) (b :: Nat)  = MPS
-  { siteL :: Site 1  p b
-  , siteC :: Site b p b
+-- | Open-boundary MPS with @l@ bulk sites (@Site b p b@) between the typed
+-- end sites. Chain length is @n = l + 2@; we require @l ≥ 1@ (so @n ≥ 3@).
+data MPS (p :: Nat) (b :: Nat) (l :: Nat) = MPS
+  { siteL :: Site 1 p b
+  , sitesC :: Vector l (Site b p b)
   , siteR :: Site b p 1
   }
 
--- | Open-boundary MPS with @l@ bulk sites (@Site b p b@) between the typed
--- end sites. Chain length is @n = l + 2@; we require @l ≥ 1@ (so @n ≥ 3@).
-data MPSGeneral (p :: Nat) (b :: Nat) (l :: Nat) = MPSGeneral
-  { siteLGeneral :: Site 1 p b
-  , sitesC :: Vector l (Site b p b)
-  , siteRGeneral :: Site b p 1
+-- | Matching layout for the MPO on the same chain.
+data MPO (p :: Nat) (w :: Nat) (l :: Nat) = MPO
+  { opL :: OpSite 1 p w
+  , opsC :: Vector l (OpSite w p w)
+  , opR :: OpSite w p 1
   }
 
--- | Matching layout for the MPO on the same chain.
-data MPOGeneral (p :: Nat) (w :: Nat) (l :: Nat) = MPOGeneral
-  { opLGeneral :: OpSite 1 p w
-  , opsC :: Vector l (OpSite w p w)
-  , opRGeneral :: OpSite w p 1
-  }
+-- | Three-site chains (@l = 1@ bulk site, @n = 3@ total).
+type MPS3 p b = MPS p b 1
+type MPO3 p w = MPO p w 1
+
+-- | Build a three-site MPS from its left, centre, and right sites.
+mps3
+  :: Site 1 p b -> Site b p b -> Site b p 1 -> MPS3 p b
+mps3 s1 s2 s3 =
+  MPS s1 (fromMaybe (error "mps3: bulk vector") (VS.fromList [s2])) s3
+
+-- | Build a three-site MPO from its left, centre, and right operator sites.
+mpo3
+  :: OpSite 1 p w -> OpSite w p w -> OpSite w p 1 -> MPO3 p w
+mpo3 o1 o2 o3 =
+  MPO o1 (fromMaybe (error "mpo3: bulk vector") (VS.fromList [o2])) o3
+
+-- | Destruct a three-site MPS.
+withMPS3
+  :: MPS3 p b
+  -> (Site 1 p b -> Site b p b -> Site b p 1 -> a)
+  -> a
+withMPS3 (MPS s1 bulk s3) k = k s1 (bulkAt0 bulk) s3
+  where
+    bulkAt0 v = toList v !! 0
+
+-- | Destruct a three-site MPO.
+withMPO3
+  :: MPO3 p w
+  -> (OpSite 1 p w -> OpSite w p w -> OpSite w p 1 -> a)
+  -> a
+withMPO3 (MPO o1 bulk o3) k = k o1 (bulkAt0 bulk) o3
+  where
+    bulkAt0 v = toList v !! 0
 
 -- | Total site count for @l@ bulk sites.
 type ChainLength l = l + 2
@@ -78,12 +112,6 @@ type ChainLength l = l + 2
 -- i.e. the /transpose/ of @O@ ('TensorNetwork.Dagger.transposeMap').
 data OpSite (wl :: Nat) (p :: Nat) (wr :: Nat) = OpSite
   { opSiteLin :: (C wl ⊗ C p) +> (C wr ⊗ C p) }
-
-data MPO (p :: Nat) (w :: Nat) = MPO
-  { opL :: OpSite 1  p w
-  , opC :: OpSite w p w
-  , opR :: OpSite w p 1
-  }
 
 -- | Dimension of @C n@ at the value level.
 cdim :: forall n. KnownNat n => Int

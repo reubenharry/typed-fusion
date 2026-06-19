@@ -42,7 +42,7 @@ import Control.Monad.Trans.State (State, evalState, state)
 import Control.Arrow.Constrained (($), arr)
 import Control.Monad (replicateM)
 import Math.LinearMap.Category
-  ( type (+>), type (⊗), (⊗)
+  ( type (+>), type (⊗)
   , getLinearMap, LinearMap (..) )
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
@@ -61,13 +61,15 @@ import qualified Test.QuickCheck as QC
 
 import Experiments.SVD (svdC, SVDPendants (..))
 import Math.VectorSpace.Initializable (InitialVectors (..))
-import TensorNetwork.MPS.Fixed3.Internal (Site (..), MPS (..), MPO (..), cdim)
+import TensorNetwork.MPS.Fixed3.Internal
+  ( Site (..), cdim
+  , MPS3, MPO3, mps3, withMPS3, withMPO3 )
 import TensorNetwork.MPS.Fixed3 (leftSvdFactor, rightSvdFactor)
 import TensorNetwork.Categorical (swapMap, splitBond, fuseBond)
+import TensorNetwork.DMRG.Env
+  ( leftBoundary, rightBoundary, extendLeft, extendRight )
 import TensorNetwork.DMRG.Fixed3
-  ( leftBoundary, rightBoundary
-  , extendLeft, extendRight
-  , effectiveH, solveCentre, dmrgM
+  ( effectiveH, solveCentre, dmrgM
   , denseGroundEnergy, energy, tfimMPO, seededMPS222
   )
 
@@ -237,8 +239,10 @@ sweepSvd
    . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p)
      , p * b ~ b * p )
-  => MPO p w -> MPS p b -> SvdM (Double, MPS p b)
-sweepSvd (MPO o1 o2 o3) (MPS s1 s2 s3) = do
+  => MPO3 p w -> MPS3 p b -> SvdM (Double, MPS3 p b)
+sweepSvd mpo mps =
+  withMPO3 mpo $ \o1 o2 o3 ->
+  withMPS3 mps $ \_s1 s2 s3 -> do
   (f3, s3r) <- normalizeRightSvdM s3
   (_f2, s2r) <- normalizeRightSvdM (Site (f3 . siteLin s2))
 
@@ -254,7 +258,7 @@ sweepSvd (MPO o1 o2 o3) (MPS s1 s2 s3) = do
   (_g3, s3n) <- normalizeRightSvdM (Site c3)
   let r3' = extendRight @p s3n o3 s3n rightBoundary
       (e2, c2') = solveCentre (effectiveH @p l1 o2 r3')
-  pure (e2, MPS s1n (Site c2') s3n)
+  pure (e2, mps3 s1n (Site c2') s3n)
 
 -- | DMRG driver with 'svdC' gauge transport (run with 'runSvdM' and a fixed seed).
 dmrgSvd
@@ -262,7 +266,7 @@ dmrgSvd
    . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p)
      , p * b ~ b * p )
-  => Int -> Double -> MPO p w -> MPS p b -> SvdM (Double, MPS p b)
+  => Int -> Double -> MPO3 p w -> MPS3 p b -> SvdM (Double, MPS3 p b)
 dmrgSvd maxSweeps tol mpo = dmrgM maxSweeps tol mpo sweepSvd
 
 -- | DMRG with 'svdC' gauge transport converges to the dense @C (p³)@ ground energy.
