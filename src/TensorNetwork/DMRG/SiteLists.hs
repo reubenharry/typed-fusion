@@ -23,11 +23,15 @@ module TensorNetwork.DMRG.SiteLists
   , OpSiteAt
     -- * Full chain and zipper spines
   , AllSites
+  , AllOpSites
   , LeftSites
   , RightSites
+  , ZipperAssembled
     -- * Type-level list utilities
   , Take
   , Drop
+  , Append
+  , SnocList
   ) where
 
 import Data.Kind (Type)
@@ -104,3 +108,23 @@ type LeftSites (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) =
 -- | Sites strictly right of centre @i@.
 type RightSites (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) =
   Drop i (AllSites n p b)
+
+-- | Left spine + centre + right spine reassembled in site order.
+type ZipperAssembled (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) =
+  Append (Append (LeftSites n p b i) '[SiteAt n p b i]) (RightSites n p b i)
+
+-- | Concatenate two type-level lists.
+type family Append (xs :: [k]) (ys :: [k]) :: [k] where
+  Append '[] ys = ys
+  Append (x ': xs) ys = x ': Append xs ys
+
+-- | All MPO site types for an @n@-site chain, ordered from site @1@ to site @n@.
+type family AllOpSites (n :: Nat) (p :: Nat) (w :: Nat) :: [Type] where
+  AllOpSites 0 _ _ = '[]
+  AllOpSites n p w = AllOpSitesUpTo n p w n
+
+-- | MPO sites @1 .. i@ of an @n@-site chain.
+type family AllOpSitesUpTo (n :: Nat) (p :: Nat) (w :: Nat) (i :: Nat) :: [Type] where
+  AllOpSitesUpTo n p w 1 = '[OpSiteAt n p w 1]
+  AllOpSitesUpTo n p w i =
+    SnocList (AllOpSitesUpTo n p w (i - 1)) (OpSiteAt n p w i)

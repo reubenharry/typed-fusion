@@ -78,6 +78,8 @@ import TensorNetwork.Dagger (dagger, transposeMap)
 import GroundState (groundState, groundStateDense, groundStateEigen)
 import TensorNetwork.DMRG.Spine (HList (..))
 import qualified TensorNetwork.DMRG.Spine as Spine
+import TensorNetwork.DMRG.Chain
+  ( AssembleFromZipper (..), assembleZipper, mps3FromChain, mpoSiteAt )
 import TensorNetwork.DMRG.SiteLists
   ( LeftBond, RightBond, LeftMPOBond, RightMPOBond
   , LeftSites, RightSites, SiteAt, OpSiteAt )
@@ -394,7 +396,7 @@ instance MoveRightEnvs 1 where
   updateEnvsMoveRight mpo l c1n o1 rs =
     let s3 = Spine.spineHead rs
     in ( extendLeft l c1n o1 c1n
-       , extendRight @p s3 (opR mpo) s3 rightBoundary
+       , extendRight @p s3 (mpoSiteAt @3 mpo) s3 rightBoundary
        )
 
 instance MoveRightEnvs 2 where
@@ -428,7 +430,7 @@ instance MoveLeftEnvs 2 where
     -> LeftSpine 3 p b 2 -> (LeftEnvAt 3 w b 1, RightEnvAt 3 w b 1)
   updateEnvsMoveLeft mpo r c2n _ _ =
     ( leftBoundary
-    , extendRight @p c2n (opC mpo) c2n r
+    , extendRight @p c2n (mpoSiteAt @2 mpo) c2n r
     )
 
 instance MoveLeftEnvs 3 where
@@ -438,29 +440,29 @@ instance MoveLeftEnvs 3 where
        , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
     => MPO p w -> RightEnvAt 3 w b 3 -> Site b p 1 -> OpSiteAt 3 p w 3
     -> LeftSpine 3 p b 3 -> (LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2)
-  updateEnvsMoveLeft mpo@(MPO o1 _ o3) _ c3n _ ls =
+  updateEnvsMoveLeft mpo _ c3n _ ls =
     let s1 = Spine.spineHead ls
-    in ( extendLeft leftBoundary s1 o1 s1
-       , extendRight @p c3n o3 c3n rightBoundary
+    in ( extendLeft leftBoundary s1 (mpoSiteAt @1 mpo) s1
+       , extendRight @p c3n (mpoSiteAt @3 mpo) c3n rightBoundary
        )
 
 class MoveRightCentreOp (i :: Nat) where
   centreOpAfterMoveRight :: forall p w. MPO p w -> OpSiteAt 3 p w (i + 1)
 
 instance MoveRightCentreOp 1 where
-  centreOpAfterMoveRight (MPO _ o2 _) = o2
+  centreOpAfterMoveRight = mpoSiteAt @2
 
 instance MoveRightCentreOp 2 where
-  centreOpAfterMoveRight (MPO _ _ o3) = o3
+  centreOpAfterMoveRight = mpoSiteAt @3
 
 class MoveLeftCentreOp (i :: Nat) where
   centreOpAfterMoveLeft :: forall p w. MPO p w -> OpSiteAt 3 p w (i - 1)
 
 instance MoveLeftCentreOp 2 where
-  centreOpAfterMoveLeft (MPO o1 _ _) = o1
+  centreOpAfterMoveLeft = mpoSiteAt @1
 
 instance MoveLeftCentreOp 3 where
-  centreOpAfterMoveLeft (MPO _ o2 _) = o2
+  centreOpAfterMoveLeft = mpoSiteAt @2
 
 -- | Finish a move right after gauge transport and spine shuffle.
 finishMoveRight
@@ -556,8 +558,9 @@ instance MoveLeftBody 3 where
 
 -- | Assemble an 'MPS' from zipper spines and centre.
 fromZipper
-  :: MPSZipper3 p b w i -> MPS p b
-fromZipper = theMPS
+  :: forall p b w i. (KnownNat b, AssembleFromZipper i) => MPSZipper3 p b w i -> MPS p b
+fromZipper MPSZipper{leftSpine, centre, rightSpine} =
+  mps3FromChain (assembleZipper @i leftSpine centre rightSpine)
 
 -- | Right-normalize sites 2–3 and build the site-1 zipper (orthogonality
 -- centre at the left end), matching the prologue of 'sweep'.
