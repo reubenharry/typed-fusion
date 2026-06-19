@@ -83,6 +83,7 @@ import TensorNetwork.DMRG.Chain
 import TensorNetwork.DMRG.SiteLists
   ( LeftBond, RightBond, LeftMPOBond, RightMPOBond
   , LeftSites, RightSites, SiteAt, OpSiteAt )
+import TensorNetwork.DMRG.SiteIndex (MoveRightEnv (..), moveRightEnv3_1, moveRightEnv3_2)
 
 import qualified Test.QuickCheck as QC
 import Test.QuickCheck.Gen (unGen)
@@ -337,7 +338,6 @@ type RightSpine n p b i = HList (RightSites n p b i)
 -- MPO site ('centreOp'). Use 'toZipper' / 'fromZipper' to bridge 'MPS'.
 data MPSZipper (n :: Nat) p b w (i :: Nat) = MPSZipper
   { theMPO :: MPO p w
-  , theMPS :: MPS p b
   , leftEnv :: LeftEnvAt n w b i
   , rightEnv :: RightEnvAt n w b i
   , leftSpine :: LeftSpine n p b i
@@ -374,6 +374,29 @@ departRight = snd . normalizeRight
 -- Environment recipes and zipper moves (generic in @i@ for @n = 3@)
 --------------------------------------------------------------------------------
 
+class UpdateEnvsMoveRight3 (i :: Nat) where
+  updateEnvsMoveRight3
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b
+       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+    => MoveRightEnv 3 i
+    -> MPO p w
+    -> LeftEnvAt 3 w b i
+    -> SiteAt 3 p b i
+    -> OpSiteAt 3 p w i
+    -> RightSpine 3 p b (i + 1)
+    -> ( LeftEnvAt 3 w b (i + 1), RightEnvAt 3 w b (i + 1) )
+
+instance UpdateEnvsMoveRight3 1 where
+  updateEnvsMoveRight3 MoveRightInterior mpo l cn op rs =
+    let s = Spine.spineHead rs
+        l' = extendLeft l cn op cn
+    in ( l', extendRight s (mpoSiteAt @3 mpo) s rightBoundary )
+
+instance UpdateEnvsMoveRight3 2 where
+  updateEnvsMoveRight3 MoveRightBoundary mpo l cn op _ =
+    (extendLeft l cn op cn, rightBoundary)
+
 updateEnvsMoveRight1
   :: forall p w b
    . ( KnownNat p, KnownNat w, KnownNat b
@@ -385,10 +408,7 @@ updateEnvsMoveRight1
   -> RightSpine 3 p b 2
   -> ( LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2 )
 updateEnvsMoveRight1 mpo l cn op rs =
-  let s3 = Spine.spineHead rs
-  in ( extendLeft l cn op cn
-     , extendRight @p s3 (mpoSiteAt @3 mpo) s3 rightBoundary
-     )
+  updateEnvsMoveRight3 @1 moveRightEnv3_1 mpo l cn op rs
 
 updateEnvsMoveRight2
   :: forall p w b
@@ -400,8 +420,8 @@ updateEnvsMoveRight2
   -> OpSiteAt 3 p w 2
   -> RightSpine 3 p b 3
   -> ( LeftEnvAt 3 w b 3, RightEnvAt 3 w b 3 )
-updateEnvsMoveRight2 _ l cn op _ =
-  (extendLeft l cn op cn, rightBoundary)
+updateEnvsMoveRight2 mpo l cn op rs =
+  updateEnvsMoveRight3 @2 moveRightEnv3_2 mpo l cn op rs
 
 updateEnvsMoveLeft2
   :: forall p w b
@@ -579,12 +599,12 @@ toZipper
      ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
   => MPO p w -> MPS p b -> MPSZipper3 p b w 1
-toZipper mpo@(MPO o1 o2 o3) mps@(MPS s1 s2 s3) =
+toZipper mpo@(MPO o1 o2 o3) (MPS s1 s2 s3) =
   let (f3, s3r) = normalizeRight s3
       (_f2, s2r) = normalizeRight (Site (f3 . siteLin s2))
       r3 = extendRight @p s3r o3 s3r rightBoundary
       r23 = extendRight @p s2r o2 s2r r3
-  in MPSZipper mpo mps leftBoundary r23 HNil s1 (s2r :& s3r :& HNil) o1
+  in MPSZipper mpo leftBoundary r23 HNil s1 (s2r :& s3r :& HNil) o1
 
 solveCentreSite
   :: forall p wl wr bl br.
