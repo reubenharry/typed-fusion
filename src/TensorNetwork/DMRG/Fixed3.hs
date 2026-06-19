@@ -8,9 +8,7 @@
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE RankNTypes #-}
 
@@ -63,6 +61,7 @@ import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import qualified Numeric.LinearAlgebra as HM
 import GHC.TypeLits (KnownNat, type (*), Nat, type (-), type (+), CmpNat)
 import Data.Type.Bool (If)
+import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.Complex (Complex ((:+)), conjugate, realPart, magnitude)
 import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), AdditiveGroup (zeroV), sumV)
@@ -346,187 +345,157 @@ type CentreAt (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) =
 type OpSiteAt (n :: Nat) (p :: Nat) (w :: Nat) (i :: Nat) =
   OpSite (LeftMPOBond n w i) p (RightMPOBond n w i)
 
--- | Zipper state for single-site DMRG on an @n@-site open chain with uniform
--- bond @b@ and MPO bond @w@. The site index @i@ determines environment types
--- via 'LeftEnvAt' / 'RightEnvAt' — no per-site constructor enumeration.
-data MPSZipper (n :: Nat) p b w (i :: Nat) = MPSZipper
-  { theMPS :: MPS p b
-  , theMPO :: MPO p w
-  , leftEnv :: LeftEnvAt n w b i
-  , rightEnv :: RightEnvAt n w b i
-  }
+-- | Left spine: sites strictly left of the centre (empty at site 1).
+type family LeftSpine (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) :: Type where
+  LeftSpine n p b 1 = ()
+  LeftSpine n p b 2 = Site 1 p b
+  LeftSpine n p b 3 = (Site 1 p b, Site b p b)
 
--- | Three-site specialization (current 'MPS' / 'MPO' types).
+-- | Right spine: sites strictly right of the centre (empty at site @n@).
+type family RightSpine (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) :: Type where
+  RightSpine n p b 1 = (Site b p b, Site b p 1)
+  RightSpine n p b 2 = Site b p 1
+  RightSpine n p b 3 = ()
+
+-- | DMRG workspace: typed spines, centre site, and environments.
+--
+-- Use 'toZipper' to enter from 'MPS', run sweeps on the zipper, then
+-- 'fromZipper' to obtain the updated 'MPS'. The centre tensor is the only
+-- site mutated by 'solveCenterAt'.
+data MPSZipper (n :: Nat) p b w (i :: Nat) where
+  ZipAt1
+    :: MPO p w
+    -> LeftEnvAt 3 w b 1
+    -> RightEnvAt 3 w b 1
+    -> Site (LeftBond 3 b 1) p (RightBond 3 b 1)
+    -> Site b p b
+    -> Site b p 1
+    -> MPSZipper 3 p b w 1
+  ZipAt2
+    :: MPO p w
+    -> LeftEnvAt 3 w b 2
+    -> RightEnvAt 3 w b 2
+    -> Site 1 p b
+    -> Site b p b
+    -> Site b p 1
+    -> MPSZipper 3 p b w 2
+  ZipAt3
+    :: MPO p w
+    -> LeftEnvAt 3 w b 3
+    -> RightEnvAt 3 w b 3
+    -> Site 1 p b
+    -> Site b p b
+    -> Site b p 1
+    -> MPSZipper 3 p b w 3
+
 type MPSZipper3 p b w i = MPSZipper 3 p b w i
 
--- | Right-normalize sites 2–@n@ and build the site-1 zipper (orthogonality
+-- | Assemble an 'MPS' from zipper spines and centre (index @i@ irrelevant).
+fromZipper :: MPSZipper3 p b w i -> MPS p b
+fromZipper (ZipAt1 _ _ _ c1 s2 s3) = MPS c1 s2 s3
+fromZipper (ZipAt2 _ _ _ s1 c2 s3) = MPS s1 c2 s3
+fromZipper (ZipAt3 _ _ _ s1 s2 c3) = MPS s1 s2 c3
+
+-- | Right-normalize sites 2–3 and build the site-1 zipper (orthogonality
 -- centre at the left end), matching the prologue of 'sweep'.
-initZipperAtSite1
+toZipper
   :: forall p w b.
      ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-  => MPO p w -> MPS p b -> MPSZipper 3 p b w 1
-initZipperAtSite1 mpo@(MPO _ o2 o3) (MPS s1 s2 s3) =
+  => MPO p w -> MPS p b -> MPSZipper3 p b w 1
+toZipper mpo@(MPO _ o2 o3) (MPS s1 s2 s3) =
   let (f3, s3r) = normalizeRight s3
       (_f2, s2r) = normalizeRight (Site (f3 . siteLin s2))
-      mps' = MPS s1 s2r s3r
       r3 = extendRight @p s3r o3 s3r rightBoundary
       r23 = extendRight @p s2r o2 s2r r3
-  in MPSZipper mps' mpo leftBoundary r23
+  in ZipAt1 mpo leftBoundary r23 s1 s2r s3r
 
--- | Local ground-state solve at site @i@; environments are unchanged.
-solveCenterAtGeneric
-  :: forall n p b w i wl wr bl br.
-     ( KnownNat p, KnownNat w, KnownNat b
-     , KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br
-     , wl ~ LeftMPOBond n w i, wr ~ RightMPOBond n w i
-     , bl ~ LeftBond n b i, br ~ RightBond n b i )
-  => OpSite wl p wr
-  -> (Centre bl p br -> MPS p b -> MPS p b)
-  -> MPSZipper n p b w i
-  -> MPSZipper n p b w i
-solveCenterAtGeneric op updateMPS (MPSZipper mps mpo l r) =
-  let (_, c) = solveCentre (effectiveH @p l op r)
-  in MPSZipper (updateMPS c mps) mpo l r
+solveCentreSite
+  :: forall p wl wr bl br.
+     ( KnownNat p, KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br )
+  => LeftEnv wl bl bl
+  -> OpSite wl p wr
+  -> RightEnv wr br br
+  -> Site bl p br
+  -> (Double, Site bl p br)
+solveCentreSite l op r (Site _) =
+  let (e, c) = solveCentre (effectiveH @p l op r)
+  in (e, Site c)
+
+-- | Local ground-state solve at the centre; spines and environments unchanged.
+solveCenterAt
+  :: forall p w b i.
+     ( KnownNat p, KnownNat w, KnownNat b )
+  => MPSZipper3 p b w i -> MPSZipper3 p b w i
+solveCenterAt (ZipAt1 mpo@(MPO o1 _ _) l r c s2 s3) =
+  ZipAt1 mpo l r (snd (solveCentreSite l o1 r c)) s2 s3
+solveCenterAt (ZipAt2 mpo@(MPO _ o2 _) l r s1 c s3) =
+  ZipAt2 mpo l r s1 (snd (solveCentreSite l o2 r c)) s3
+solveCenterAt (ZipAt3 mpo@(MPO _ _ o3) l r s1 s2 c) =
+  ZipAt3 mpo l r s1 s2 (snd (solveCentreSite l o3 r c))
 
 -- | Rayleigh quotient of the local solve at the active site (for reporting).
-centreEnergyGeneric
-  :: forall n p b w i wl wr bl br.
+centreEnergy
+  :: forall p w b i.
+     ( KnownNat p, KnownNat w, KnownNat b )
+  => MPSZipper3 p b w i -> Double
+centreEnergy (ZipAt1 mpo@(MPO o1 _ _) l r _ _ _) =
+  fst (solveCentre (effectiveH @p l o1 r))
+centreEnergy (ZipAt2 mpo@(MPO _ o2 _) l r _ _ _) =
+  fst (solveCentre (effectiveH @p l o2 r))
+centreEnergy (ZipAt3 mpo@(MPO _ _ o3) l r _ _ _) =
+  fst (solveCentre (effectiveH @p l o3 r))
+
+-- | Shift the orthogonality centre one site right.
+moveRight12
+  :: forall p w b.
      ( KnownNat p, KnownNat w, KnownNat b
-     , KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br
-     , wl ~ LeftMPOBond n w i, wr ~ RightMPOBond n w i
-     , bl ~ LeftBond n b i, br ~ RightBond n b i )
-  => OpSite wl p wr
-  -> MPSZipper n p b w i
-  -> Double
-centreEnergyGeneric op (MPSZipper _ _ l r) =
-  fst (solveCentre (effectiveH @p l op r))
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 1 -> MPSZipper3 p b w 2
+moveRight12 (ZipAt1 mpo@(MPO o1 _ _) l r c1 s2 s3) =
+  let (c1n, _g1) = normalizeLeft c1
+      l1 = extendLeft l c1n o1 c1n
+      r3 = extendRight @p s3 (opR mpo) s3 rightBoundary
+  in ZipAt2 mpo l1 r3 c1n s2 s3
 
-class SolveCenterAt (i :: Nat) where
-  solveCenterAt
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b )
-    => MPSZipper3 p b w i -> MPSZipper3 p b w i
+moveRight23
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 2 -> MPSZipper3 p b w 3
+moveRight23 (ZipAt2 mpo@(MPO _ o2 _) l r s1 c2 s3) =
+  let (c2n, _g2) = normalizeLeft c2
+      l2 = extendLeft l c2n o2 c2n
+  in ZipAt3 mpo l2 rightBoundary s1 c2n s3
 
-instance SolveCenterAt 1 where
-  solveCenterAt
-    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 1 -> MPSZipper3 p b w 1
-  solveCenterAt (MPSZipper mps mpo@(MPO o1 _ _) l r) =
-    solveCenterAtGeneric @3 @p @b @w @1 o1
-      (\c (MPS _ s2 s3) -> MPS (Site c) s2 s3)
-      (MPSZipper mps mpo l r)
+-- | Shift the orthogonality centre one site left.
+moveLeft21
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 2 -> MPSZipper3 p b w 1
+moveLeft21 (ZipAt2 mpo l r s1 c2 s3) =
+  let (_g2, c2n) = normalizeRight c2
+      r23 = extendRight @p c2n (opC mpo) c2n r
+  in ZipAt1 mpo leftBoundary r23 s1 c2n s3
 
-instance SolveCenterAt 2 where
-  solveCenterAt
-    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 2 -> MPSZipper3 p b w 2
-  solveCenterAt (MPSZipper mps mpo@(MPO _ o2 _) l r) =
-    solveCenterAtGeneric @3 @p @b @w @2 o2
-      (\c (MPS s1 _ s3) -> MPS s1 (Site c) s3)
-      (MPSZipper mps mpo l r)
-
-instance SolveCenterAt 3 where
-  solveCenterAt
-    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 3 -> MPSZipper3 p b w 3
-  solveCenterAt (MPSZipper mps mpo@(MPO _ _ o3) l r) =
-    solveCenterAtGeneric @3 @p @b @w @3 o3
-      (\c (MPS s1 s2 _) -> MPS s1 s2 (Site c))
-      (MPSZipper mps mpo l r)
-
-class CentreEnergy (i :: Nat) where
-  centreEnergy
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b )
-    => MPSZipper3 p b w i -> Double
-
-instance CentreEnergy 1 where
-  centreEnergy
-    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 1 -> Double
-  centreEnergy z@(MPSZipper _ mpo@(MPO o1 _ _) _ _) =
-    centreEnergyGeneric @3 @p @b @w @1 o1 z
-
-instance CentreEnergy 2 where
-  centreEnergy
-    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 2 -> Double
-  centreEnergy z@(MPSZipper _ mpo@(MPO _ o2 _) _ _) =
-    centreEnergyGeneric @3 @p @b @w @2 o2 z
-
-instance CentreEnergy 3 where
-  centreEnergy
-    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 3 -> Double
-  centreEnergy z@(MPSZipper _ mpo@(MPO _ _ o3) _ _) =
-    centreEnergyGeneric @3 @p @b @w @3 o3 z
-
-class MoveRight (i :: Nat) (j :: Nat) | i -> j where
-  moveRight
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w i -> MPSZipper3 p b w j
-
-instance MoveRight 1 2 where
-  moveRight
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w 1 -> MPSZipper3 p b w 2
-  moveRight (MPSZipper (MPS s1 s2 s3) mpo@(MPO o1 _ _) l r) =
-    let (s1n, _g1) = normalizeLeft s1
-        mps' = MPS s1n s2 s3
-        l1 = extendLeft l s1n o1 s1n
-        r3 = extendRight @p s3 (opR mpo) s3 rightBoundary
-    in MPSZipper mps' mpo l1 r3
-
-instance MoveRight 2 3 where
-  moveRight
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w 2 -> MPSZipper3 p b w 3
-  moveRight (MPSZipper (MPS s1 s2 s3) mpo@(MPO _ o2 _) l r) =
-    let (s2n, _g2) = normalizeLeft s2
-        mps' = MPS s1 s2n s3
-        l2 = extendLeft l s2n o2 s2n
-    in MPSZipper mps' mpo l2 rightBoundary
-
-class MoveLeft (i :: Nat) (j :: Nat) | i -> j where
-  moveLeft
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w i -> MPSZipper3 p b w j
-
-instance MoveLeft 2 1 where
-  moveLeft
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w 2 -> MPSZipper3 p b w 1
-  moveLeft (MPSZipper (MPS s1 s2 s3) mpo l r) =
-    let (_g2, s2n) = normalizeRight s2
-        mps' = MPS s1 s2n s3
-        r23 = extendRight @p s2n (opC mpo) s2n r
-    in MPSZipper mps' mpo leftBoundary r23
-
-instance MoveLeft 3 2 where
-  moveLeft
-    :: forall p w b
-     . ( KnownNat p, KnownNat w, KnownNat b
-       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w 3 -> MPSZipper3 p b w 2
-  moveLeft (MPSZipper (MPS s1 s2 s3) mpo@(MPO o1 _ o3) l _) =
-    let (_g3, s3n) = normalizeRight s3
-        mps' = MPS s1 s2 s3n
-        l1 = extendLeft leftBoundary s1 o1 s1
-        r3 = extendRight @p s3n o3 s3n rightBoundary
-    in MPSZipper mps' mpo l1 r3
+moveLeft32
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPSZipper3 p b w 3 -> MPSZipper3 p b w 2
+moveLeft32 (ZipAt3 mpo@(MPO o1 _ o3) l _ s1 s2 c3) =
+  let (_g3, c3n) = normalizeRight c3
+      l1 = extendLeft leftBoundary s1 o1 s1
+      r3 = extendRight @p c3n o3 c3n rightBoundary
+  in ZipAt2 mpo l1 r3 s1 s2 c3n
 
 -- | One left→right→left sweep expressed as zipper moves.
 --
--- Schedule: init @ site 1; solve; move right; solve; move right; solve; move
+-- Schedule: 'toZipper'; solve; move right; solve; move right; solve; move
 -- left; solve — the final local energy at site 2 is the sweep energy
 -- ('sweep' returns the same value).
-type ZipperStep p b w =
-  forall i. SolveCenterAt i => MPSZipper3 p b w i -> MPSZipper3 p b w i
+type ZipperStep p b w = forall i. MPSZipper3 p b w i -> MPSZipper3 p b w i
 
 sweepSchedule
   :: forall p w b.
@@ -537,12 +506,12 @@ sweepSchedule
   -> MPS p b
   -> (Double, MPS p b)
 sweepSchedule mpo step psi0 =
-  let z0 = initZipperAtSite1 mpo psi0
+  let z0 = toZipper mpo psi0
       z1 = step z0
-      z2 = step (moveRight z1)
-      z3 = step (moveRight z2)
-      z4 = step (moveLeft z3)
-  in (centreEnergy z4, theMPS z4)
+      z2 = step (moveRight12 z1)
+      z3 = step (moveRight23 z2)
+      z4 = step (moveLeft32 z3)
+  in (centreEnergy z4, fromZipper z4)
 
 
 
