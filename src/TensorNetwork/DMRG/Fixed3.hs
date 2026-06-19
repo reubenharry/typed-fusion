@@ -61,8 +61,7 @@ import Numeric.LinearAlgebra.Static
   ( C, M, R, Sized (fromList, unwrap, create, extract), Domain (diagR), complex )
 import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import qualified Numeric.LinearAlgebra as HM
-import GHC.TypeLits (KnownNat, type (*), Nat, type (-), type (+), CmpNat)
-import Data.Type.Bool (If)
+import GHC.TypeLits (KnownNat, type (*), Nat, type (-), type (+))
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
 import Data.Complex (Complex ((:+)), conjugate, realPart, magnitude)
@@ -77,6 +76,11 @@ import TensorNetwork.Categorical
   ( (⊗^), lunit, lunitInv, swapMap, splitBond, fuseBond )
 import TensorNetwork.Dagger (dagger, transposeMap)
 import GroundState (groundState, groundStateDense, groundStateEigen)
+import TensorNetwork.DMRG.Spine (HList (..))
+import qualified TensorNetwork.DMRG.Spine as Spine
+import TensorNetwork.DMRG.SiteLists
+  ( LeftBond, RightBond, LeftMPOBond, RightMPOBond
+  , LeftSites, RightSites, SiteAt, OpSiteAt )
 
 import qualified Test.QuickCheck as QC
 import Test.QuickCheck.Gen (unGen)
@@ -305,31 +309,9 @@ energy mpo psi = realPart (mpsMPOInner psi mpo psi / mpsInner psi psi)
 
 --------------------------------------------------------------------------------
 -- Zipper environment indices (uniform open-boundary MPS / MPO)
+--
+-- Bond dimensions and site spines live in "TensorNetwork.DMRG.SiteLists".
 --------------------------------------------------------------------------------
-
--- | @True@ when @i@ is the first site of an @n@-site chain.
-type family IsFirstSite (i :: Nat) :: Bool where
-  IsFirstSite 1 = 'True
-  IsFirstSite _ = 'False
-
--- | @True@ when @i@ is the last site (@i == n@).
-type family IsEqOrdering o :: Bool where
-  IsEqOrdering 'EQ = 'True
-  IsEqOrdering _ = 'False
-
-type IsLastSite (n :: Nat) (i :: Nat) = IsEqOrdering (CmpNat i n)
-
--- | Incoming MPS bond at site @i@ (open left boundary is @1@).
-type LeftBond (n :: Nat) (b :: Nat) (i :: Nat) = If (IsFirstSite i) 1 b
-
--- | Outgoing MPS bond at site @i@ (open right boundary is @1@).
-type RightBond (n :: Nat) (b :: Nat) (i :: Nat) = If (IsLastSite n i) 1 b
-
--- | Incoming MPO bond at site @i@.
-type LeftMPOBond (n :: Nat) (w :: Nat) (i :: Nat) = If (IsFirstSite i) 1 w
-
--- | Outgoing MPO bond at site @i@.
-type RightMPOBond (n :: Nat) (w :: Nat) (i :: Nat) = If (IsLastSite n i) 1 w
 
 -- | Left environment at site @i@: everything strictly left of the centre.
 type LeftEnvAt (n :: Nat) (w :: Nat) (b :: Nat) (i :: Nat) =
@@ -343,21 +325,11 @@ type RightEnvAt (n :: Nat) (w :: Nat) (b :: Nat) (i :: Nat) =
 type CentreAt (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) =
   Centre (LeftBond n b i) p (RightBond n b i)
 
--- | MPO operator at site @i@.
-type OpSiteAt (n :: Nat) (p :: Nat) (w :: Nat) (i :: Nat) =
-  OpSite (LeftMPOBond n w i) p (RightMPOBond n w i)
-
 -- | Left spine: sites strictly left of the centre (empty at site 1).
-type family LeftSpine (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) :: Type where
-  LeftSpine n p b 1 = ()
-  LeftSpine n p b 2 = Site (LeftBond n b (2 - 1)) p (RightBond n b (2 - 1))
-  LeftSpine n p b 3 = (Site (LeftBond n b (3 - 2)) p (RightBond n b (3 - 2)), Site (LeftBond n b (3 - 1)) p (RightBond n b (3 - 1)))
+type LeftSpine n p b i = HList (LeftSites n p b i)
 
 -- | Right spine: sites strictly right of the centre (empty at site @n@).
-type family RightSpine (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) :: Type where
-  RightSpine n p b 1 = (Site (LeftBond n b (1 + 1)) p (RightBond n b (1 + 1)), Site (LeftBond n b (1 + 2)) p (RightBond n b (1 + 2)))
-  RightSpine n p b 2 = Site b p (RightBond n b (2 + 1))
-  RightSpine n p b 3 = ()
+type RightSpine n p b i = HList (RightSites n p b i)
 
 -- | DMRG workspace: typed spines, centre site, environments, and the active
 -- MPO site ('centreOp'). Use 'toZipper' / 'fromZipper' to bridge 'MPS'.
@@ -367,7 +339,7 @@ data MPSZipper (n :: Nat) p b w (i :: Nat) = MPSZipper
   , leftEnv :: LeftEnvAt n w b i
   , rightEnv :: RightEnvAt n w b i
   , leftSpine :: LeftSpine n p b i
-  , centre :: Site (LeftBond n b i) p (RightBond n b i)
+  , centre :: SiteAt n p b i
   , rightSpine :: RightSpine n p b i
   , centreOp :: OpSiteAt n p w i
   }
@@ -377,7 +349,7 @@ type MPSZipper3 p b w i = MPSZipper 3 p b w i
 
 
 --------------------------------------------------------------------------------
--- Spine operations (Tier 2 — generic shuffle for move left / right)
+-- Spine operations (HList shuffle for move left / right)
 --------------------------------------------------------------------------------
 
 -- | Left-orthonormalize the departing site when moving right.
@@ -395,42 +367,6 @@ departRight
    . ( KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br) )
   => Site bl p br -> Site bl p br
 departRight = snd . normalizeRight
-
-popLeft2
-  :: forall p b. Site 1 p b -> (Site 1 p b, ())
-popLeft2 s1 = (s1, ())
-
-popLeft3
-  :: forall p b. (Site 1 p b, Site b p b) -> (Site b p b, Site 1 p b)
-popLeft3 (s1, s2) = (s2, s1)
-
-snocLeft1
-  :: forall p b. () -> Site 1 p b -> Site 1 p b
-snocLeft1 () c = c
-
-snocLeft2
-  :: forall p b. Site 1 p b -> Site b p b -> (Site 1 p b, Site b p b)
-snocLeft2 s1 c = (s1, c)
-
-headRight1
-  :: forall p b. (Site b p b, Site b p 1) -> Site b p b
-headRight1 (s2, _) = s2
-
-tailRight1
-  :: forall p b. (Site b p b, Site b p 1) -> Site b p 1
-tailRight1 (_, s3) = s3
-
-headRight2
-  :: forall p b. Site b p 1 -> Site b p 1
-headRight2 = id
-
-consRight2
-  :: forall p b. Site b p b -> Site b p 1 -> (Site b p b, Site b p 1)
-consRight2 c s3 = (c, s3)
-
-consRight3
-  :: forall p b. Site b p 1 -> Site b p 1
-consRight3 c = c
 
 --------------------------------------------------------------------------------
 -- Environment recipes (Tier 1 — boundary vs interior updates)
@@ -455,10 +391,11 @@ instance MoveRightEnvs 1 where
        , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
     => MPO p w -> LeftEnvAt 3 w b 1 -> Site 1 p b -> OpSiteAt 3 p w 1
     -> RightSpine 3 p b 2 -> (LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2)
-  updateEnvsMoveRight mpo l c1n o1 s3 =
-    ( extendLeft l c1n o1 c1n
-    , extendRight @p s3 (opR mpo) s3 rightBoundary
-    )
+  updateEnvsMoveRight mpo l c1n o1 rs =
+    let s3 = Spine.spineHead rs
+    in ( extendLeft l c1n o1 c1n
+       , extendRight @p s3 (opR mpo) s3 rightBoundary
+       )
 
 instance MoveRightEnvs 2 where
   updateEnvsMoveRight
@@ -501,10 +438,11 @@ instance MoveLeftEnvs 3 where
        , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
     => MPO p w -> RightEnvAt 3 w b 3 -> Site b p 1 -> OpSiteAt 3 p w 3
     -> LeftSpine 3 p b 3 -> (LeftEnvAt 3 w b 2, RightEnvAt 3 w b 2)
-  updateEnvsMoveLeft mpo@(MPO o1 _ o3) _ c3n _ (s1, _) =
-    ( extendLeft leftBoundary s1 o1 s1
-    , extendRight @p c3n o3 c3n rightBoundary
-    )
+  updateEnvsMoveLeft mpo@(MPO o1 _ o3) _ c3n _ ls =
+    let s1 = Spine.spineHead ls
+    in ( extendLeft leftBoundary s1 o1 s1
+       , extendRight @p c3n o3 c3n rightBoundary
+       )
 
 class MoveRightCentreOp (i :: Nat) where
   centreOpAfterMoveRight :: forall p w. MPO p w -> OpSiteAt 3 p w (i + 1)
@@ -578,33 +516,39 @@ class MoveRightBody (i :: Nat) where
     => MPSZipper3 p b w i -> MPSZipper3 p b w (i + 1)
 
 instance MoveRightBody 1 where
-  moveRightBody z@MPSZipper{centre, rightSpine} =
+  moveRightBody z@MPSZipper{centre, leftSpine, rightSpine} =
     let cn = departLeft centre
-    in finishMoveRight @1 z cn (headRight1 rightSpine) (snocLeft1 () cn) (tailRight1 rightSpine)
+    in finishMoveRight @1 z cn
+         (Spine.spineHead rightSpine)
+         (Spine.snocSpine leftSpine cn)
+         (Spine.spineTail rightSpine)
 
 instance MoveRightBody 2 where
-  moveRightBody z@MPSZipper{centre, leftSpine = s1, rightSpine} =
+  moveRightBody z@MPSZipper{centre, leftSpine, rightSpine} =
     let cn = departLeft centre
-    in finishMoveRight @2 z cn (headRight2 rightSpine) (snocLeft2 s1 cn) ()
+    in finishMoveRight @2 z cn
+         (Spine.spineHead rightSpine)
+         (Spine.snocSpine leftSpine cn)
+         (Spine.spineTail rightSpine)
 
 class MoveLeftBody (i :: Nat) where
   moveLeftBody
     :: forall p w b
      . ( KnownNat p, KnownNat w, KnownNat b
        , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-    => MPSZipper3 p b w i -> MPSZipper3 p b w ( i - 1)
+    => MPSZipper3 p b w i -> MPSZipper3 p b w (i - 1)
 
 instance MoveLeftBody 2 where
-  moveLeftBody z@MPSZipper{centre, leftSpine = s1, rightSpine} =
+  moveLeftBody z@MPSZipper{centre, leftSpine, rightSpine} =
     let cn = departRight centre
-        (newCentre, newLeft) = popLeft2 s1
-    in finishMoveLeft @2 z cn newCentre newLeft (consRight2 cn rightSpine)
+        (newCentre, newLeft) = Spine.popLeftSpine leftSpine
+    in finishMoveLeft @2 z cn newCentre newLeft (Spine.consSpine cn rightSpine)
 
 instance MoveLeftBody 3 where
-  moveLeftBody z@MPSZipper{centre, leftSpine = (s1, s2)} =
+  moveLeftBody z@MPSZipper{centre, leftSpine, rightSpine} =
     let cn = departRight centre
-        (newCentre, newLeft) = popLeft3 (s1, s2)
-    in finishMoveLeft @3 z cn newCentre newLeft (consRight3 cn)
+        (newCentre, newLeft) = Spine.popLeftSpine leftSpine
+    in finishMoveLeft @3 z cn newCentre newLeft (Spine.consSpine cn rightSpine)
 
 --------------------------------------------------------------------------------
 -- MPS bridge and local solve
@@ -627,7 +571,7 @@ toZipper mpo@(MPO o1 o2 o3) mps@(MPS s1 s2 s3) =
       (_f2, s2r) = normalizeRight (Site (f3 . siteLin s2))
       r3 = extendRight @p s3r o3 s3r rightBoundary
       r23 = extendRight @p s2r o2 s2r r3
-  in MPSZipper mpo mps leftBoundary r23 () s1 (s2r, s3r) o1
+  in MPSZipper mpo mps leftBoundary r23 HNil s1 (s2r :& s3r :& HNil) o1
 
 solveCentreSite
   :: forall p wl wr bl br.

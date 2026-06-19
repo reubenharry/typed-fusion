@@ -72,6 +72,8 @@ library
         TensorNetwork.Dagger
         TensorNetwork.Categorical
         TensorNetwork.Categorical.Props
+        TensorNetwork.DMRG.Spine
+        TensorNetwork.DMRG.SiteLists
         TensorNetwork.DMRG.Fixed3
         TensorNetwork.DMRG.Fixed3SVD
         TensorNetwork.MPS.Fixed3
