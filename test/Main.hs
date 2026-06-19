@@ -58,7 +58,7 @@ import TensorNetwork.DMRG.Fixed3
   ( prop_effectiveHMatchesInner
   , prop_effectiveHHermitian
   , prop_flatLeftSVDMatchesSiteMatrix
-  , prop_groundStateMatchesDense
+  , prop_dmrgGroundEnergyMatchesDense
   , prop_eigenMatchesDenseC4
   , tfimMPO
   , dmrg
@@ -85,7 +85,7 @@ checkDMRG j h = do
   let mpo = tfimMPO j h
       psi0 = seededMPS222 42
       (e1, psi1) = sweep mpo psi0
-      (e, _) = dmrg 10 1e-12 mpo psi0
+      (e, _) = dmrg 10 1e-12 mpo sweep psi0
       eDense = denseGroundEnergy mpo
   requireClose "sweep energy vs Rayleigh quotient" 1e-9 (energy mpo psi1) e1
   requireClose "DMRG vs dense ground energy" 1e-9 eDense e
@@ -185,8 +185,8 @@ main = do
   requireQC =<< QC.quickCheckResult prop_effectiveHHermitian
   putStrLn "Flat left-SVD layout matches siteMatrix oracle..."
   requireQC =<< QC.quickCheckResult prop_flatLeftSVDMatchesSiteMatrix
-  putStrLn "groundState matches dense oracle on Heff..."
-  requireQC =<< QC.quickCheckResult prop_groundStateMatchesDense
+  putStrLn "DMRG ground energy matches dense oracle (100 seeds)..."
+  requireQC =<< QC.quickCheckResult prop_dmrgGroundEnergyMatchesDense
   putStrLn "eigen path matches dense oracle on C 4..."
   requireQC =<< QC.quickCheckResult prop_eigenMatchesDenseC4
   putStrLn "DMRG matches dense ground energy (J=1, h=0.7)..."

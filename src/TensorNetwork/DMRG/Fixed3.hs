@@ -7,6 +7,12 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Single-site DMRG on the typed 3-site MPS, top-down (ROADMAP Phases 4–5).
 --
@@ -55,7 +61,8 @@ import Numeric.LinearAlgebra.Static
   ( C, M, R, Sized (fromList, unwrap, create, extract), Domain (diagR), complex )
 import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import qualified Numeric.LinearAlgebra as HM
-import GHC.TypeLits (KnownNat, type (*))
+import GHC.TypeLits (KnownNat, type (*), Nat, type (-), type (+), CmpNat)
+import Data.Type.Bool (If)
 import Data.Maybe (fromMaybe)
 import Data.Complex (Complex ((:+)), conjugate, realPart, magnitude)
 import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), AdditiveGroup (zeroV), sumV)
@@ -295,6 +302,250 @@ energy
   => MPO p w -> MPS p b -> Double
 energy mpo psi = realPart (mpsMPOInner psi mpo psi / mpsInner psi psi)
 
+--------------------------------------------------------------------------------
+-- Zipper environment indices (uniform open-boundary MPS / MPO)
+--------------------------------------------------------------------------------
+
+-- | @True@ when @i@ is the first site of an @n@-site chain.
+type family IsFirstSite (i :: Nat) :: Bool where
+  IsFirstSite 1 = 'True
+  IsFirstSite _ = 'False
+
+-- | @True@ when @i@ is the last site (@i == n@).
+type family IsEqOrdering o :: Bool where
+  IsEqOrdering 'EQ = 'True
+  IsEqOrdering _ = 'False
+
+type IsLastSite (n :: Nat) (i :: Nat) = IsEqOrdering (CmpNat i n)
+
+-- | Incoming MPS bond at site @i@ (open left boundary is @1@).
+type LeftBond (n :: Nat) (b :: Nat) (i :: Nat) = If (IsFirstSite i) 1 b
+
+-- | Outgoing MPS bond at site @i@ (open right boundary is @1@).
+type RightBond (n :: Nat) (b :: Nat) (i :: Nat) = If (IsLastSite n i) 1 b
+
+-- | Incoming MPO bond at site @i@.
+type LeftMPOBond (n :: Nat) (w :: Nat) (i :: Nat) = If (IsFirstSite i) 1 w
+
+-- | Outgoing MPO bond at site @i@.
+type RightMPOBond (n :: Nat) (w :: Nat) (i :: Nat) = If (IsLastSite n i) 1 w
+
+-- | Left environment at site @i@: everything strictly left of the centre.
+type LeftEnvAt (n :: Nat) (w :: Nat) (b :: Nat) (i :: Nat) =
+  LeftEnv (LeftMPOBond n w i) (LeftBond n b i) (LeftBond n b i)
+
+-- | Right environment at site @i@: everything strictly right of the centre.
+type RightEnvAt (n :: Nat) (w :: Nat) (b :: Nat) (i :: Nat) =
+  RightEnv (RightMPOBond n w i) (RightBond n b i) (RightBond n b i)
+
+-- | Variational space at site @i@.
+type CentreAt (n :: Nat) (p :: Nat) (b :: Nat) (i :: Nat) =
+  Centre (LeftBond n b i) p (RightBond n b i)
+
+-- | MPO operator at site @i@.
+type OpSiteAt (n :: Nat) (p :: Nat) (w :: Nat) (i :: Nat) =
+  OpSite (LeftMPOBond n w i) p (RightMPOBond n w i)
+
+-- | Zipper state for single-site DMRG on an @n@-site open chain with uniform
+-- bond @b@ and MPO bond @w@. The site index @i@ determines environment types
+-- via 'LeftEnvAt' / 'RightEnvAt' — no per-site constructor enumeration.
+data MPSZipper (n :: Nat) p b w (i :: Nat) = MPSZipper
+  { theMPS :: MPS p b
+  , theMPO :: MPO p w
+  , leftEnv :: LeftEnvAt n w b i
+  , rightEnv :: RightEnvAt n w b i
+  }
+
+-- | Three-site specialization (current 'MPS' / 'MPO' types).
+type MPSZipper3 p b w i = MPSZipper 3 p b w i
+
+-- | Right-normalize sites 2–@n@ and build the site-1 zipper (orthogonality
+-- centre at the left end), matching the prologue of 'sweep'.
+initZipperAtSite1
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPO p w -> MPS p b -> MPSZipper 3 p b w 1
+initZipperAtSite1 mpo@(MPO _ o2 o3) (MPS s1 s2 s3) =
+  let (f3, s3r) = normalizeRight s3
+      (_f2, s2r) = normalizeRight (Site (f3 . siteLin s2))
+      mps' = MPS s1 s2r s3r
+      r3 = extendRight @p s3r o3 s3r rightBoundary
+      r23 = extendRight @p s2r o2 s2r r3
+  in MPSZipper mps' mpo leftBoundary r23
+
+-- | Local ground-state solve at site @i@; environments are unchanged.
+solveCenterAtGeneric
+  :: forall n p b w i wl wr bl br.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br
+     , wl ~ LeftMPOBond n w i, wr ~ RightMPOBond n w i
+     , bl ~ LeftBond n b i, br ~ RightBond n b i )
+  => OpSite wl p wr
+  -> (Centre bl p br -> MPS p b -> MPS p b)
+  -> MPSZipper n p b w i
+  -> MPSZipper n p b w i
+solveCenterAtGeneric op updateMPS (MPSZipper mps mpo l r) =
+  let (_, c) = solveCentre (effectiveH @p l op r)
+  in MPSZipper (updateMPS c mps) mpo l r
+
+-- | Rayleigh quotient of the local solve at the active site (for reporting).
+centreEnergyGeneric
+  :: forall n p b w i wl wr bl br.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br
+     , wl ~ LeftMPOBond n w i, wr ~ RightMPOBond n w i
+     , bl ~ LeftBond n b i, br ~ RightBond n b i )
+  => OpSite wl p wr
+  -> MPSZipper n p b w i
+  -> Double
+centreEnergyGeneric op (MPSZipper _ _ l r) =
+  fst (solveCentre (effectiveH @p l op r))
+
+class SolveCenterAt (i :: Nat) where
+  solveCenterAt
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b )
+    => MPSZipper3 p b w i -> MPSZipper3 p b w i
+
+instance SolveCenterAt 1 where
+  solveCenterAt
+    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 1 -> MPSZipper3 p b w 1
+  solveCenterAt (MPSZipper mps mpo@(MPO o1 _ _) l r) =
+    solveCenterAtGeneric @3 @p @b @w @1 o1
+      (\c (MPS _ s2 s3) -> MPS (Site c) s2 s3)
+      (MPSZipper mps mpo l r)
+
+instance SolveCenterAt 2 where
+  solveCenterAt
+    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 2 -> MPSZipper3 p b w 2
+  solveCenterAt (MPSZipper mps mpo@(MPO _ o2 _) l r) =
+    solveCenterAtGeneric @3 @p @b @w @2 o2
+      (\c (MPS s1 _ s3) -> MPS s1 (Site c) s3)
+      (MPSZipper mps mpo l r)
+
+instance SolveCenterAt 3 where
+  solveCenterAt
+    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 3 -> MPSZipper3 p b w 3
+  solveCenterAt (MPSZipper mps mpo@(MPO _ _ o3) l r) =
+    solveCenterAtGeneric @3 @p @b @w @3 o3
+      (\c (MPS s1 s2 _) -> MPS s1 s2 (Site c))
+      (MPSZipper mps mpo l r)
+
+class CentreEnergy (i :: Nat) where
+  centreEnergy
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b )
+    => MPSZipper3 p b w i -> Double
+
+instance CentreEnergy 1 where
+  centreEnergy
+    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 1 -> Double
+  centreEnergy z@(MPSZipper _ mpo@(MPO o1 _ _) _ _) =
+    centreEnergyGeneric @3 @p @b @w @1 o1 z
+
+instance CentreEnergy 2 where
+  centreEnergy
+    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 2 -> Double
+  centreEnergy z@(MPSZipper _ mpo@(MPO _ o2 _) _ _) =
+    centreEnergyGeneric @3 @p @b @w @2 o2 z
+
+instance CentreEnergy 3 where
+  centreEnergy
+    :: forall p w b. (KnownNat p, KnownNat w, KnownNat b) => MPSZipper3 p b w 3 -> Double
+  centreEnergy z@(MPSZipper _ mpo@(MPO _ _ o3) _ _) =
+    centreEnergyGeneric @3 @p @b @w @3 o3 z
+
+class MoveRight (i :: Nat) (j :: Nat) | i -> j where
+  moveRight
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b
+       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+    => MPSZipper3 p b w i -> MPSZipper3 p b w j
+
+instance MoveRight 1 2 where
+  moveRight
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b
+       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+    => MPSZipper3 p b w 1 -> MPSZipper3 p b w 2
+  moveRight (MPSZipper (MPS s1 s2 s3) mpo@(MPO o1 _ _) l r) =
+    let (s1n, _g1) = normalizeLeft s1
+        mps' = MPS s1n s2 s3
+        l1 = extendLeft l s1n o1 s1n
+        r3 = extendRight @p s3 (opR mpo) s3 rightBoundary
+    in MPSZipper mps' mpo l1 r3
+
+instance MoveRight 2 3 where
+  moveRight
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b
+       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+    => MPSZipper3 p b w 2 -> MPSZipper3 p b w 3
+  moveRight (MPSZipper (MPS s1 s2 s3) mpo@(MPO _ o2 _) l r) =
+    let (s2n, _g2) = normalizeLeft s2
+        mps' = MPS s1 s2n s3
+        l2 = extendLeft l s2n o2 s2n
+    in MPSZipper mps' mpo l2 rightBoundary
+
+class MoveLeft (i :: Nat) (j :: Nat) | i -> j where
+  moveLeft
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b
+       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+    => MPSZipper3 p b w i -> MPSZipper3 p b w j
+
+instance MoveLeft 2 1 where
+  moveLeft
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b
+       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+    => MPSZipper3 p b w 2 -> MPSZipper3 p b w 1
+  moveLeft (MPSZipper (MPS s1 s2 s3) mpo l r) =
+    let (_g2, s2n) = normalizeRight s2
+        mps' = MPS s1 s2n s3
+        r23 = extendRight @p s2n (opC mpo) s2n r
+    in MPSZipper mps' mpo leftBoundary r23
+
+instance MoveLeft 3 2 where
+  moveLeft
+    :: forall p w b
+     . ( KnownNat p, KnownNat w, KnownNat b
+       , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+    => MPSZipper3 p b w 3 -> MPSZipper3 p b w 2
+  moveLeft (MPSZipper (MPS s1 s2 s3) mpo@(MPO o1 _ o3) l _) =
+    let (_g3, s3n) = normalizeRight s3
+        mps' = MPS s1 s2 s3n
+        l1 = extendLeft leftBoundary s1 o1 s1
+        r3 = extendRight @p s3n o3 s3n rightBoundary
+    in MPSZipper mps' mpo l1 r3
+
+-- | One left→right→left sweep expressed as zipper moves.
+--
+-- Schedule: init @ site 1; solve; move right; solve; move right; solve; move
+-- left; solve — the final local energy at site 2 is the sweep energy
+-- ('sweep' returns the same value).
+type ZipperStep p b w =
+  forall i. SolveCenterAt i => MPSZipper3 p b w i -> MPSZipper3 p b w i
+
+sweepSchedule
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => MPO p w
+  -> ZipperStep p b w
+  -> MPS p b
+  -> (Double, MPS p b)
+sweepSchedule mpo step psi0 =
+  let z0 = initZipperAtSite1 mpo psi0
+      z1 = step z0
+      z2 = step (moveRight z1)
+      z3 = step (moveRight z2)
+      z4 = step (moveLeft z3)
+  in (centreEnergy z4, theMPS z4)
+
+
+
 -- | One full left→right→left sweep of single-site updates (sites 1, 2, 3, 2),
 -- with SVD gauge transport between solves so the active site is always the
 -- orthogonality centre. Returns the energy of the final local solve (the
@@ -305,33 +556,8 @@ sweep
      ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (p * b), KnownNat (b * p), KnownNat (b * p)
      , p * b ~ b * p, p * b ~ b * p )
-  => MPO p w -> MPS p b -> (Double, MPS p b)
-sweep (MPO o1 o2 o3) (MPS s1 s2 s3) =
-  let -- Right-normalize so the orthogonality centre starts at site 1.
-      (f3, s3r) = normalizeRight s3
-      (_f2, s2r) = normalizeRight (Site (f3 . siteLin s2))
-      -- (the factor absorbed into site 1 is irrelevant: site 1 is re-solved)
-
-      -- Site 1.
-      r3 = extendRight @p s3r o3 s3r rightBoundary
-      r23 = extendRight @p s2r o2 s2r r3
-      (_, c1) = solveCentre (effectiveH @p leftBoundary o1 r23)
-      (s1n, _g1) = normalizeLeft (Site c1)
-      l1 = extendLeft leftBoundary s1n o1 s1n
-
-      -- Site 2 (rightward).
-      (_, c2) = solveCentre (effectiveH @p l1 o2 r3)
-      (s2n, _g2) = normalizeLeft (Site c2)
-      l2 = extendLeft l1 s2n o2 s2n
-
-      -- Site 3.
-      (_, c3) = solveCentre (effectiveH @p l2 o3 rightBoundary)
-      (_g3, s3n) = normalizeRight (Site c3)
-      r3' = extendRight @p s3n o3 s3n rightBoundary
-
-      -- Site 2 (leftward) — final solve of the sweep.
-      (e2, c2') = solveCentre (effectiveH @p l1 o2 r3')
-  in (e2, MPS s1n (Site c2') s3n)
+  => SweepFunction p w b
+sweep mpo psi = sweepSchedule mpo solveCenterAt psi
 
 -- | DMRG driver: sweep until the energy change drops below the tolerance or
 -- the sweep budget is exhausted.
@@ -342,16 +568,38 @@ dmrg
   => Int                       -- ^ maximum number of sweeps
   -> Double                    -- ^ energy convergence tolerance
   -> MPO p w
+  -> SweepFunction p w b
   -> MPS p b
   -> (Double, MPS p b)
-dmrg maxSweeps tol mpo = go maxSweeps Nothing
+dmrg maxSweeps tol mpo sweepFunction = go maxSweeps Nothing
   where
     go 0 mE psi = (maybe (energy mpo psi) id mE, psi)
     go k mE psi =
-      let (e, psi') = sweep mpo psi
+      let (e, psi') = sweepFunction mpo psi
       in case mE of
            Just ePrev | abs (e - ePrev) < tol -> (e, psi')
            _ -> go (k - 1) (Just e) psi'
+
+-- | DMRG driver in 'SvdM' (run with 'runSvdM' and a fixed seed).
+dmrgM
+  :: forall p w b m. 
+    (Monad m, KnownNat p, KnownNat w, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p)
+     , p * b ~ b * p )
+  => Int -> Double -> MPO p w -> SweepFunctionM m p w b -> MPS p b -> m (Double, MPS p b)
+dmrgM maxSweeps tol mpo sweepFunction psi0 = go maxSweeps Nothing psi0
+  where
+    go 0 mE psi = pure (fromMaybe (energy mpo psi) mE, psi)
+    go k mE psi = do
+      (e, psi') <- sweepFunction mpo psi
+      case mE of
+        Just ePrev | abs (e - ePrev) < tol -> pure (e, psi')
+        _ -> go (k - 1) (Just e) psi'
+
+
+type SweepFunctionM m p w b = MPO p w -> MPS p b -> m (Double, MPS p b)
+type SweepFunction p w b = MPO p w -> MPS p b -> (Double, MPS p b)
+
 
 --------------------------------------------------------------------------------
 -- Benchmark model
@@ -471,19 +719,18 @@ prop_flatLeftSVDMatchesSiteMatrix =
       QC..&&. extract (getLinearMap (siteForLeftSVD @2 @2 @1 (siteLin s221)))
               QC.=== siteMatrix @2 @2 @1 s221
 
--- | Map-space 'groundState' agrees with the dense oracle on TFIM effective
--- Hamiltonians (interim: both use 'groundStateDense' until map-space 'eigen'
--- is unblocked).
-prop_groundStateMatchesDense :: QC.Property
-prop_groundStateMatchesDense =
-  QC.forAll genMPS222 $ \(MPS s1 _ s3) ->
-    let MPO o1 o2 o3 = tfimMPO 1 0.7
-        l1 = extendLeft leftBoundary s1 o1 s1
-        r3 = extendRight @2 s3 o3 s3 rightBoundary
-        heff = effectiveH @2 l1 o2 r3
-        (eEigen, _) = groundState heff
-        (eDense, _) = groundStateDense heff
-    in eEigen QC.=== eDense
+-- | DMRG on the 3-site TFIM converges to the dense @C (p³)@ ground energy.
+prop_dmrgGroundEnergyMatchesDense :: QC.Property
+prop_dmrgGroundEnergyMatchesDense =
+  QC.forAll (QC.choose (0, 99)) $ \seed ->
+    let mpo = tfimMPO 1 0.7
+        psi0 = seededMPS222 seed
+        (e, psi) = dmrg 10 1e-12 mpo sweep psi0
+        eDense = denseGroundEnergy mpo
+        tol = 1e-9
+    in QC.counterexample ("DMRG " ++ show e ++ " vs dense " ++ show eDense)
+         (abs (e - eDense) <= tol QC..&&. energy mpo psi >= eDense - tol)
+
 
 -- | On a 'HilbertSpace' (@C 4@), the 'eigen' path matches the dense oracle.
 prop_eigenMatchesDenseC4 :: QC.Property

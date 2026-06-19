@@ -22,7 +22,7 @@ import Math.LinearMap.Category.Class
 import Data.VectorSpace
 import Control.Category.Constrained hiding (iso)
 import Prelude hiding ((||), ($), id, (.))
-import Math.LinearMap.Category (LinearFunction(..), HilbertSpace, Norm (Norm, applyNorm), euclideanNorm, (<$|), normSq, (|$|))
+import Math.LinearMap.Category (LinearFunction(..), HilbertSpace, Norm (Norm, applyNorm), euclideanNorm, (<$|), normSq, (|$|), (-+$>), (<.>^))
 import Linear (V2 (V2), V3 (V3), E (..))
 import Data.Coerce (Coercible)
 import Math.LinearMap.Asserted
@@ -35,6 +35,7 @@ import Data.Functor.Identity (runIdentity)
 import Math.VectorSpace.Initializable
 import Math.LinearMap.Category.Instances
 import Data.Number.NormedAlgebra (NormedAlgebra(RealPart))
+import Data.Complex (Complex, realPart, Complex((:+)))
 
 trace' a = Debug.Trace.trace (show a ++ " : debug")
 
@@ -58,6 +59,19 @@ svd initialVectors a dimA = do
                 (normalized initialVector)
                 (normalized $ a $ initialVector)
                 (magnitude (a $ initialVector))
+        return (step [initialPendant])
+
+svdC :: (Show v, Show w, Scalar v ~ Complex Double, Scalar w ~ Complex Double, HilbertSpace v, HilbertSpace w, Monad m) => InitialVectors m v -> (v -+> w) -> Int -> m [SVDPendants v w]
+svdC initialVectors a dimA = do
+        vecs <- sampleInitialVectors initialVectors
+        let initialVector = head vecs
+            vectors = tail vecs
+        let steps = take dimA [svdStepC v a | v <- vectors ]
+            step = foldr (.) id steps
+            initialPendant = SVDPendants
+                (normalized initialVector)
+                (normalized $ a $ initialVector)
+                (realSV $ realPart $ magnitude (a $ initialVector))
         return (step [initialPendant])
 
 
@@ -182,6 +196,51 @@ svdStep v a svdPendants = trace' (theta) $ svdpendantsNew
         magnitude <$> rotatedYBasisUnnormalized)
 
     svdpendantsNew = SVDPendants rhoxn ynTildeHat sn : [SVDPendants x y s | (x,y,s) <- zip3 rotatedXBasis rotatedYBasis sis]
+
+-- | Complex Hilbert-space SVD step (same algorithm as 'svdStep', with '(<.>^)').
+svdStepC
+  :: forall v w
+   . ( Show v, Show w
+     , Scalar v ~ Complex Double, Scalar w ~ Complex Double
+     , HilbertSpace v, HilbertSpace w )
+  => v -> (v -+> w) -> [SVDPendants v w] -> [SVDPendants v w]
+svdStepC v a svdPendants = svdpendantsNew
+  where
+    normW = euclideanNorm @w
+    xBasis = fmap domainSingularVector svdPendants
+    yBasis = fmap codomainSingularVector svdPendants
+    singularVals = fmap singularValue svdPendants
+
+    xn = normalized $ (orthogonalComplementProj euclideanNorm xBasis) -+$> v
+    yn = a -+$> xn
+
+    r = sumV [(yn <.>^ yi) *^ yi | yi <- yBasis]
+    q = sumV [((r <.>^ yi) / si) *^ xi | (xi, yi, si) <- zip3 xBasis yBasis singularVals]
+    qhat = normalized q
+
+    rhoxn = negateV (realSV (sin theta) *^ qhat) ^+^ realSV (cos theta) *^ xn
+    rhoV v' =
+      v' ^+^ realSV (cos theta - 1) *^ (((qhat <.>^ v') *^ qhat) ^+^ ((xn <.>^ v') *^ xn))
+        ^+^ realSV (sin theta) *^ (((qhat <.>^ v') *^ xn) ^-^ ((xn <.>^ v') *^ qhat))
+
+    ynTilde = a -+$> rhoxn
+    sn = realSV (normW |$| ynTilde)
+    ynTildeHat = normalized ynTilde
+    aqhat = r ^/ magnitude q
+    cross = realPart (aqhat <.>^ yn)
+    theta = -0.5 * atan2 (-2 * cross) (normSq normW aqhat - normSq normW yn)
+
+    rotatedXBasis = map rhoV xBasis
+    rotatedYBasisUnnormalized = map (a -+$>) rotatedXBasis
+    rotatedYBasis = normalized <$> rotatedYBasisUnnormalized
+    sis = realSV . (normW |$|) <$> rotatedYBasisUnnormalized
+
+    svdpendantsNew =
+      SVDPendants rhoxn ynTildeHat sn
+        : [SVDPendants x y s | (x, y, s) <- zip3 rotatedXBasis rotatedYBasis sis]
+
+realSV :: Double -> Complex Double
+realSV x = x :+ 0
 
 
 testSVD :: IO ()

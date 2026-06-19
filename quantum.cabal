@@ -73,6 +73,7 @@ library
         TensorNetwork.Categorical
         TensorNetwork.Categorical.Props
         TensorNetwork.DMRG.Fixed3
+        TensorNetwork.DMRG.Fixed3SVD
         TensorNetwork.MPS.Fixed3
         TensorNetwork.MPS.Fixed3General
         TensorNetwork.MPS.FinSupp3
