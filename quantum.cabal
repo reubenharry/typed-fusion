@@ -74,6 +74,7 @@ library
         TensorNetwork.Categorical.Props
         TensorNetwork.DMRG.Chain
         TensorNetwork.DMRG.Env
+        TensorNetwork.DMRG.SiteIndex
         TensorNetwork.DMRG.Fixed3
         TensorNetwork.DMRG.Fixed3SVD
         TensorNetwork.MPS.Fixed3

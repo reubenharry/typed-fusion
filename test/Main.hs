@@ -53,6 +53,11 @@ import TensorNetwork.MPS.Fixed3
   , prop_canonicalMPSRoundTripP2
   , prop_canonicalMPSRoundTripP3
   )
+import TensorNetwork.DMRG.SiteIndex
+  ( prop_getSiteSingMatchesGetSite
+  , prop_setSiteSingRoundTrip
+  , prop_solveCentreSingMatchesSolveCentre
+  )
 import GHC.TypeLits (type (*))
 import TensorNetwork.DMRG.Fixed3
   ( prop_effectiveHMatchesInner
@@ -195,6 +200,12 @@ main = do
   requireQC =<< QC.quickCheckResult prop_mpsGetSite
   putStrLn "MPS setSite round-trips..."
   requireQC =<< QC.quickCheckResult prop_mpsSetSiteRoundTrip
+  putStrLn "SiteIndex getSiteSing matches getSite (n = 3)..."
+  requireQC =<< QC.quickCheckResult prop_getSiteSingMatchesGetSite
+  putStrLn "SiteIndex setSiteSing round-trips..."
+  requireQC =<< QC.quickCheckResult prop_setSiteSingRoundTrip
+  putStrLn "SiteIndex solveCentreSing matches solveCentre..."
+  requireQC =<< QC.quickCheckResult prop_solveCentreSingMatchesSolveCentre
   putStrLn "DMRG matches dense ground energy (J=1, h=0.7)..."
   checkDMRG 1 0.7
   putStrLn "DMRG matches dense ground energy (J=0.5, h=1.3)..."
