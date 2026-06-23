@@ -15,8 +15,8 @@ module TensorNetwork.DMRG.Env
   , rightBoundary
   , extendLeft
   , extendRight
-  , MoveRightEnv' (..)
-  , MoveLeftEnv' (..)
+  , MoveRightEnv (..)
+  , MoveLeftEnv (..)
   , moveRightEnv'
   , moveLeftEnv'
   , LeftEnvAtCentre (..)
@@ -84,8 +84,8 @@ extendRight (Site bra) (OpSite op) (Site ket) envR =
     k :: ((C wl ⊗ C br) ⊗ C p) +> (C ar ⊗ C p)
     k = dagger bra . envR . opWire @p op ket
 
-data MoveRightEnv' = MoveRightInterior' | MoveRightBoundary'
-data MoveLeftEnv' = MoveLeftInterior' | MoveLeftBoundary'
+data MoveRightEnv = MoveRightInterior | MoveRightBoundary
+data MoveLeftEnv = MoveLeftInterior | MoveLeftBoundary'
 
 data LeftEnvAtCentre w b where
   LeftEnvFirst :: LeftEnv 1 1 1 -> LeftEnvAtCentre w b
@@ -95,18 +95,18 @@ data RightEnvAtCentre w b where
   RightEnvLast :: RightEnv 1 1 1 -> RightEnvAtCentre w b
   RightEnvBulk :: RightEnv w b b -> RightEnvAtCentre w b
 
-moveRightEnv' :: forall l. KnownNat l => Int -> MoveRightEnv'
+moveRightEnv' :: forall l. KnownNat l => Int -> MoveRightEnv
 moveRightEnv' i
-  | i + 1 == chainLength @l = MoveRightBoundary'
-  | i + 1 < chainLength @l = MoveRightInterior'
+  | i + 1 == chainLength @l = MoveRightBoundary
+  | i + 1 < chainLength @l = MoveRightInterior
   | otherwise =
       error ("moveRightEnv': centre " ++ show i ++ " cannot move right")
 
-moveLeftEnv' :: Int -> MoveLeftEnv'
+moveLeftEnv' :: Int -> MoveLeftEnv
 moveLeftEnv' i
   | i <= 1 = error ("moveLeftEnv': centre " ++ show i ++ " cannot move left")
   | i - 1 == 1 = MoveLeftBoundary'
-  | otherwise = MoveLeftInterior'
+  | otherwise = MoveLeftInterior
 
 buildLeftEnvUpTo
   :: forall p w b l
@@ -234,19 +234,18 @@ updateEnvsMoveRight
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
   => Int
-  -> MoveRightEnv'
+  -> MoveRightEnv
   -> MPO p w l
   -> MPS p b l
-  -> LeftEnvAtCentre w b
+  -> (LeftEnvAtCentre w b, RightEnvAtCentre w b)
   -> SomeSite p b
   -> SomeOpSite p w
-  -> RightEnvAtCentre w b
   -> ( LeftEnvAtCentre w b, RightEnvAtCentre w b )
-updateEnvsMoveRight i wit mpo mps l cn op _r =
+updateEnvsMoveRight i wit mpo mps (l,_r) cn op =
   let l' = extendLeftMoveRight i l cn op
       r' = case wit of
-        MoveRightBoundary' -> RightEnvLast rightBoundary
-        MoveRightInterior' ->
+        MoveRightBoundary -> RightEnvLast rightBoundary
+        MoveRightInterior ->
           RightEnvBulk (buildRightEnvFromSite (i + 2) mpo mps)
   in (l', r')
 
@@ -254,7 +253,7 @@ updateEnvsMoveLeft
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
   => Int
-  -> MoveLeftEnv'
+  -> MoveLeftEnv
   -> MPO p w l
   -> MPS p b l
   -> RightEnvAtCentre w b
@@ -265,5 +264,5 @@ updateEnvsMoveLeft i wit mpo mps r cn op =
   let r' = extendRightMoveLeft cn op r
       l' = case wit of
         MoveLeftBoundary' -> LeftEnvFirst leftBoundary
-        MoveLeftInterior' -> buildLeftEnvUpTo (i - 1) mpo mps
+        MoveLeftInterior -> buildLeftEnvUpTo (i - 1) mpo mps
   in (l', r')

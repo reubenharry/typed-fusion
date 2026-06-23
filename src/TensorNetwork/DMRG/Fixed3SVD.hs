@@ -68,8 +68,9 @@ import TensorNetwork.MPS.Fixed3 (leftSvdFactor, rightSvdFactor)
 import TensorNetwork.Categorical (swapMap, splitBond, fuseBond)
 import TensorNetwork.DMRG.Env
   ( leftBoundary, rightBoundary, extendLeft, extendRight )
+import GroundState (groundState)
 import TensorNetwork.DMRG.Fixed3
-  ( effectiveH, solveCentre, dmrgM
+  ( effectiveH, dmrg, DmrgResult (..)
   , denseGroundEnergy, energy, tfimMPO, seededMPS222
   )
 
@@ -248,16 +249,16 @@ sweepSvd mpo mps =
 
   let r3 = extendRight @p s3r o3 s3r rightBoundary
       r23 = extendRight @p s2r o2 s2r r3
-      (_, c1) = solveCentre (effectiveH @p leftBoundary o1 r23)
+      (_, c1) = groundState (effectiveH @p leftBoundary o1 r23)
   (s1n, _g1) <- normalizeLeftSvdM (Site c1)
   let l1 = extendLeft leftBoundary s1n o1 s1n
-      (_, c2) = solveCentre (effectiveH @p l1 o2 r3)
+      (_, c2) = groundState (effectiveH @p l1 o2 r3)
   (s2n, _g2) <- normalizeLeftSvdM (Site c2)
   let l2 = extendLeft l1 s2n o2 s2n
-      (_, c3) = solveCentre (effectiveH @p l2 o3 rightBoundary)
+      (_, c3) = groundState (effectiveH @p l2 o3 rightBoundary)
   (_g3, s3n) <- normalizeRightSvdM (Site c3)
   let r3' = extendRight @p s3n o3 s3n rightBoundary
-      (e2, c2') = solveCentre (effectiveH @p l1 o2 r3')
+      (e2, c2') = groundState (effectiveH @p l1 o2 r3')
   pure (e2, mps3 s1n (Site c2') s3n)
 
 -- | DMRG driver with 'svdC' gauge transport (run with 'runSvdM' and a fixed seed).
@@ -266,8 +267,8 @@ dmrgSvd
    . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p)
      , p * b ~ b * p )
-  => Int -> Double -> MPO3 p w -> MPS3 p b -> SvdM (Double, MPS3 p b)
-dmrgSvd maxSweeps tol mpo = dmrgM maxSweeps tol mpo sweepSvd
+  => Int -> Double -> MPO3 p w -> MPS3 p b -> SvdM (DmrgResult p b 1)
+dmrgSvd maxSweeps tol mpo = dmrg maxSweeps tol mpo sweepSvd
 
 -- | DMRG with 'svdC' gauge transport converges to the dense @C (p³)@ ground energy.
 -- Not in the test suite yet — 'Experiments.SVD.svdC' is still WIP.
@@ -276,7 +277,8 @@ prop_dmrgSvdGroundEnergyMatchesDense =
   QC.forAll (QC.choose (0, 99)) $ \seed ->
     let mpo = tfimMPO 1 0.7
         psi0 = seededMPS222 seed
-        (e, psi) = runSvdM seed $ dmrgSvd 10 1e-12 mpo psi0
+        DmrgResult { dmrgFinalEnergy = e, dmrgFinalMPS = psi } =
+          runSvdM seed $ dmrgSvd 10 1e-12 mpo psi0
         eDense = denseGroundEnergy mpo
         tol = 1e-9
     in QC.counterexample ("DMRG-SVD " ++ show e ++ " vs dense " ++ show eDense)

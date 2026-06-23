@@ -18,6 +18,7 @@
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeAbstractions #-}
+{-# LANGUAGE BangPatterns #-}
 -- The KnownNat solver discharges @KnownNat (m * n)@ (i.e. @KnownNat (HomBlockDim
 -- m n)@) from @KnownNat m@ and @KnownNat n@. The charge-keyed @compose@
 -- synthesizes blocks whose dimensions are existential (recovered from rep
@@ -26,26 +27,32 @@
 
 module Symmetry.FunctorExperiment where
 
-import Prelude hiding ((.), (<>))
 import Data.Complex (Complex((:+)))
-import GHC.TypeLits (Nat, KnownNat, type (+))
+import GHC.TypeLits (Nat, KnownNat, natVal, type (+))
 import qualified GHC.TypeNats
 import Data.Proxy (Proxy(..))
+import Data.Maybe (fromMaybe)
 import Data.Singletons (sing, Sing)
 import Data.Singletons.Decide (SDecide(..), Decision(..))
 import Data.Type.Equality ((:~:)(..))
+import Prelude hiding ((.), (<>), Functor(..))
 import Control.Category.Constrained (Category(..))
+import Control.Functor.Constrained (Functor(..))
 import Math.LinearMap.Category hiding (Tensor)
 import Math.LinearMap.Category.Instances.Deriving ()
 -- Orphan instances for @C n@ (Eq, TensorSpace, …) — previously reached this
 -- module transitively via @General@, now imported directly.
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static.Orphans ()
-import Numeric.LinearAlgebra.Static (C, konst)
+import Numeric.LinearAlgebra.Static
+  (C, M, konst, create, extract, Sized(fromList), Domain(app))
+import qualified Data.Vector.Storable as V
 import Symmetry.Utils (Z(..), KnownZ, getZ, Append)
 import Symmetry.ChargeEq (ZEq, ZEqResult(..), sZEq)
 import Symmetry.RepSingleton (SRep(..), KnownRep(..))
-import Symmetry.HomBlock (HomBlockDim, U1HomBlock(..), composeBlock, zeroBlock, applyEndoAt)
+import Symmetry.HomBlock
+  ( HomBlockDim, U1HomBlock(..), composeBlock, zeroBlock, blockAsMat
+  )
 
 -- | A U(1) representation as a list of @(charge, multiplicity)@ sectors.
 type U1Rep = [(Z, Nat)]
@@ -254,7 +261,9 @@ compose (MkIntertwiner bc) (MkIntertwiner ab) =
 -- ('U1RepList'), and the identity-hom builder.
 instance Category Intertwiner where
   type Object Intertwiner a =
-    (KnownRep a, U1RepList a, BuildIdHom (HomSectorList a a))
+    ( KnownRep a, U1RepList a, BuildIdHom (HomSectorList a a)
+    , KnownNat (RepDim a)
+    )
   id = mkIdHom
   (.) = compose
 
@@ -277,26 +286,104 @@ instance ActsOnRep '[] where
 instance (KnownZ z, KnownNat m) => ActsOnRep ('(z, m) ': '[]) where
   repLinear theta = LinearFunction (\(ToC v) -> ToC (u1PhaseFactor @z theta *^ v))
 
--- | Apply an intertwiner to a rep vector, dispatching /structurally/ on the
--- hom spine. The two instances match disjoint spine shapes (@'[]@ vs a single
--- @'(z, m, m)@ endo block), so no @OVERLAPPING@/@OVERLAPPABLE@ pragmas are
--- needed. The empty-spine case sends everything to zero (no intertwiner).
---
--- NOTE: only single-block (one shared charge) reps are covered so far;
--- generalizing to multi-block reps (sub-vector slicing over 'SRep') is the next
--- step toward SU(2).
+--------------------------------------------------------------------------------
+-- Sector layout: prefix offsets in flat @C (RepDim r)@ storage
+--------------------------------------------------------------------------------
+
+natValInt :: KnownNat n => Proxy n -> Int
+natValInt = fromIntegral . natVal
+
+-- | @(offset, multiplicity)@ of charge @z@ in @q@, walking sectors in spine order.
+chargeSectorLoc :: forall (z :: Z) (q :: U1Rep). Sing z -> SRep q -> Maybe (Int, Int)
+chargeSectorLoc sz = go 0
+  where
+    go :: forall q0. Int -> SRep q0 -> Maybe (Int, Int)
+    go _ SRepNil = Nothing
+    go !off (SRepCons @z2 @m (sz2 :: Sing z2) rest) =
+      let mInt = natValInt (Proxy @m)
+      in case sZEq @z @z2 sz sz2 of
+           ZEqTrue  -> Just (off, mInt)
+           ZEqFalse -> go (off + mInt) rest
+
+-- | Prefix offset of the sector at charge @z@ in rep @q@, if present.
+targetChargeOffset :: forall (z :: Z) (q :: U1Rep). Sing z -> SRep q -> Int
+targetChargeOffset sz sq = case chargeSectorLoc @z @q sz sq of
+  Just (off, _) -> off
+  Nothing ->
+    error "targetChargeOffset: charge absent (unreachable for hom blocks)"
+
+-- | Read a length-@n@ slice from flat vector @v@ starting at byte offset @off@.
+takeAtOffset :: forall n total. (KnownNat n, KnownNat total) => Int -> C total -> C n
+takeAtOffset off v =
+  fromMaybe (error "takeAtOffset: slice out of range") $
+    create (V.fromList (take (natValInt (Proxy @n)) (drop off (V.toList (extract v)))))
+
+-- | Write @block@ into @vec@ at offset @off@ (target sectors do not overlap).
+writeAtOffset :: forall m total. (KnownNat m, KnownNat total) => Int -> C m -> C total -> C total
+writeAtOffset off block vec =
+  fromMaybe (error "writeAtOffset: patch out of range") $
+    create (V.fromList merged)
+  where
+    xs = V.toList (extract vec)
+    ys = V.toList (extract block)
+    m = natValInt (Proxy @m)
+    merged = take off xs ++ ys ++ drop (off + m) xs
+
+-- | One compiled block: source/target offsets and a pre-built matrix.
+data CompiledStep where
+  CompiledStep :: forall m n.
+    (KnownNat m, KnownNat n) =>
+    !Int -> !Int -> !(M m n) -> CompiledStep
+
+runCompiledStep
+  :: forall rdim qdim. (KnownNat rdim, KnownNat qdim)
+  => CompiledStep -> C rdim -> C qdim -> C qdim
+runCompiledStep (CompiledStep @m @n srcOff tgtOff mat) input output =
+  writeAtOffset tgtOff (app mat (takeAtOffset @n srcOff input)) output
+
+-- | Walk @SRep r@ in lockstep with the hom spine (same alignment as 'bcIndex').
+collectCompiledSteps
+  :: forall r q hom. SRep r -> SRep q -> IntertwinerSectors hom -> Int -> [CompiledStep]
+collectCompiledSteps SRepNil _ InterNil _ = []
+collectCompiledSteps SRepNil _ (InterCons _ _) _ =
+  error "collectCompiledSteps: hom spine longer than source rep (unreachable)"
+collectCompiledSteps (SRepCons @z @srcMult (saz :: Sing z) srest) sq hom !srcOff =
+  let srcDim = natValInt (Proxy @srcMult)
+  in case sLookupMult saz sq of
+       Absent -> collectCompiledSteps srest sq hom (srcOff + srcDim)
+       Present _ -> case hom of
+         InterCons blk homRest ->
+           CompiledStep srcOff (targetChargeOffset @z @q saz sq) (blockAsMat blk)
+             : collectCompiledSteps srest sq homRest (srcOff + srcDim)
+         InterNil ->
+           error "collectCompiledSteps: hom spine exhausted early (unreachable)"
+collectCompiledSteps (SRepCons _ _) _ InterNil _ =
+  error "collectCompiledSteps: source rep longer than hom spine (unreachable)"
+
+-- | Compile an intertwiner to a flat @C (RepDim r) -> C (RepDim q)@ function.
+-- Block matrices are built once; each application only slices and matmuls.
+compileIntertwiner
+  :: forall r q.
+     ( KnownRep r, KnownRep q
+     , KnownNat (RepDim r), KnownNat (RepDim q)
+     )
+  => IntertwinerSectors (HomSectorList r q) -> C (RepDim r) -> C (RepDim q)
+compileIntertwiner sectors input =
+  foldl (\acc step -> runCompiledStep step input acc) (konst 0) steps
+  where
+    steps = collectCompiledSteps (repSing @r) (repSing @q) sectors 0
+
+-- | Apply an intertwiner to a rep vector (@hom@ fixed by @r@ and @q@).
 class ApplyInterGo (hom :: [(Z, Nat, Nat)]) (r :: U1Rep) (q :: U1Rep) where
   applyInterGo :: IntertwinerSectors hom -> ToC r -> ToC q
 
-instance KnownNat (RepDim q) => ApplyInterGo '[] r q where
-  applyInterGo InterNil _ = zeroRep
-
 instance
-  ( KnownNat m, KnownNat (HomBlockDim m m)
-  , RepDim r ~ m, RepDim q ~ m
-  ) => ApplyInterGo '[ '(z, m, m)] r q where
-  applyInterGo (InterCons (U1HomBlock block) InterNil) (ToC v) =
-    ToC (applyEndoAt @m block v)
+  ( KnownRep r, KnownRep q
+  , KnownNat (RepDim r), KnownNat (RepDim q)
+  , hom ~ HomSectorList r q
+  ) => ApplyInterGo hom r q where
+  applyInterGo sectors (ToC v) =
+    ToC (compileIntertwiner @r @q sectors v)
 
 -- | Apply an intertwiner to a rep vector (@hom@ fixed by @r@ and @q@).
 class ApplyIntertwiner (r :: U1Rep) (q :: U1Rep) where
@@ -308,12 +395,22 @@ instance ApplyInterGo (HomSectorList r q) r q => ApplyIntertwiner r q where
 
 intertwinerLinear
   :: forall r q.
-     ( U1RepList r, U1RepList q, ApplyIntertwiner r q
+     ( KnownRep r, KnownRep q
+     , U1RepList r, U1RepList q, ApplyIntertwiner r q
+     , KnownNat (RepDim r), KnownNat (RepDim q)
      )
   => Intertwiner r q
   -> LinearFunction (Complex Double) (ToC r) (ToC q)
 intertwinerLinear (MkIntertwiner sectors) =
-  LinearFunction (applyInter sectors)
+  let steps = collectCompiledSteps (repSing @r) (repSing @q) sectors 0
+      applyVec (v :: C (RepDim r)) =
+        foldl (\acc step -> runCompiledStep step v acc) (konst 0) steps
+  in LinearFunction (\(ToC v) -> ToC (applyVec v))
+
+-- | Hom functor @Rep_{U(1)} -> Vect@: objects @r |-> ToC r@, morphisms via
+-- compiled block matmul ('intertwinerLinear').
+instance Functor ToC Intertwiner (LinearFunction (Complex Double)) where
+  fmap = intertwinerLinear
 
 -- | @TensorSpace@ delegates to flat @C (RepDim r)@ (no @HList@).
 instance KnownNat (RepDim r) => AdditiveGroup (ToC r) where
@@ -382,6 +479,7 @@ instance KnownNat (RepDim r) => Show (ToC r) where
 type Pos1       = '[ '( 'Pos 1, 1)]
 type ZeroRep    = '[ '( 'Zero, 1)]
 type DoublePos1 = '[ '( 'Pos 1, 2)]
+type PosNeg1    = '[ '( 'Pos 1, 1), '( 'Neg 1, 1)]
 
 type ZeroToOneHom  = HomSectorList ZeroRep Pos1
 type PhaseHom      = HomSectorList Pos1 Pos1
@@ -425,6 +523,12 @@ emptyToPos = MkIntertwiner InterNil
 zeroThroughEmpty :: Intertwiner Pos1 Pos1
 zeroThroughEmpty = compose emptyToPos posToEmpty
 
+zeroThroughEmpty' ::  (ToC Pos1) -+> (ToC Pos1)
+zeroThroughEmpty' = fmap zeroThroughEmpty
+
+-- zeroThroughEmpty'' ::  (ToC Pos1) +> (ToC Pos1)
+-- zeroThroughEmpty'' = arr zeroThroughEmpty'
+
 -- | Applying 'zeroThroughEmpty' yields the zero vector (the payoff: a genuine
 -- zero block, applied without crashing).
 testZeroThroughEmpty :: ToC Pos1
@@ -457,4 +561,19 @@ doublePos1Inter =
 
 testDoublePos1 :: ToC DoublePos1
 testDoublePos1 = getLinearFunction (intertwinerLinear doublePos1Inter) repDoublePos1
+
+repPosNeg1 :: ToC PosNeg1
+repPosNeg1 = ToC (fromList [1, 2])
+
+negPhase :: Intertwiner PosNeg1 PosNeg1
+negPhase =
+  MkIntertwiner
+    ( InterCons (U1HomBlock (konst 1) :: U1HomBlock 1 1)
+    $ InterCons (U1HomBlock (konst (0 :+ 1)) :: U1HomBlock 1 1)
+    $ InterNil
+    )
+
+-- | Block-diagonal action: @+1@ on the @Pos@ sector, @i@ on the @Neg@ sector.
+testPosNegPhase :: ToC PosNeg1
+testPosNegPhase = getLinearFunction (intertwinerLinear negPhase) repPosNeg1
 

@@ -53,33 +53,26 @@ import TensorNetwork.MPS.Fixed3
   , prop_canonicalMPSRoundTripP2
   , prop_canonicalMPSRoundTripP3
   )
-import TensorNetwork.DMRG.Zipper
-  ( prop_toZipperMatchesLegacy
-  , prop_moveRightMatchesLegacy
-  , prop_moveLeftMatchesLegacy
-  , prop_solveCenterAtMatchesLegacy
-  , prop_centreEnergyMatchesLegacy
-  )
-import TensorNetwork.DMRG.SiteIndex
-  ( prop_getSiteSingMatchesGetSite
-  , prop_setSiteSingRoundTrip
-  , prop_solveCentreSingMatchesSolveCentre
-  )
-import GHC.TypeLits (type (*))
 import TensorNetwork.DMRG.Fixed3
-  ( prop_effectiveHMatchesInner
+  ( DmrgResult (..)
+  , prop_effectiveHMatchesInner
   , prop_effectiveHHermitian
   , prop_flatLeftSVDMatchesSiteMatrix
+  , prop_leftSvdDecomposition
   , prop_dmrgGroundEnergyMatchesDense
   , prop_eigenMatchesDenseC4
   , prop_mpsGetSite
   , prop_mpsSetSiteRoundTrip
+  , prop_regaugeDepartRightPreservesMPS
+  , prop_regaugeDepartLeftPreservesMPS
+  , prop_moveRightLeftPreservesMPS
+  , prop_regaugeDepartRightPreservesAmplitudes
   , tfimMPO
   , dmrg
   , sweep
   , energy
   , denseGroundEnergy
-  , seededMPS222
+  , seededMPS222, solveCenterAt
   )
 
 requireQC :: QC.Result -> IO ()
@@ -98,9 +91,10 @@ checkDMRG :: Double -> Double -> IO ()
 checkDMRG j h = do
   let mpo = tfimMPO j h
       psi0 = seededMPS222 42
-      (e1, psi1) = sweep mpo psi0
-      (e, _) = dmrg 10 1e-12 mpo sweep psi0
       eDense = denseGroundEnergy mpo
+  (e1, psi1) <- sweep solveCenterAt mpo psi0
+  DmrgResult {dmrgFinalEnergy = e} <-
+    dmrg 10 1e-12 mpo (sweep solveCenterAt) psi0
   requireClose "sweep energy vs Rayleigh quotient" 1e-9 (energy mpo psi1) e1
   requireClose "DMRG vs dense ground energy" 1e-9 eDense e
   if e1 >= eDense - 1e-9
@@ -199,6 +193,16 @@ main = do
   requireQC =<< QC.quickCheckResult prop_effectiveHHermitian
   putStrLn "Flat left-SVD layout matches siteMatrix oracle..."
   requireQC =<< QC.quickCheckResult prop_flatLeftSVDMatchesSiteMatrix
+  putStrLn "Left SVD decomposition M ≈ U F..."
+  requireQC =<< QC.quickCheckResult prop_leftSvdDecomposition
+  putStrLn "Regauge moveRight preserves amplitudes..."
+  requireQC =<< QC.quickCheckResult prop_regaugeDepartRightPreservesAmplitudes
+  putStrLn "Regauge moveRight preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_regaugeDepartRightPreservesMPS
+  putStrLn "Regauge moveLeft preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_regaugeDepartLeftPreservesMPS
+  putStrLn "Zipper moveRight/moveLeft preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_moveRightLeftPreservesMPS
   putStrLn "DMRG ground energy matches dense oracle (100 seeds)..."
   requireQC =<< QC.quickCheckResult prop_dmrgGroundEnergyMatchesDense
   putStrLn "eigen path matches dense oracle on C 4..."
@@ -207,22 +211,6 @@ main = do
   requireQC =<< QC.quickCheckResult prop_mpsGetSite
   putStrLn "MPS setSite round-trips..."
   requireQC =<< QC.quickCheckResult prop_mpsSetSiteRoundTrip
-  putStrLn "SiteIndex getSiteSing matches getSite (n = 3)..."
-  requireQC =<< QC.quickCheckResult prop_getSiteSingMatchesGetSite
-  putStrLn "SiteIndex setSiteSing round-trips..."
-  requireQC =<< QC.quickCheckResult prop_setSiteSingRoundTrip
-  putStrLn "SiteIndex solveCentreSing matches solveCentre..."
-  requireQC =<< QC.quickCheckResult prop_solveCentreSingMatchesSolveCentre
-  putStrLn "Zipper toZipper matches legacy (n = 3)..."
-  requireQC =<< QC.quickCheckResult prop_toZipperMatchesLegacy
-  putStrLn "Zipper moveRight matches legacy (n = 3)..."
-  requireQC =<< QC.quickCheckResult prop_moveRightMatchesLegacy
-  putStrLn "Zipper moveLeft matches legacy (n = 3)..."
-  requireQC =<< QC.quickCheckResult prop_moveLeftMatchesLegacy
-  putStrLn "Zipper solveCenterAt matches legacy (n = 3)..."
-  requireQC =<< QC.quickCheckResult prop_solveCenterAtMatchesLegacy
-  putStrLn "Zipper centreEnergy matches legacy (n = 3)..."
-  requireQC =<< QC.quickCheckResult prop_centreEnergyMatchesLegacy
   putStrLn "DMRG matches dense ground energy (J=1, h=0.7)..."
   checkDMRG 1 0.7
   putStrLn "DMRG matches dense ground energy (J=0.5, h=1.3)..."

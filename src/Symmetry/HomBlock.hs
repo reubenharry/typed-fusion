@@ -19,7 +19,7 @@ module Symmetry.HomBlock
   ( HomBlockDim, EndoHomDim
   , U1HomBlock(..)
   , flattenMat, blockAsMat
-  , composeBlock, zeroBlock, applyEndoAt
+  , composeBlock, zeroBlock, applyBlock, applyEndoAt
   ) where
 
 import Data.Vector.Storable (toList)
@@ -77,8 +77,14 @@ zeroBlock
   => U1HomBlock m n
 zeroBlock = U1HomBlock (konst 0)
 
+-- | Apply an @m × n@ hom block to a source sector vector @C n@.
+applyBlock
+  :: forall m n d. (KnownNat m, KnownNat n, KnownNat d, HomBlockDim m n ~ d)
+  => U1HomBlock m n -> C n -> C m
+applyBlock blk = app (blockAsMat blk)
+
 -- | Apply an @m@-fold endomorphism block (stored flat) to a sector vector.
 applyEndoAt
   :: forall m h. (KnownNat m, KnownNat h, EndoHomDim m ~ h)
   => C h -> C m -> C m
-applyEndoAt block = app (blockAsMat @m @m (U1HomBlock block))
+applyEndoAt block v = applyBlock (U1HomBlock block) v

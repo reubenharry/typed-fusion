@@ -6,11 +6,20 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE NoStarIsType #-}
 
 -- | General-length MPS/MPO storage and indexing.
 module TensorNetwork.DMRG.Chain
   ( -- * Chain length
     chainLength
+  , ChainEnd
+    -- * Site index ('Data.Finite' cursor ↔ 1-based 'Int' site number)
+  , siteInt
+  , firstSite
+  , advanceSite
+  , retreatSite
+  , isFirstSite
+  , isLastSite
     -- * Site / operator roles
   , SomeSite (..)
   , SomeOpSite (..)
@@ -21,7 +30,8 @@ module TensorNetwork.DMRG.Chain
   , setOp
   ) where
 
-import GHC.TypeLits (KnownNat, natVal)
+import Data.Finite (Finite, finite, getFinite, packFinite)
+import GHC.TypeLits (KnownNat, Nat, natVal, type (+))
 import Data.Proxy (Proxy (..))
 import Data.Maybe (fromMaybe)
 import Data.List (splitAt)
@@ -40,6 +50,35 @@ bulkUpdate j x v =
 
 chainLength :: forall l. KnownNat l => Int
 chainLength = fromIntegral (natVal (Proxy @l)) + 2
+
+-- | Total number of sites on an open-boundary chain with @l@ bulk sites.
+type ChainEnd l = l + 2
+
+-- | Convert a 0-based 'Finite' cursor to the 1-based site index used by 'getSite'.
+siteInt :: Finite (ChainEnd l) -> Int
+siteInt c = fromIntegral (getFinite c) + 1
+
+-- | Leftmost site (site @1@).
+firstSite :: (KnownNat l, KnownNat (ChainEnd l)) => Finite (ChainEnd l)
+firstSite = finite 0
+
+advanceSite
+  :: (KnownNat l, KnownNat (ChainEnd l))
+  => Finite (ChainEnd l)
+  -> Maybe (Finite (ChainEnd l))
+advanceSite c = packFinite (getFinite c + 1)
+
+retreatSite
+  :: KnownNat (ChainEnd l)
+  => Finite (ChainEnd l)
+  -> Maybe (Finite (ChainEnd l))
+retreatSite c = packFinite (getFinite c - 1)
+
+isFirstSite :: Finite (ChainEnd l) -> Bool
+isFirstSite c = getFinite c == 0
+
+isLastSite :: forall l. KnownNat l => Finite (ChainEnd l) -> Bool
+isLastSite c = siteInt c >= chainLength @l
 
 data SomeSite p b where
   SiteLeft  :: Site 1 p b -> SomeSite p b

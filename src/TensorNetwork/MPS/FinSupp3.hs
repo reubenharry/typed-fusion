@@ -25,13 +25,11 @@ import Data.Finite (Finite, finites, getFinite)
 import Data.Complex (Complex ((:+)))
 import Data.Proxy (Proxy (..))
 import Data.Coerce (coerce)
-import Data.List (foldl', intercalate)
+import Data.List (foldl')
 import Data.Maybe (fromMaybe)
 import GHC.TypeLits (KnownNat, natVal, type (*))
 import Data.VectorSpace (sumV)
 import qualified Test.QuickCheck as QC
-import Test.QuickCheck.Gen (unGen)
-import Test.QuickCheck.Random (mkQCGen)
 import Math.LinearMap.Category
   ( type (+>), type (⊗), LinearMap (..), Tensor (..),
     AdditiveGroup (..), VectorSpace (..), Scalar, getLinearMap, getTensorProduct )
@@ -186,10 +184,6 @@ instance KnownNat vp => VectorSpace (MPS vp) where
   type Scalar (MPS vp) = Field
   μ *^ m = scaleMPS μ m
 
-{-# DEPRECATED addClever "Use (^+^) on MPS instead" #-}
-addClever :: KnownNat vp => MPS vp -> MPS vp -> MPS vp
-addClever = addMPS
-
 -- | Stack @vp@ column vectors into an @M vp vp@ (one row per physical index).
 matFromCVpRows :: forall vp. KnownNat vp => V.Vector (C vp) -> M vp vp
 matFromCVpRows cols =
@@ -227,11 +221,6 @@ stateMap (MPS (LinearMap leftImgs) centerSite right) =
       rows = map (LA.toList . flattenBody2) (V.toList contracted)
       mat = LA.fromRows (map LA.fromList rows)
   in LinearMap (fromMaybe (error "stateMap: create failed") (create mat))
-
--- | Alias for 'stateMap' emphasizing the linear-map viewpoint.
-mpsStateMap
-  :: (KnownNat vp, KnownNat (vp * vp)) => MPS vp -> C vp +> (C vp ⊗ C vp)
-mpsStateMap = stateMap
 
 -- | The state tensor in @VP ⊗ (VP ⊗ VP)@ (right-associated triple product).
 mpsToTensorNested
@@ -530,97 +519,3 @@ prop_mpsFromFlatRoundTripVP3 :: QC.Property
 prop_mpsFromFlatRoundTripVP3 =
   QC.forAll (genMPS @3) $ \(m :: MPS 3) ->
     mpsToFlat (mpsFromFlat @3 (mpsToFlat m)) QC.=== mpsToFlat m
-
-runAddThenFlattenTests :: IO ()
-runAddThenFlattenTests = do
-  putStrLn "MPS addition commutes with flattening (vp = 2)..."
-  QC.quickCheck prop_addThenFlattenVP2
-  putStrLn "MPS addition commutes with flattening (vp = 3)..."
-  QC.quickCheck prop_addThenFlattenVP3
-  putStrLn "MPS physical basis vectors match Physical3 basis..."
-  QC.quickCheck prop_basisMPSMatchesPhysicalVP2
-  QC.quickCheck prop_basisMPSMatchesPhysicalVP3
-  putStrLn "MPS decompose' matches Physical3 decompose'..."
-  QC.quickCheck prop_decomposePrimeMatchesPhysicalVP2
-  QC.quickCheck prop_decomposePrimeMatchesPhysicalVP3
-  putStrLn "canonicalMPS round-trips on physical space..."
-  QC.quickCheck prop_physicalRecomposeVP2
-  QC.quickCheck prop_physicalRecomposeVP3
-  putStrLn "mpsFromFlat round-trips on physical space..."
-  QC.quickCheck prop_mpsFromFlatRoundTripVP2
-  QC.quickCheck prop_mpsFromFlatRoundTripVP3
-
-
--- | Human-readable label for a 'Physical3' basis element.
-showPhysicalBasis
-  :: forall vp
-   . (KnownNat vp, KnownNat (vp * vp), KnownNat (PhysicalDim3 vp))
-  => Basis (Physical3 vp)
-  -> String
-showPhysicalBasis b =
-  let (s1, s2, s3) = physicalIndicesFromBasis b
-  in "|" ++ intercalate "," (map show [s1, s2, s3]) ++ "⟩"
-
--- | Sample a random @MPS 2@ and print one physical basis coefficient via
--- 'decompose''.
-exampleDecomposeBasis :: IO ()
-exampleDecomposeBasis = do
-  let mps :: MPS 2 = sampleWithSeed 42 10 genMPS
-      -- product state |0,1,1⟩ in left-associated @(C 2 ⊗ C 2) ⊗ C 2@
-      b :: Basis (Physical3 2) = ((finites @2 !! 0, finites @2 !! 1), finites @2 !! 1)
-  putStrLn ("Random MPS (seed 42, size 10); bond dim = " ++ show (bondDimMPS mps))
-  putStrLn
-    ( "decompose' at "
-        ++ showPhysicalBasis @2 b
-        ++ " = "
-        ++ show (decompose' mps b)
-    )
-  putStrLn
-    ( "Same coefficient from mpsToPhysical3: "
-        ++ show (decompose' (mpsToPhysical3 mps) b)
-    )
-  putStrLn
-    ( "Flat amplitude vector: "
-        ++ show (extract (physicalToFlat (mpsToPhysical3 mps)))
-    )
-
--- | A concrete non-zero @MPS 2@ with bond dimension 1, flattened to @C 8@.
-test :: IO ()
-test = do 
-  print $ mpsToFlat nonZeroMPS
-  print $ mpsToFlat (nonZeroMPS ^+^ nonZeroMPS)
-  print $ mpsToFlat nonZeroMPS ^+^ mpsToFlat nonZeroMPS
-  where
-    nonZeroMPS :: MPS 2
-    nonZeroMPS = MPS leftMap centerMap rightMap
-
-    -- C 2 +> Bond: both physical basis vectors map to the length-1 bond [1].
-    leftMap = LinearMap (V.fromList [unit, unit])
-
-    -- Bond +> (C 2 ⊗ Bond): one bond-basis input, two physical rows.
-    centerMap = LinearMap [Tensor (V.fromList [unit, unit])]
-
-    -- Bond +> C 2: one bond-basis input mapping to a C 2 vector.
-    rightMap = LinearMap [cvec [1, 2]]
-
-    unit = FinSuppSeq (U.fromList [1])
-    cvec xs = fromMaybe (error "test: create failed") (create (LA.fromList xs))
-
--- | Draw a single value from a 'QC.Gen' deterministically with a fixed seed.
---
--- @unGen :: Gen a -> QCGen -> Int -> a@ — the 'Int' is the QuickCheck size,
--- which controls how large generated structures are.
-sampleWithSeed :: Int -> Int -> QC.Gen a -> a
-sampleWithSeed seed genSize gen = unGen gen (mkQCGen seed) genSize
-
--- | Same as 'test', but on a random @MPS 2@ drawn from 'genMPS'
--- with a fixed seed (so it is reproducible). Note: depending on the seed the
--- draw can be the zero MPS, since 'genMPS' may pick bond dimension 0.
-testRandom :: IO ()
-testRandom = do
-  print $ mpsToFlat randomMPS
-  print $ mpsToFlat (randomMPS ^+^ randomMPS)
-  print $ mpsToFlat randomMPS ^+^ mpsToFlat randomMPS
-  where
-    randomMPS :: MPS 2
-    randomMPS = sampleWithSeed 42 10 genMPS

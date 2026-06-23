@@ -65,13 +65,13 @@ import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 import GHC.TypeLits (KnownNat, type (*))
 import Data.Complex (Complex ((:+)), conjugate, realPart, imagPart, magnitude)
+import Data.List (foldl')
 import Data.Maybe (fromMaybe)
+import Data.Vector.Sized (toList)
 import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), sumV)
 import Control.Monad (replicateM)
 import qualified Data.Vector.Storable as VS
 import qualified Test.QuickCheck as QC
-import Test.QuickCheck.Gen (unGen)
-import Test.QuickCheck.Random (mkQCGen)
 
 
 
@@ -114,19 +114,27 @@ mpsFromPhysical tensor =
 
 
 
--- | The MPS inner product ⟨ψ|φ⟩: three transfer steps from the identity
--- boundary environment, closed with the trace on @C 1 +> C 1@.
+-- | Left-to-right ⟨ψ|φ⟩ transfer contraction over an open-boundary MPS chain.
+foldTransferInner
+  :: forall p b l.
+     ( KnownNat p, KnownNat b, KnownNat l )
+  => MPS p b l -> MPS p b l -> C 1 +> C 1
+foldTransferInner (MPS lB bulkB rB) (MPS lK bulkK rK) =
+  let env0 = transferStep @p lB lK (Cat.id :: C 1 +> C 1)
+      envBulk =
+        foldl'
+          (\env (sB, sK) -> transferStep @p sB sK env)
+          env0
+          (zip (toList bulkB) (toList bulkK))
+  in transferStep @p rB rK envBulk
+
+-- | The MPS inner product ⟨ψ|φ⟩: transfer steps from the identity boundary
+-- environment at the left, closed with the trace on @C 1 +> C 1@.
 mpsInner
-  :: forall p a.
-     ( KnownNat p, KnownNat a )
-  => MPS3 p a -> MPS3 p a -> Complex Double
-mpsInner mps1 mps2 =
-  withMPS3 mps1 $ \lB cB rB ->
-  withMPS3 mps2 $ \lK cK rK ->
-    trace -+$>
-      ( transferStep @p rB rK $
-          transferStep @p cB cK $
-            transferStep @p lB lK Cat.id )
+  :: forall p a l.
+     ( KnownNat p, KnownNat a, KnownNat l )
+  => MPS p a l -> MPS p a l -> Complex Double
+mpsInner mps1 mps2 = trace -+$> foldTransferInner @p @a @l mps1 mps2
 
 
 
@@ -474,24 +482,31 @@ mpoApplyMPS mpo mps =
       (applyOpSiteToSite @w @p @w @b @b cOp cSite)
       (applyOpSiteToSite @w @p @1 @b @1 rOp rSite)
 
+-- | Left-to-right ⟨ψ|H|φ⟩ MPO–MPS transfer contraction.
+foldMPOTransferInner
+  :: forall p a w b l.
+     ( KnownNat p, KnownNat a, KnownNat b, KnownNat w, KnownNat l )
+  => MPS p a l -> MPO p w l -> MPS p b l -> C 1 +> (C 1 ⊗ C 1)
+foldMPOTransferInner (MPS lB bulkB rB) (MPO lOp bulkOp rOp) (MPS lK bulkK rK) =
+  let env0 = mpoTransferStep @p @1 @w @1 @a @1 @b lB lOp lK (lunitInv @(C 1))
+      envBulk =
+        foldl'
+          (\env (sB, o, sK) -> mpoTransferStep @p @w @w @a @a @b @b sB o sK env)
+          env0
+          (zip3 (toList bulkB) (toList bulkOp) (toList bulkK))
+  in mpoTransferStep @p @w @1 @a @1 @b @1 rB rOp rK envBulk
+
 -- | ⟨ψ|H|φ⟩ via left-to-right MPO–MPS transfer contraction: start from the
--- inverse left unitor as the boundary environment, take three
--- 'mpoTransferStep's, close with the left unitor and the trace.
+-- inverse left unitor as the boundary environment, fold 'mpoTransferStep'
+-- over the chain, close with the left unitor and the trace.
 mpsMPOInner
-    :: forall p a w b.
+  :: forall p a w b l.
      ( KnownNat p
      , KnownNat a, KnownNat b
-     , KnownNat w )
-  => MPS3 p a -> MPO3 p w -> MPS3 p b -> Complex Double
+     , KnownNat w, KnownNat l )
+  => MPS p a l -> MPO p w l -> MPS p b l -> Complex Double
 mpsMPOInner mpsB mpo mpsK =
-  withMPS3 mpsB $ \lB cB rB ->
-  withMPO3 mpo $ \lOp cOp rOp ->
-  withMPS3 mpsK $ \lK cK rK ->
-    trace -+$>
-      ( lunit
-          . ( mpoTransferStep @p rB rOp rK $
-                mpoTransferStep @p cB cOp cK $
-                  mpoTransferStep @p lB lOp lK (lunitInv @(C 1)) ) )
+  trace -+$> (lunit @(C 1) . foldMPOTransferInner @p @a @w @b @l mpsB mpo mpsK)
 
 -- | The identity operator as a bond-dimension-one MPO.
 identityMPO :: forall p. KnownNat p => MPO3 p 1
@@ -836,62 +851,3 @@ prop_canonicalMPSRoundTripP3 :: QC.Property
 prop_canonicalMPSRoundTripP3 =
   QC.forAll genMPS333 $ \m ->
     flatApproxEq @27 1e-9 (mpsToFlat (canonicalMPS @3 @3 m)) (mpsToFlat m)
-
--- | Run the Phase-2 property tests.
-runMPSTests :: IO ()
-runMPSTests = do
-  putStrLn "SVD mpsFromFlat round-trips on physical space (p = 2)..."
-  QC.quickCheck prop_mpsFromFlatRoundTripP2
-  putStrLn "SVD mpsFromFlat on random flat C^8 (p = 2)..."
-  QC.quickCheck prop_mpsFromFlatOnRandomFlatP2
-  putStrLn "SVD mpsFromFlat round-trips on physical space (p = 3)..."
-  QC.quickCheck prop_mpsFromFlatRoundTripP3
-  putStrLn "SVD canonicalMPS round-trips on physical space (p = 2)..."
-  QC.quickCheck prop_canonicalMPSRoundTripP2
-  putStrLn "SVD canonicalMPS round-trips on physical space (p = 3)..."
-  QC.quickCheck prop_canonicalMPSRoundTripP3
-  putStrLn "MPS inner product matches flattened overlap..."
-  QC.quickCheck prop_innerMatchesFlat
-  putStrLn "MPS inner product matches basis reference..."
-  QC.quickCheck prop_innerMatchesReference
-  putStrLn "MPS inner product is conjugate-symmetric..."
-  QC.quickCheck prop_innerConjugateSymmetric
-  putStrLn "MPS norm-squared is real and non-negative..."
-  QC.quickCheck prop_normNonNegative
-  putStrLn "MPS-MPO-MPS contraction matches flattened operator..."
-  QC.quickCheck prop_mpoInnerMatchesFlat
-  putStrLn "MPO application in MPS form matches flattened operator..."
-  QC.quickCheck prop_mpoApplyMPSMatchesFlat
-  putStrLn "Identity MPO matches MPS inner product..."
-  QC.quickCheck prop_identityMPOMatchesInner
-
--- NOTE (re @AI basis→HasBasis): `basis`/`one1` are ad-hoc standard-basis
--- builders; once a HasBasis (C n) instance is in use they can be replaced by
--- its `basisValue`. Kept explicit for now.
-
--- | Deterministically sample sites and print their storage dimensions.
-debugSiteLayouts :: IO ()
-debugSiteLayouts = do
-  let s122 = unGen (genSite @1 @2 @2) (mkQCGen 0) 10
-  let s222 = unGen (genSite @2 @2 @2) (mkQCGen 0) 10
-  let s221 = unGen (genSite @2 @2 @1) (mkQCGen 0) 10
-  let dims site =
-        let m = unwrap (getLinearMap (siteLin site))
-        in (HM.rows m, HM.cols m)
-  putStrLn ("Site 1 2 2 dims: " ++ show (dims s122))
-  putStrLn ("Site 2 2 2 dims: " ++ show (dims s222))
-  putStrLn ("Site 2 2 1 dims: " ++ show (dims s221))
-
-printSeededMPSInner :: IO ()
-printSeededMPSInner = do
-  let psi = unGen genMPS222 (mkQCGen 42) 30
-  let mpo = unGen genMPO222 (mkQCGen 42) 30
-  putStrLn ("<MPS | MPS> = " ++ show (mpsInner psi psi))
-  putStrLn ("<MPS | MPO | MPS> = " ++ show (mpsMPOInner psi mpo psi))
-
-test :: IO ()
-test = do 
-  let mps = unGen genMPS222 (mkQCGen 1) 30
-      inner = mpsInner mps mps
-  putStrLn $ show inner
-  putStrLn (show $ siteL mps)

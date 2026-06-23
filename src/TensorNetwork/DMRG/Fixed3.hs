@@ -45,45 +45,48 @@ import Prelude hiding (($), (.))
 import qualified Control.Category.Constrained as Cat
 import Control.Category.Constrained ((.))
 import qualified Control.Functor.Constrained as CF
-import Control.Arrow.Constrained (($))
+import Control.Arrow.Constrained (($), EnhancedCat (arr))
 import Math.LinearMap.Category
   ( type (+>), type (⊗), (⊗)
   , TensorSpace (..), FiniteDimensional (..), SubBasis
   , sampleLinearFunction, contractTensorMap
   , LinearFunction, pattern LinearFunction, (-+$>)
-  , getLinearMap, LinearMap (..), linearId, euclideanNorm )
-import Math.LinearMap.Coercion
-  ( curryLinearMap, uncurryLinearMap, (-+$=>) )
+  , getLinearMap, LinearMap (..), linearId, euclideanNorm
+  , recomposeLinMap, entireBasis, constructEigenSystem, Eigenvector (..), type (-+>), finishEigenSystem )
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static
-  ( C, M, R, Sized (fromList, unwrap, create, extract), Domain (diagR), complex )
+  ( C, M, R, Sized (fromList, unwrap, create, extract), Domain (diagR), complex, mul )
 import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import qualified Numeric.LinearAlgebra as HM
-import GHC.TypeLits (KnownNat, type (*), Nat, type (-), type (+))
+import GHC.TypeLits (KnownNat, type (*), Nat, type (-), type (+), natVal)
 import Data.Kind (Type)
+import Data.Proxy (Proxy (..))
 import Data.Maybe (fromMaybe)
+import qualified Data.Vector.Sized as VS
 import Data.Complex (Complex ((:+)), conjugate, realPart, magnitude)
 import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), AdditiveGroup (zeroV), sumV)
 
 import TensorNetwork.MPS.Fixed3.Internal
   ( Site (..), MPS (..), OpSite (..), MPO (..), cdim, basis
-  , MPS3, MPO3, mps3, mpo3, withMPS3, withMPO3 )
+  , MPS3, MPO3, mps3, mpo3, withMPS3, withMPO3, siteLin )
 import TensorNetwork.MPS.Fixed3
-  ( mpoTransferStep, opWire, mpsInner, mpsMPOInner, mpoToMatrix
-  , genMPS222, genMPO222, pauliX, pauliZ )
+  ( mpoTransferStep, opWire, mpsInner, mpsMPOInner, mpoToMatrix, mpsToFlat
+  , genMPS222, genMPO222, genSite, pauliX, pauliZ )
 import TensorNetwork.Categorical
   ( (⊗^), lunit, lunitInv, swapMap, splitBond, fuseBond )
-import TensorNetwork.Dagger (dagger, transposeMap)
-import GroundState (groundState, groundStateDense, groundStateEigen)
+import GroundState (groundState, groundStateDense, groundStateEigen, hilbertSchmidtNorm)
 import TensorNetwork.DMRG.Chain
-  ( chainLength
+  ( ChainEnd
+  , chainLength
+  , siteInt, firstSite, advanceSite, retreatSite, isFirstSite, isLastSite
   , getSite, getOp, setSite, SomeSite (..), SomeOpSite (..) )
+import Data.Finite (Finite)
 import TensorNetwork.DMRG.Env
   ( LeftEnv, RightEnv, leftBoundary, rightBoundary, extendLeft, extendRight
-  , MoveRightEnv' (..), moveRightEnv'
-  , MoveLeftEnv' (..), moveLeftEnv'
+  , MoveRightEnv (..), moveRightEnv'
+  , MoveLeftEnv (..), moveLeftEnv'
   , LeftEnvAtCentre (..), RightEnvAtCentre (..)
   , buildRightEnvFromSite
   , updateEnvsMoveRight, updateEnvsMoveLeft )
@@ -91,8 +94,13 @@ import TensorNetwork.DMRG.Env
 import qualified Test.QuickCheck as QC
 import Test.QuickCheck.Gen (unGen)
 import Test.QuickCheck.Random (mkQCGen)
-import TensorNetwork.MPS.Fixed3 (diagMap, leftSvdFactor, rightSvdFactor)
-
+import TensorNetwork.MPS.Fixed3.Reference (amplitude)
+import Control.Monad (replicateM)
+import Control.Monad.Identity (Identity, runIdentity)
+import Control.Exception (SomeException, evaluate, try)
+import Data.Ord (comparing)
+import Data.List (sortBy)
+import qualified Data.Vector.Storable as VSt
 --------------------------------------------------------------------------------
 -- Spaces
 --------------------------------------------------------------------------------
@@ -123,15 +131,6 @@ effectiveH l (OpSite op) r =
   sampleLinearFunction -+$> LinearFunction
     (\x -> r . opWire @p op x . (l ⊗^ (Cat.id :: C p +> C p)))
 
--- | Lowest eigenpair of the effective Hamiltonian, via the dense Hermitian
--- solver 'GroundState.groundState' (ROADMAP D3) — generic over the map space,
--- so the centre is solved in place.
-solveCentre
-  :: ( KnownNat p, KnownNat bl, KnownNat br )
-  => (Centre bl p br +> Centre bl p br)
-  -> (Double, Centre bl p br)
-solveCentre = groundState
-
 --------------------------------------------------------------------------------
 -- Gauge transport (SVD on flattened-domain compositions)
 --------------------------------------------------------------------------------
@@ -146,28 +145,6 @@ siteMatrix (Site f) =
   HM.fromRows
     [ unwrap (f $ (basis @bl l ⊗ basis @p s))
     | l <- [0 .. cdim @bl - 1], s <- [0 .. cdim @p - 1] ]
-
--- | Inverse of 'siteMatrix': prescribe the image of each @e_l ⊗ e_s@ and
--- build the map by nested 'recomposeLinMap' + 'uncurryLinearMap' (the only
--- basis enumeration relied on is that of @C n@ itself).
-siteFromMatrix
-  :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br)
-  => HM.Matrix (Complex Double) -> Site bl p br
-siteFromMatrix m = Site (uncurryLinearMap -+$=> outer)
-  where
-    rows' = HM.toRows m
-    img :: Int -> Int -> C br
-    img l s = fromList (HM.toList (rows' !! (l * cdim @p + s)))
-    inner :: Int -> (C p +> C br)
-    inner l =
-      fst (recomposeLinMap (entireBasis :: SubBasis (C p))
-            [ img l s | s <- [0 .. cdim @p - 1] ])
-    outer :: C bl +> (C p +> C br)
-    outer =
-      fst (recomposeLinMap (entireBasis :: SubBasis (C bl))
-            [ inner l | l <- [0 .. cdim @bl - 1] ])
-
-
 
 -- | Thin SVD via dynamic hmatrix, wrapping the factors as static matrices.
 -- Intended for tall @m × n@ site layouts (@m ≥ n@); callers must ensure this.
@@ -203,35 +180,128 @@ siteFromLeftSVD
   => C (bl * p) +> C br -> (C bl ⊗ C p) +> C br
 siteFromLeftSVD g = g . fuseBond @p @bl . swapMap
 
+-- | Push a left-SVD bond factor onto the left bond of the site to the right:
+-- left-multiply the @bl × (p·br)@ storage matrix.
+absorbLeftBond
+  :: forall p bl br
+   . (KnownNat p, KnownNat bl, KnownNat br, KnownNat (p * br))
+  => C bl +> C bl -> Site bl p br -> Site bl p br
+absorbLeftBond (LinearMap fMat) (Site g) =
+  Site (LinearMap (mul fMat (getLinearMap g)))
+absorbLeftBond _ _ = error "absorbLeftBond: expected LinearMap bond factor"
+
 -- | Left-orthonormalize a site (requires @bl·p ≥ br@): thin SVD
--- @M = U Σ V†@ of the @(bl·p) × br@ site matrix; the site becomes the
--- isometry @U@ and the residual bond factor @Σ V†@ is returned, to be
--- absorbed into the right neighbour as @next ∘ (factor ⊗^ id_p)@.
+-- @M = U Σ V†@ of the @(bl·p) × br@ layout matrix; the site becomes @U@ and
+-- the bond factor @U† M = Σ V†@ is returned for absorption into the right neighbour.
 normalizeLeft
   :: forall bl p br.
      ( KnownNat bl, KnownNat p, KnownNat br
      , KnownNat (p * br), KnownNat (bl * p), KnownNat (p * bl), p * bl ~ bl * p )
   => Site bl p br -> (Site bl p br, C br +> C br)
 normalizeLeft (Site f) =
-  let (u, sv, v) = svdTallC @(bl * p) @br (getLinearMap (siteForLeftSVD f))
+  let mDyn = extract (getLinearMap (siteForLeftSVD f))
+      (uDyn, _s, _v) = HM.thinSVD mDyn
+      u = fromMaybe (error "normalizeLeft: u") $ create uDyn
+      bondDyn = adjointMat uDyn HM.<> mDyn
+      bond = fromMaybe (error "normalizeLeft: bond") $ create bondDyn
   in ( Site (siteFromLeftSVD (LinearMap u))
-     , diagMap sv . transposeMap (LinearMap v)
+     , LinearMap bond
      )
 
+-- | Conjugate transpose of a dense matrix (for bond extraction @U† M@).
+adjointMat :: HM.Matrix (Complex Double) -> HM.Matrix (Complex Double)
+adjointMat m =
+  let rows = HM.toLists m
+      (nRows, nCols) = HM.size m
+  in HM.fromLists
+       [ [ conjugate (rows !! j !! i) | j <- [0 .. nRows - 1] ]
+       | i <- [0 .. nCols - 1]
+       ]
+
 -- | Right-orthonormalize a site (requires @bl ≤ p·br@): thin SVD
--- @M₂ = U Σ V†@ of the @bl × (p·br)@ storage matrix; the site becomes
--- the co-isometry @V†@ and the residual bond factor @U Σ@ is returned, to be
--- absorbed into the left neighbour as @factor ∘ prev@.
+-- @M = U Σ V†@ of the @bl × (p·br)@ storage matrix; the site becomes
+-- @V†@ and the residual bond factor @M V = U Σ@ is returned, to be
+-- absorbed into the left neighbour on the outgoing bond.
 normalizeRight
   :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br))
   => Site bl p br -> (C bl +> C bl, Site bl p br)
 normalizeRight (Site f) =
-  let storage = getLinearMap f
-      (u, sv, v) = HM.thinSVD (extract storage)
-      uM = fromMaybe (error "normalizeRight: u") $ create u
-      svR = fromMaybe (error "normalizeRight: sv") $ create sv
-      vh = fromMaybe (error "normalizeRight: vh") $ create (HM.tr v)
-  in (rightSvdFactor uM svR, siteFromStorage @bl @p @br vh)
+  let mDyn = extract (getLinearMap f)
+      (uDyn, _s, vDyn) = HM.thinSVD mDyn
+      vh = fromMaybe (error "normalizeRight: vh") $ create (HM.tr vDyn)
+      bondDyn = mDyn HM.<> vDyn
+      bond = fromMaybe (error "normalizeRight: bond") $ create bondDyn
+  in (LinearMap bond, siteFromStorage @bl @p @br vh)
+
+-- | Push a right-SVD bond factor onto the output bond of a left-end site.
+absorbRightBondLeftEnd
+  :: forall p b. (KnownNat p, KnownNat b, KnownNat (p * b))
+  => C b +> C b -> Site 1 p b -> Site 1 p b
+absorbRightBondLeftEnd f (Site g) = Site (f . g)
+
+-- | Push a right-SVD bond factor onto the right bond of a bulk site:
+-- post-compose on the outgoing bond, @g' = f ∘ g@.
+absorbRightBond
+  :: forall p bl br. (KnownNat p, KnownNat bl, KnownNat br, KnownNat (p * br))
+  => C br +> C br -> Site bl p br -> Site bl p br
+absorbRightBond f (Site g) = Site (f . g)
+
+-- | Left-canonicalize site @i@ and absorb the bond factor into site @i+1@.
+regaugeDepartRight
+  :: forall p b l
+   . ( KnownNat l, KnownNat p, KnownNat b
+     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
+  => Int -> MPS p b l -> (SomeSite p b, MPS p b l)
+regaugeDepartRight i mps =
+  case (getSite i mps, getSite (i + 1) mps) of
+    (SiteLeft s, SiteBulk n) ->
+      let (sc, bond) = normalizeLeft s
+          n' = absorbLeftBond bond n
+      in ( SiteLeft sc
+         , setSite (i + 1) (SiteBulk n') (setSite i (SiteLeft sc) mps)
+         )
+    (SiteBulk s, SiteBulk n) ->
+      let (sc, bond) = normalizeLeft s
+          n' = absorbLeftBond bond n
+      in ( SiteBulk sc
+         , setSite (i + 1) (SiteBulk n') (setSite i (SiteBulk sc) mps)
+         )
+    (SiteBulk s, SiteRight n) ->
+      let (sc, bond) = normalizeLeft s
+          n' = absorbLeftBond bond n
+      in ( SiteBulk sc
+         , setSite (i + 1) (SiteRight n') (setSite i (SiteBulk sc) mps)
+         )
+    _ ->
+      error ("regaugeDepartRight: unexpected site pair at " ++ show i)
+
+-- | Right-canonicalize site @i@ and absorb the bond factor into site @i-1@.
+regaugeDepartLeft
+  :: forall p b l
+   . ( KnownNat l, KnownNat p, KnownNat b, KnownNat (p * b) )
+  => Int -> MPS p b l -> (SomeSite p b, MPS p b l)
+regaugeDepartLeft i mps =
+  case (getSite (i - 1) mps, getSite i mps) of
+    (SiteLeft prev, SiteBulk s) ->
+      let (bond, sc) = normalizeRight s
+          prev' = absorbRightBondLeftEnd bond prev
+      in ( SiteBulk sc
+         , setSite (i - 1) (SiteLeft prev') (setSite i (SiteBulk sc) mps)
+         )
+    (SiteBulk prev, SiteBulk s) ->
+      let (bond, sc) = normalizeRight s
+          prev' = absorbRightBond bond prev
+      in ( SiteBulk sc
+         , setSite (i - 1) (SiteBulk prev') (setSite i (SiteBulk sc) mps)
+         )
+    (SiteBulk prev, SiteRight s) ->
+      let (bond, sc) = normalizeRight s
+          prev' = absorbRightBond bond prev
+      in ( SiteRight sc
+         , setSite (i - 1) (SiteBulk prev') (setSite i (SiteRight sc) mps)
+         )
+    _ ->
+      error ("regaugeDepartLeft: unexpected site pair at " ++ show i)
 
 --------------------------------------------------------------------------------
 -- Sweeping
@@ -239,54 +309,24 @@ normalizeRight (Site f) =
 
 -- | Rayleigh quotient @Re ⟨ψ|H|ψ⟩ / ⟨ψ|ψ⟩@ (gauge-independent).
 energy
-  :: ( KnownNat p, KnownNat w, KnownNat b )
-  => MPO3 p w -> MPS p b 1 -> Double
+  :: (KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+  => MPO p w l -> MPS p b l -> Double
 energy mpo psi = realPart (mpsMPOInner psi mpo psi / mpsInner psi psi)
 
 --------------------------------------------------------------------------------
 -- Zipper ('MPS' + value-level centre index)
 --------------------------------------------------------------------------------
 
--- | DMRG workspace: full chain, active site index, environments.
+-- | DMRG workspace: full chain, active site cursor, environments.
+--
+-- 'centreIndex' is 0-based ('Data.Finite'); use 'siteInt' for 1-based 'getSite'.
 data MPSZipper p b w l = MPSZipper
   { theMPO :: MPO p w l
   , theMPS :: MPS p b l
-  , centreIndex :: Int
+  , centreIndex :: Finite (ChainEnd l)
   , leftEnv :: LeftEnvAtCentre w b
   , rightEnv :: RightEnvAtCentre w b
   }
-
-departLeft
-  :: forall bl p br
-   . ( KnownNat bl, KnownNat p, KnownNat br
-     , KnownNat (p * br), KnownNat (bl * p), KnownNat (p * bl)
-     , p * bl ~ bl * p )
-  => Site bl p br -> Site bl p br
-departLeft = fst . normalizeLeft
-
-departRight
-  :: forall bl p br
-   . ( KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br) )
-  => Site bl p br -> Site bl p br
-departRight = snd . normalizeRight
-
-departSiteLeft
-  :: forall p b
-   . ( KnownNat p, KnownNat b
-     , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-  => SomeSite p b -> SomeSite p b
-departSiteLeft (SiteLeft s) = SiteLeft (departLeft s)
-departSiteLeft (SiteBulk s) = SiteBulk (departLeft s)
-departSiteLeft SiteRight{} =
-  error "departSiteLeft: unexpected right-end site"
-
-departSiteRight
-  :: forall p b. (KnownNat p, KnownNat b, KnownNat (p * b))
-  => SomeSite p b -> SomeSite p b
-departSiteRight (SiteBulk s) = SiteBulk (departRight s)
-departSiteRight (SiteRight s) = SiteRight (departRight s)
-departSiteRight SiteLeft{} =
-  error "departSiteRight: unexpected left-end site"
 
 -- | Right-orthonormalize sites @n .. 2@, absorbing bond factors leftwards.
 rightGaugeMPS
@@ -294,11 +334,17 @@ rightGaugeMPS
    . ( KnownNat l, KnownNat p, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
   => MPS p b l -> MPS p b l
-rightGaugeMPS = go (chainLength @l) Cat.id
+rightGaugeMPS mps0 =
+  case go (chainLength @l) Cat.id mps0 of
+    (bondOut, mpsAcc) ->
+      case getSite 1 mpsAcc of
+        SiteLeft s1 ->
+          setSite 1 (SiteLeft (absorbRightBondLeftEnd bondOut s1)) mpsAcc
+        _ -> error "rightGaugeMPS: expected left-end site"
   where
     n = chainLength @l
     go k bondIn mpsAcc
-      | k <= 1 = mpsAcc
+      | k <= 1 = (bondIn, mpsAcc)
       | k == n =
           case getSite k mpsAcc of
             SiteRight s ->
@@ -322,20 +368,36 @@ solveCentreSite
   -> Site bl p br
   -> (Double, Site bl p br)
 solveCentreSite l op r (Site _) =
-  let (e, c) = solveCentre (effectiveH @p l op r)
+  let sys = (effectiveH @p l op r)
+      (e, c) = groundState sys
+  in (e, Site c)
+
+
+solveCentreSite'
+  :: forall p wl wr bl br
+   . ( KnownNat p, KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br )
+  => LeftEnv wl bl bl
+  -> OpSite wl p wr
+  -> RightEnv wr br br
+  -> Site bl p br
+  -> (Double, Site bl p br)
+solveCentreSite' l op r (Site _) =
+  let sys = arr (effectiveH @p l op r) :: Centre bl p br -+> Centre bl p br
+      (e, c) = groundStateEigen hilbertSchmidtNorm sys
   in (e, Site c)
 
 solveSiteAt
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
-  => Int
+  => Finite (ChainEnd l)
   -> LeftEnvAtCentre w b
   -> SomeOpSite p w
   -> RightEnvAtCentre w b
   -> SomeSite p b
   -> SomeSite p b
-solveSiteAt i l op r cn =
-  let n = chainLength @l
+solveSiteAt c l op r cn =
+  let i = siteInt c
+      n = chainLength @l
   in case (i, l, op, r, cn) of
        (1, LeftEnvFirst lv, OpLeft o, RightEnvBulk rv, SiteLeft c) ->
          SiteLeft (snd (solveCentreSite lv o rv c))
@@ -350,66 +412,66 @@ solveSiteAt i l op r cn =
 centreEnergyAt
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
-  => Int
+  => Finite (ChainEnd l)
   -> LeftEnvAtCentre w b
   -> SomeOpSite p w
   -> RightEnvAtCentre w b
   -> Double
-centreEnergyAt i l op r =
-  let n = chainLength @l
+centreEnergyAt c l op r =
+  let i = siteInt c
+      n = chainLength @l
   in case (i, l, op, r) of
        (1, LeftEnvFirst lv, OpLeft o, RightEnvBulk rv) ->
-         fst (solveCentre (effectiveH @p lv o rv))
+         fst (groundState (effectiveH @p lv o rv))
        (j, LeftEnvBulk lv, OpBulk o, RightEnvBulk rv) | j > 1 && j < n ->
-         fst (solveCentre (effectiveH @p lv o rv))
+         fst (groundState (effectiveH @p lv o rv))
        (n, LeftEnvBulk lv, OpRight o, RightEnvLast rv) ->
-         fst (solveCentre (effectiveH @p lv o rv))
+         fst (groundState (effectiveH @p lv o rv))
        _ ->
          error ("centreEnergyAt: site/op/env shape mismatch at index " ++ show i)
 
 moveRight
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+   . ( KnownNat l, KnownNat (ChainEnd l), KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
   => MPSZipper p b w l -> MPSZipper p b w l
-moveRight z@MPSZipper{centreIndex = i, theMPS = mps, theMPO = mpo, leftEnv = l, rightEnv = r}
-  | i >= chainLength @l =
-      error ("moveRight: centre " ++ show i ++ " at right boundary")
+moveRight z@MPSZipper{centreIndex = c, theMPS = mps, theMPO = mpo, leftEnv = l, rightEnv = r}
+  | isLastSite @l c =
+      error ("moveRight: centre " ++ show (siteInt c) ++ " at right boundary")
   | otherwise =
-    let wit = moveRightEnv' @l i
-        cn = departSiteLeft (getSite i mps)
-        mps' = setSite i cn mps
-        (l', r') =
-          updateEnvsMoveRight @p @w @b @l
-            i wit mpo mps' l cn (getOp i mpo) r
-    in z { centreIndex = i + 1, theMPS = mps', leftEnv = l', rightEnv = r' }
+    let i = siteInt c
+        c' = fromMaybe (error "moveRight: advanceSite failed") (advanceSite c)
+        (cn, mps') = regaugeDepartRight i mps
+        (l', r') = updateEnvsMoveRight i (moveRightEnv' @l i) mpo mps' (l,r) cn (getOp i mpo)
+    in z { centreIndex = c', theMPS = mps', leftEnv = l', rightEnv = r' }
 
 moveLeft
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+   . ( KnownNat l, KnownNat (ChainEnd l), KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
   => MPSZipper p b w l -> MPSZipper p b w l
-moveLeft z@MPSZipper{centreIndex = i, theMPS = mps, theMPO = mpo, rightEnv = r}
-  | i <= 1 =
-      error ("moveLeft: centre " ++ show i ++ " at left boundary")
+moveLeft z@MPSZipper{centreIndex = c, theMPS = mps, theMPO = mpo, rightEnv = r}
+  | isFirstSite c =
+      error ("moveLeft: centre " ++ show (siteInt c) ++ " at left boundary")
   | otherwise =
-    let wit = moveLeftEnv' i
-        cn = departSiteRight (getSite i mps)
-        mps' = setSite i cn mps
+    let i = siteInt c
+        c' = fromMaybe (error "moveLeft: retreatSite failed") (retreatSite c)
+        wit = moveLeftEnv' i
+        (cn, mps') = regaugeDepartLeft i mps
         (l', r') =
           updateEnvsMoveLeft @p @w @b @l
             i wit mpo mps' r cn (getOp i mpo)
-    in z { centreIndex = i - 1, theMPS = mps', leftEnv = l', rightEnv = r' }
+    in z { centreIndex = c', theMPS = mps', leftEnv = l', rightEnv = r' }
 
 toZipper
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+   . ( KnownNat l, KnownNat (ChainEnd l), KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
   => MPO p w l -> MPS p b l -> MPSZipper p b w l
 toZipper mpo mps =
   let mps' = rightGaugeMPS mps
       rEnv = buildRightEnvFromSite 2 mpo mps'
-  in MPSZipper mpo mps' 1 (LeftEnvFirst leftBoundary) (RightEnvBulk rEnv)
+  in MPSZipper mpo mps' (firstSite @l) (LeftEnvFirst leftBoundary) (RightEnvBulk rEnv)
 
 
 
@@ -417,92 +479,76 @@ solveCenterAt
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
   => MPSZipper p b w l -> MPSZipper p b w l
-solveCenterAt z@MPSZipper{centreIndex = i, theMPS = mps, theMPO = mpo, leftEnv = l, rightEnv = r} =
-  let solved = solveSiteAt @p @w @b @l i l (getOp i mpo) r (getSite i mps)
+solveCenterAt z@MPSZipper{centreIndex = c, theMPS = mps, theMPO = mpo, leftEnv = l, rightEnv = r} =
+  let i = siteInt c
+      solved = solveSiteAt @p @w @b @l c l (getOp i mpo) r (getSite i mps)
   in z { theMPS = setSite i solved mps }
 
 centreEnergy
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
   => MPSZipper p b w l -> Double
-centreEnergy MPSZipper{centreIndex = i, theMPO = mpo, leftEnv = l, rightEnv = r} =
-  centreEnergyAt @p @w @b @l i l (getOp i mpo) r
+centreEnergy MPSZipper{centreIndex = c, theMPO = mpo, leftEnv = l, rightEnv = r} =
+  let i = siteInt c
+  in centreEnergyAt @p @w @b @l c l (getOp i mpo) r
 
 type ZipperStep p b w l = MPSZipper p b w l -> MPSZipper p b w l
 
 -- | One left→right pass (solve at each site), then a partial left pass
 -- stopping at site @2@. Returns the local energy at the final centre.
-sweepSchedule
-  :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+sweep
+  :: forall p w b l m
+   . ( KnownNat l, KnownNat (ChainEnd l), KnownNat p, KnownNat w, KnownNat b, Monad m
      , KnownNat (p * b), KnownNat (b * p), p * b ~ b * p )
-  => MPO p w l
-  -> ZipperStep p b w l
+  =>
+  ZipperStep p b w l
+  -> MPO p w l
   -> MPS p b l
-  -> (Double, MPS p b l)
-sweepSchedule mpo step mps0 =
+  -> m (Double, MPS p b l)
+sweep step mpo  mps0 =
   let z0 = toZipper mpo mps0
       n = chainLength @l
       zRight = (iterate (step . moveRight) (step z0) !! (n - 1))
       zFinal = (iterate (step . moveLeft) zRight !! (n - 2))
-  in (centreEnergy zFinal, theMPS zFinal)
+  in pure (centreEnergy zFinal, theMPS zFinal)
 
 
-
--- | One full sweep via 'sweepSchedule': right pass over all sites, then partial
--- left pass stopping at site @2@ (legacy 3-site schedule @1→2→3→2@). Gauge
--- transport happens in 'moveRight'/'moveLeft'. Returns the final centre energy
--- and the updated MPS.
-sweep
-  :: forall p w b.
-     ( KnownNat p, KnownNat w, KnownNat b
-     , KnownNat (p * b), KnownNat (p * b), KnownNat (b * p), KnownNat (b * p)
-     , p * b ~ b * p, p * b ~ b * p )
-  => SweepFunction p w b
-sweep mpo psi0 =
-  let (e, mps') = sweepSchedule mpo solveCenterAt psi0
-  in (e, mps')
-
--- | DMRG driver: sweep until the energy change drops below the tolerance or
--- the sweep budget is exhausted.
+-- | DMRG driver. Records the local centre energy returned by each sweep in
+-- 'dmrgSweepEnergies' (sweep @1@ is the first entry). Use 'energy' on
+-- 'dmrgFinalMPS' for the full Rayleigh quotient when needed.
 dmrg
-  :: ( KnownNat p, KnownNat w, KnownNat b
-     , KnownNat (p * b), KnownNat (p * b), KnownNat (b * p), KnownNat (b * p)
-     , p * b ~ b * p, p * b ~ b * p )
-  => Int                       -- ^ maximum number of sweeps
-  -> Double                    -- ^ energy convergence tolerance
-  -> MPO3 p w
-  -> SweepFunction p w b
-  -> MPS p b 1
-  -> (Double, MPS p b 1)
-dmrg maxSweeps tol mpo sweepFunction = go maxSweeps Nothing
-  where
-    go 0 mE psi = (maybe (energy mpo psi) id mE, psi)
-    go k mE psi =
-      let (e, psi') = sweepFunction mpo psi
-      in case mE of
-           Just ePrev | abs (e - ePrev) < tol -> (e, psi')
-           _ -> go (k - 1) (Just e) psi'
-
--- | DMRG driver in 'SvdM' (run with 'runSvdM' and a fixed seed).
-dmrgM
-  :: forall p w b m.
-    (Monad m, KnownNat p, KnownNat w, KnownNat b
+  :: forall p w b m l.
+    (Monad m, KnownNat p, KnownNat w, KnownNat b, KnownNat l
      , KnownNat (p * b), KnownNat (b * p)
      , p * b ~ b * p )
-  => Int -> Double -> MPO3 p w -> SweepFunctionM m p w b -> MPS p b 1 -> m (Double, MPS p b 1)
-dmrgM maxSweeps tol mpo sweepFunction psi0 = go maxSweeps Nothing psi0
+  => Int -> Double -> MPO p w l -> SweepFunction m p w b l -> MPS p b l -> m (DmrgResult p b l)
+dmrg maxSweeps tol mpo sweepFunction = go maxSweeps [] Nothing
   where
-    go 0 mE psi = pure (fromMaybe (energy mpo psi) mE, psi)
-    go k mE psi = do
+    finish e psi hist =
+      DmrgResult
+        { dmrgFinalEnergy = e
+        , dmrgFinalMPS = psi
+        , dmrgSweepEnergies = reverse hist
+        }
+    go 0 hist mE psi =
+      let e = fromMaybe (energy mpo psi) mE
+      in pure (finish e psi hist)
+    go k hist mE psi = do
       (e, psi') <- sweepFunction mpo psi
+      let hist' = e : hist
       case mE of
-        Just ePrev | abs (e - ePrev) < tol -> pure (e, psi')
-        _ -> go (k - 1) (Just e) psi'
+        Just ePrev | abs (e - ePrev) < tol -> pure (finish e psi' hist')
+        _ -> go (k - 1) hist' (Just e) psi'
 
 
-type SweepFunctionM m p w b = MPO3 p w -> MPS p b 1 -> m (Double, MPS p b 1)
-type SweepFunction p w b = MPO3 p w -> MPS p b 1 -> (Double, MPS p b 1)
+type SweepFunction m p w b l = MPO p w l -> MPS p b l -> m (Double, MPS p b l)
+
+-- | Result of a 'dmrg' run, including the centre energy after each sweep.
+data DmrgResult p b l = DmrgResult
+  { dmrgFinalEnergy :: !Double
+  , dmrgFinalMPS :: !(MPS p b l)
+  , dmrgSweepEnergies :: ![Double]
+  }
 
 
 --------------------------------------------------------------------------------
@@ -517,61 +563,146 @@ unitMap i j =
   fst (recomposeLinMap (entireBasis :: SubBasis (C m))
         [ if k == i then basis @n j else zeroV | k <- [0 .. cdim @m - 1] ])
 
--- | Transverse-field Ising on 3 sites, open boundaries:
+-- | Bulk TFIM MPO site (bond dimension @3@, physical @2@).
+tfimBulkOp :: Double -> Double -> OpSite 3 2 3
+tfimBulkOp j h =
+  let jc = (-j) :+ 0
+      hc = (-h) :+ 0
+      idP = Cat.id :: C 2 +> C 2
+  in OpSite $ sumV
+       [ unitMap @3 @3 0 0 ⊗^ idP
+       , unitMap @3 @3 1 0 ⊗^ pauliZ
+       , unitMap @3 @3 2 0 ⊗^ (hc *^ pauliX)
+       , unitMap @3 @3 2 1 ⊗^ (jc *^ pauliZ)
+       , unitMap @3 @3 2 2 ⊗^ idP
+       ]
+
+-- | Left boundary TFIM MPO site.
+tfimLeftOp :: Double -> Double -> OpSite 1 2 3
+tfimLeftOp j h =
+  let jc = (-j) :+ 0
+      hc = (-h) :+ 0
+      idP = Cat.id :: C 2 +> C 2
+  in OpSite $ sumV
+       [ unitMap @1 @3 0 0 ⊗^ (hc *^ pauliX)
+       , unitMap @1 @3 0 1 ⊗^ (jc *^ pauliZ)
+       , unitMap @1 @3 0 2 ⊗^ idP
+       ]
+
+-- | Right boundary TFIM MPO site.
+tfimRightOp :: Double -> Double -> OpSite 3 2 1
+tfimRightOp _j h =
+  let hc = (-h) :+ 0
+      idP = Cat.id :: C 2 +> C 2
+  in OpSite $ sumV
+       [ unitMap @3 @1 0 0 ⊗^ idP
+       , unitMap @3 @1 1 0 ⊗^ pauliZ
+       , unitMap @3 @1 2 0 ⊗^ (hc *^ pauliX)
+       ]
+
+-- | Transverse-field Ising on @l + 2@ sites, open boundaries:
 --
---   @H = -J (σᶻ₁σᶻ₂ + σᶻ₂σᶻ₃) - h (σˣ₁ + σˣ₂ + σˣ₃)@
+--   @H = -J Σᵢ σᶻᵢσᶻᵢ₊₁ - h Σᵢ σˣᵢ@
 --
 -- as the standard bond-dimension-3 MPO
 --
 --   @W = [[1, 0, 0], [σᶻ, 0, 0], [-h·σˣ, -J·σᶻ, 1]]@
 --
--- with the left boundary picking row 2 and the right boundary column 0. The
--- sites are sums of @bond-unit ⊗^ physical-block@ — no basis enumeration of
--- the tensor space.
-tfimMPO
-  :: Double                    -- ^ coupling J
-  -> Double                    -- ^ transverse field h
-  -> MPO3 2 3
-tfimMPO j h = mpo3 opL opC opR
+-- with the left boundary picking row 2 and the right boundary column 0.
+tfimMPOChain
+  :: forall l. KnownNat l
+  => Double -> Double -> MPO 2 3 l
+tfimMPOChain j h =
+  MPO (tfimLeftOp j h) bulkOps (tfimRightOp j h)
   where
-    jc = (-j) :+ 0
-    hc = (-h) :+ 0
-    idP = Cat.id :: C 2 +> C 2
-    opC = OpSite $ sumV
-      [ unitMap @3 @3 0 0 ⊗^ idP
-      , unitMap @3 @3 1 0 ⊗^ pauliZ
-      , unitMap @3 @3 2 0 ⊗^ (hc *^ pauliX)
-      , unitMap @3 @3 2 1 ⊗^ (jc *^ pauliZ)
-      , unitMap @3 @3 2 2 ⊗^ idP
-      ]
-    opL = OpSite $ sumV
-      [ unitMap @1 @3 0 0 ⊗^ (hc *^ pauliX)
-      , unitMap @1 @3 0 1 ⊗^ (jc *^ pauliZ)
-      , unitMap @1 @3 0 2 ⊗^ idP
-      ]
-    opR = OpSite $ sumV
-      [ unitMap @3 @1 0 0 ⊗^ idP
-      , unitMap @3 @1 1 0 ⊗^ pauliZ
-      , unitMap @3 @1 2 0 ⊗^ (hc *^ pauliX)
-      ]
+    bulkOps =
+      fromMaybe (error "tfimMPOChain: bulk vector length mismatch") $
+        VS.fromList (replicate (fromIntegral (natVal (Proxy @l))) (tfimBulkOp j h))
+
+-- | Three-site TFIM (@l = 1@).
+tfimMPO :: Double -> Double -> MPO3 2 3
+tfimMPO = tfimMPOChain @1
+
+
+-- | Deterministic pseudo-random MPS with @l@ bulk sites.
+seededMPSChain
+  :: forall p b l. (KnownNat p, KnownNat b, KnownNat l)
+  => Int -> MPS p b l
+seededMPSChain seed = unGen genMPSChain (mkQCGen seed) 30
+
+-- | Random open-boundary MPS with @l@ bulk sites.
+genMPSChain
+  :: forall p b l. (KnownNat p, KnownNat b, KnownNat l)
+  => QC.Gen (MPS p b l)
+genMPSChain = do
+  lSite <- genSite @1 @p @b
+  bulk <- replicateM (fromIntegral (natVal (Proxy @l))) (genSite @b @p @b)
+  rSite <- genSite @b @p @1
+  pure $
+    MPS lSite
+      (fromMaybe (error "genMPSChain: bulk vector length mismatch") (VS.fromList bulk))
+      rSite
 
 --------------------------------------------------------------------------------
 -- Validation helpers and properties
 --------------------------------------------------------------------------------
 
--- | Exact ground energy of the dense @C (p³)@ operator ('mpoToMatrix'),
--- via the Hermitian eigensolver.
+-- | MPS site with bond dimension 1 selecting a single physical index.
+deltaSite
+  :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br)
+  => Int -> Site bl p br
+deltaSite s =
+  Site $
+    fst (recomposeLinMap (entireBasis :: SubBasis (C bl ⊗ C p))
+           [ if lb == 0 && t == s then basis @br 0 else zeroV
+           | lb <- [0 .. cdim @bl - 1]
+           , t <- [0 .. cdim @p - 1]
+           ])
+
+-- | Product state @|s₁…sₙ⟩@ as a bond-dimension-1 MPS (@n = l + 2@).
+productStateMPS
+  :: forall p l. (KnownNat p, KnownNat l)
+  => [Int] -> MPS p 1 l
+productStateMPS indices
+  | length indices /= nSites =
+      error "productStateMPS: index count does not match chain length"
+  | otherwise =
+      MPS (deltaSite @1 @p @1 (head indices))
+          (fromMaybe (error "productStateMPS: bulk vector length mismatch") $
+             VS.fromList [deltaSite @1 @p @1 i | i <- bulkIndices])
+          (deltaSite @1 @p @1 (last indices))
+  where
+    nSites = chainLength @l
+    bulkIndices = take (nSites - 2) (drop 1 indices)
+
+-- | Exact ground energy via dense diagonalisation on the physical Hilbert
+-- space @C (pⁿ)@ (@n = l + 2@). For @l = 1@ this matches 'mpoToMatrix'.
+denseGroundEnergyChain
+  :: forall p w l
+   . ( KnownNat p, KnownNat w, KnownNat l )
+  => MPO p w l -> Double
+denseGroundEnergyChain mpo =
+  let pDim = cdim @p
+      configs = physicalConfigs pDim (chainLength @l)
+      psi cfg = productStateMPS @p @l cfg
+      matrixElem bra ket = realPart (mpsMPOInner (psi bra) mpo (psi ket))
+      matrix = HM.fromLists
+        [ [ matrixElem bra ket | ket <- configs ] | bra <- configs ]
+      (vals, _) = HM.eigSH (HM.sym matrix)
+  in HM.minElement vals
+
+physicalConfigs :: Int -> Int -> [[Int]]
+physicalConfigs pDim nSites = sequence (replicate nSites [0 .. pDim - 1])
+
+-- | Three-site specialization of 'denseGroundEnergyChain'.
 denseGroundEnergy
   :: forall p w.
      ( KnownNat p, KnownNat w, KnownNat (w * p)
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
      , KnownNat (p * p), p * p ~ p * p )
-  => MPO3 p w -> Double
-denseGroundEnergy mpo =
-  let m = unwrap (mpoToMatrix mpo)
-      (vals, _) = HM.eigSH (HM.sym m)
-  in HM.minElement vals
+  => MPO p w 1 -> Double
+denseGroundEnergy = denseGroundEnergyChain
 
 -- | Deterministic pseudo-random @MPS 2 2 2@ (Gaussian-integer entries).
 seededMPS222 :: Int -> MPS3 2 2
@@ -630,18 +761,19 @@ prop_dmrgGroundEnergyMatchesDense =
   QC.forAll (QC.choose (0, 99)) $ \seed ->
     let mpo = tfimMPO 1 0.7
         psi0 = seededMPS222 seed
-        (e, psi) = dmrg 10 1e-12 mpo sweep psi0
+        DmrgResult { dmrgFinalEnergy = e, dmrgFinalMPS = psi } =
+          runIdentity $ dmrg 10 1e-12 mpo (sweep solveCenterAt) psi0
         eDense = denseGroundEnergy mpo
         tol = 1e-9
     in QC.counterexample ("DMRG " ++ show e ++ " vs dense " ++ show eDense)
          (abs (e - eDense) <= tol QC..&&. energy mpo psi >= eDense - tol)
 
 
--- | On a 'HilbertSpace' (@C 4@), the 'eigen' path matches the dense oracle.
+-- | On a 'HilbertSpace' (@C 4@), the Krylov path matches the dense oracle.
 prop_eigenMatchesDenseC4 :: QC.Property
 prop_eigenMatchesDenseC4 =
   let f = (2 :: Complex Double) *^ (linearId :: C 4 +> C 4)
-      (eEigen, _) = groundStateEigen euclideanNorm f
+      (eEigen, _) = groundStateEigen euclideanNorm (arr f)
       (eDense, _) = groundStateDense f
   in eEigen QC.=== eDense QC..&&. eEigen QC.=== 2
 
@@ -668,9 +800,138 @@ prop_mpsSetSiteRoundTrip =
            QC..&&. siteMapsEqual s2 s2'
            QC..&&. siteMapsEqual s3 s3'
 
+-- | @M ≈ U F@ in the 'siteForLeftSVD' layout after 'normalizeLeft'.
+prop_leftSvdDecomposition :: QC.Property
+prop_leftSvdDecomposition =
+  QC.forAll genMPS222 $ \mps ->
+    withMPS3 mps $ \s1 _ _ ->
+      let mat = getLinearMap (siteForLeftSVD @1 @2 @2 (siteLin s1))
+          m0 = extract mat
+          (s1c, bond) = normalizeLeft s1
+          u = extract (getLinearMap (siteForLeftSVD @1 @2 @2 (siteLin s1c)))
+          f = extract (getLinearMap bond)
+          tol = 1e-9
+      in QC.counterexample "site 1 M ≈ U F"
+           (matrixNear tol m0 (u HM.<> f))
+
+matrixNear :: Double -> HM.Matrix (Complex Double) -> HM.Matrix (Complex Double) -> QC.Property
+matrixNear tol a b =
+  QC.property $
+    matrixMaxAbs (a - b) <= tol * (1 + matrixMaxAbs a + matrixMaxAbs b)
+
+matrixMaxAbs :: HM.Matrix (Complex Double) -> Double
+matrixMaxAbs m = maximum (0 : [ magnitude x | x <- concat (HM.toLists m) ])
+
+-- | Left-canonicalizing site @i@ and absorbing the bond factor into site @i+1@
+-- must preserve all physical amplitudes.
+-- | Left-canonicalizing site @i@ and absorbing the bond factor into site @i+1@
+-- must preserve all physical amplitudes.
+prop_regaugeDepartRightPreservesAmplitudes :: QC.Property
+prop_regaugeDepartRightPreservesAmplitudes =
+  QC.forAll genMPS222 $ \mps ->
+    withMPS3 mps $ \_ _ _ ->
+      let (_, mps') = regaugeDepartRight 1 mps
+      in QC.conjoin
+           [ QC.counterexample ("amp " ++ show (a, b, c))
+               (ampApproxEq (amplitude mps a b c) (amplitude mps' a b c))
+           | a <- [0, 1], b <- [0, 1], c <- [0, 1]
+           ]
+
+ampApproxEq :: Complex Double -> Complex Double -> QC.Property
+ampApproxEq x y =
+  QC.property $ magnitude (x - y) <= 1e-9 * (1 + magnitude x + magnitude y)
+
+-- | Left-canonicalizing site @i@ and absorbing the bond factor into site @i+1@
+-- must preserve the flattened physical vector.
+prop_regaugeDepartRightPreservesMPS :: QC.Property
+prop_regaugeDepartRightPreservesMPS =
+  QC.forAll genMPS222 $ \mps ->
+    withMPS3 mps $ \_s1 _s2 _s3 ->
+      let flat0 = mpsToFlat mps
+          (_, mps1) = regaugeDepartRight 1 mps
+          (_, mps2) = regaugeDepartRight 2 mps1
+      in QC.conjoin
+           [ QC.counterexample "site 1 → 2" (flatApproxEq @8 1e-9 flat0 (mpsToFlat mps1))
+           , QC.counterexample "site 2 → 3" (flatApproxEq @8 1e-9 flat0 (mpsToFlat mps2))
+           ]
+
+-- | Right-canonicalizing site @i@ and absorbing into site @i-1@ preserves @ψ@.
+prop_regaugeDepartLeftPreservesMPS :: QC.Property
+prop_regaugeDepartLeftPreservesMPS =
+  QC.forAll genMPS222 $ \mps ->
+    withMPS3 mps $ \_s1 _s2 _s3 ->
+      let (_, mps1) = regaugeDepartRight 1 mps
+          (_, mps2) = regaugeDepartRight 2 mps1
+          flat0 = mpsToFlat mps2
+          (_, mps3) = regaugeDepartLeft 3 mps2
+          (_, mps4) = regaugeDepartLeft 2 mps3
+      in QC.conjoin
+           [ QC.counterexample "site 3 → 2" (flatApproxEq @8 1e-9 flat0 (mpsToFlat mps3))
+           , QC.counterexample "site 2 → 1" (flatApproxEq @8 1e-9 flat0 (mpsToFlat mps4))
+           ]
+
+-- | 'moveRight' / 'moveLeft' on a zipper must not change the physical state.
+prop_moveRightLeftPreservesMPS :: QC.Property
+prop_moveRightLeftPreservesMPS =
+  QC.forAll genMPS222 $ \mps ->
+    let mpo = tfimMPO 1 0.7
+        flat0 = mpsToFlat (theMPS (toZipper mpo mps))
+        zRight =
+          moveRight . moveRight $ toZipper mpo mps
+        zBack =
+          moveLeft . moveLeft $ zRight
+    in QC.conjoin
+         [ QC.counterexample "moveRight × 2"
+             (flatApproxEq @8 1e-9 flat0 (mpsToFlat (theMPS zRight)))
+         , QC.counterexample "moveRight then moveLeft"
+             (flatApproxEq @8 1e-9 flat0 (mpsToFlat (theMPS zBack)))
+         ]
+
+flatApproxEq
+  :: forall n. KnownNat n
+  => Double -> C n -> C n -> Bool
+flatApproxEq tol a b =
+  VSt.all (\d -> magnitude d <= tol) (VSt.zipWith (-) (unwrap a) (unwrap b))
+
 siteMapsEqual
   :: forall bl p br
    . ( KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br) )
   => Site bl p br -> Site bl p br -> QC.Property
 siteMapsEqual (Site f) (Site g) =
   extract (getLinearMap f) QC.=== extract (getLinearMap g)
+
+-- | Compare dense and Krylov ground-state solves on network effective Hamiltonians.
+smokeNetworkEffectiveHamiltonian :: IO ()
+smokeNetworkEffectiveHamiltonian = do
+  putStrLn "=== TFIM centre effective Hamiltonian (seed 42) ==="
+  withMPS3 (seededMPS222 42) $ \s1 _y s3 ->
+    withMPO3 (tfimMPO 1 0.7) $ \o1 o2 o3 ->
+      reportEffectiveH "Centre site 2:"
+        (effectiveH @2 (extendLeft leftBoundary s1 o1 s1) o2
+           (extendRight @2 s3 o3 s3 rightBoundary))
+
+  putStrLn ""
+  putStrLn "=== Random MPS/MPO effective Hamiltonian (QC seed 7) ==="
+  let psi = unGen genMPS222 (mkQCGen 7) 30
+      mpo = unGen genMPO222 (mkQCGen 7) 30
+  withMPS3 psi $ \s1 _y s3 ->
+    withMPO3 mpo $ \o1 o2 o3 ->
+      reportEffectiveH "Centre site 2:"
+        (effectiveH @2 (extendLeft leftBoundary s1 o1 s1) o2
+           (extendRight @2 s3 o3 s3 rightBoundary))
+  where
+    reportEffectiveH label heff = do
+      let (eDense, _) = groundStateDense heff
+      putStrLn label
+      putStrLn $ "  dense eigenvalue = " ++ show eDense
+      eigenOutcome <- try (evaluate (fst (groundStateEigen hilbertSchmidtNorm (arr heff))))
+      case eigenOutcome of
+        Left (ex :: SomeException) ->
+          putStrLn $ "  constructEigen CRASHED = " ++ show ex
+        Right eEigen -> do
+          let diff = abs (eDense - eEigen)
+          putStrLn $ "  constructEigen eigen = " ++ show eEigen
+          putStrLn $ "  |dense - krylov|     = " ++ show diff
+          if diff <= 1e-8
+            then putStrLn "  OK (within 1e-8)"
+            else putStrLn "  MISMATCH — possible Krylov / norm bug"

@@ -74,8 +74,6 @@ library
         TensorNetwork.Categorical.Props
         TensorNetwork.DMRG.Chain
         TensorNetwork.DMRG.Env
-        TensorNetwork.DMRG.SiteIndex
-        TensorNetwork.DMRG.Zipper
         TensorNetwork.DMRG.Fixed3
         TensorNetwork.DMRG.Fixed3SVD
         TensorNetwork.MPS.Fixed3
@@ -125,13 +123,42 @@ library
         vector-sized,
         indexed-list-literals,
         finite-typelits,
-        ghc-typelits-knownnat
+        ghc-typelits-knownnat,
+        mtl
 
     -- Directories containing source files.
     hs-source-dirs:   src
 
     -- Base language which the package is written in.
     default-language: Haskell2010
+
+executable tfim-dmrg-plot
+    import:           warnings
+    main-is:          tfim_dmrg_plot.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        mtl
+    default-language: GHC2021
+
+executable groundstate-smoke
+    import:           warnings
+    main-is:          groundstate_smoke.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum
+    default-language: GHC2021
+
+executable effective-hamiltonian-smoke
+    import:           warnings
+    main-is:          effective_hamiltonian_smoke.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum
+    default-language: GHC2021
 
 test-suite quantum-test
     -- Import common warning flags.
