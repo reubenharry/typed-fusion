@@ -11,39 +11,35 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
 -- | Scalar U(1) irrep categories — self-contained (no other @Symmetry.*@ imports).
 --
--- Each irrep is a one-dimensional complex vector tagged by charge @p :: Z@.
+-- Objects are @'Rep p@ for a charge @p :: Z@. Morphisms are intertwiners only:
+-- a scalar @Complex Double@ when @p = q@ (Schur), and @()@ when @p ≠ q@.
 --
--- * @U1Map@ — all linear maps @r → s@; hom object at charge @s - r@.
--- * @U1Mor@ — intertwiners only: hom is a scalar @Complex Double@ when
---   @r = s@ (Schur), and @()@ when @r ≠ s@ (the unique zero map).
+-- The forgetful functor @'ForgetTag'@ maps @'Rep p'@ to @C 1@ and morphisms to
+-- @'LinearFunction'@s. Canonical fusion of tensor products lives in the
+-- forgetful/monoidal layer (@TensorNetwork.Categorical@), not in this category.
 module Symmetry.FunctorU1Simple
   ( -- * Charges and irreps
     Z (..)
   , ZEq
-  , U1Irreps
-  , IrrepU1 (..)
+  , U1Rep (..)
   , U1IrrepDim
-    -- * Full-map category
-  , U1Map (..)
-  , FullMapHom
+    -- * Intertwiner indexing
   , FullMapIndex
   , ZIsZero
   , IntertwinerOk
-  , scalarMap
-  , applyU1Map
-  , demoMapRoundTrip
+    -- * Forgetful functor
+  , Forget
+  , ForgetTag (..)
     -- * Intertwiner category
   , InterHom
   , U1Mor (..)
   , scalarMor
   , crossMor
-  , applyMor
   , phase
   , phaseSquared
   , demoPhase
@@ -54,16 +50,25 @@ module Symmetry.FunctorU1Simple
   , demoRoundTrip
   ) where
 
-import Prelude hiding ((.), id)
+import Prelude hiding ((.), id, Functor (..))
 import Control.Category.Constrained (Category (..))
+import Control.Functor.Constrained (Functor (..))
 import Data.Complex (Complex ((:+)))
-import Data.Kind (Type)
-import Data.AdditiveGroup (AdditiveGroup (..))
+import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
+import Data.Singletons (sing)
 import Data.Type.Ord (OrderingI (EQI, LTI, GTI))
-import Data.VectorSpace (VectorSpace (..), (*^))
 import GHC.TypeLits (KnownNat, Nat, CmpNat, type (+), type (-))
 import qualified GHC.TypeNats
+import Unsafe.Coerce (unsafeCoerce)
+import Math.LinearMap.Asserted (getLinearFunction, linearFunction)
+import Math.LinearMap.Category
+  ( LinearFunction (..), TensorSpace (..), AdditiveGroup (..), VectorSpace (..)
+  , InnerSpace (..), DimensionAware (..), Semimanifold (..), PseudoAffine (..) )
+import Math.LinearMap.Category.Instances ()
+import Math.LinearMap.Category.Backend.HMatrix ()
+import Math.VectorSpace.DimensionAware
+  (Dimensional (..), unsafeFromArrayWithOffset, unsafeWriteArrayWithOffset)
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C, Sized (konst))
 
@@ -106,29 +111,84 @@ type family ZEq (a :: Z) (b :: Z) :: Bool where
   ZEq _ _ = 'False
 
 --------------------------------------------------------------------------------
--- Scalar irreps
+-- Objects of the U(1) rep category
 --------------------------------------------------------------------------------
 
-type U1Irreps = Z
+-- | Object of the U(1) rep category: a single charge label.
+data U1Rep where
+  Rep :: Z -> U1Rep
 
-type family U1IrrepDim (p :: U1Irreps) :: Nat where
-  U1IrrepDim _ = 1
-
-newtype IrrepU1 (p :: U1Irreps) = IrrepU1 { unIrrepU1 :: C (U1IrrepDim p) }
-
-deriving newtype instance KnownNat (U1IrrepDim p) => AdditiveGroup (IrrepU1 p)
-
-instance KnownNat (U1IrrepDim p) => VectorSpace (IrrepU1 p) where
-  type Scalar (IrrepU1 p) = Complex Double
-  μ *^ IrrepU1 v = IrrepU1 (μ *^ v)
+type family U1IrrepDim (r :: U1Rep) :: Nat where
+  U1IrrepDim ('Rep _) = 1
 
 --------------------------------------------------------------------------------
--- Full-map hom indexing (U1Map)
+-- Forgetful functor image
+--------------------------------------------------------------------------------
+
+type family Forget (r :: U1Rep) :: Type where
+  Forget ('Rep p) = C (U1IrrepDim ('Rep p))
+
+newtype ForgetTag (r :: U1Rep) = ForgetTag { unForgetTag :: Forget r }
+
+instance KnownNat (U1IrrepDim ('Rep p)) => AdditiveGroup (ForgetTag ('Rep p)) where
+  ForgetTag a ^+^ ForgetTag b = ForgetTag (a ^+^ b)
+  zeroV = ForgetTag zeroV
+  negateV (ForgetTag v) = ForgetTag (negateV v)
+
+instance KnownNat (U1IrrepDim ('Rep p)) => VectorSpace (ForgetTag ('Rep p)) where
+  type Scalar (ForgetTag ('Rep p)) = Complex Double
+  μ *^ ForgetTag v = ForgetTag (μ *^ v)
+
+instance KnownNat (U1IrrepDim ('Rep p)) => InnerSpace (ForgetTag ('Rep p)) where
+  ForgetTag v <.> ForgetTag w = v <.> w
+
+instance KnownNat (U1IrrepDim ('Rep p)) => DimensionAware (ForgetTag ('Rep p)) where
+  type StaticDimension (ForgetTag ('Rep p)) = StaticDimension (C (U1IrrepDim ('Rep p)))
+  dimensionalityWitness = undefined
+
+instance (KnownNat (U1IrrepDim ('Rep p)), n ~ U1IrrepDim ('Rep p))
+  => n `Dimensional` ForgetTag ('Rep p) where
+  knownDimensionalitySing = sing
+  unsafeFromArrayWithOffset i ar =
+    ForgetTag (unsafeFromArrayWithOffset i ar)
+  unsafeWriteArrayWithOffset ar i (ForgetTag v) =
+    unsafeWriteArrayWithOffset ar i v
+
+instance KnownNat (U1IrrepDim ('Rep p)) => Semimanifold (ForgetTag ('Rep p)) where
+  type Needle (ForgetTag ('Rep p)) = C (U1IrrepDim ('Rep p))
+  ForgetTag _ .+~^ _ = undefined
+
+instance KnownNat (U1IrrepDim ('Rep p)) => PseudoAffine (ForgetTag ('Rep p)) where
+  ForgetTag _ .-~! ForgetTag _ = undefined
+  ForgetTag _ .-~. ForgetTag _ = undefined
+
+instance KnownNat (U1IrrepDim ('Rep p)) => TensorSpace (ForgetTag ('Rep p)) where
+  type TensorProduct (ForgetTag ('Rep p)) w = TensorProduct (C (U1IrrepDim ('Rep p))) w
+  scalarSpaceWitness = undefined
+  linearManifoldWitness = undefined
+  zeroTensor = undefined
+  toFlatTensor = undefined
+  fromFlatTensor = undefined
+  addTensors = undefined
+  subtractTensors = undefined
+  scaleTensor = undefined
+  negateTensor = undefined
+  tensorProduct = undefined
+  transposeTensor = undefined
+  fmapTensor = undefined
+  fzipTensorWith = undefined
+  tensorUnsafeFromArrayWithOffset = undefined
+  tensorUnsafeWriteArrayWithOffset = undefined
+  coerceFmapTensorProduct = undefined
+  wellDefinedVector (ForgetTag v) = ForgetTag <$> wellDefinedVector v
+  wellDefinedTensor = undefined
+  vectorConjugate = undefined
+
+--------------------------------------------------------------------------------
+-- Intertwiner indexing
 --------------------------------------------------------------------------------
 
 type FullMapIndex (r :: Z) (s :: Z) = Add s (Negate r)
-
-type FullMapHom (r :: Z) (s :: Z) = IrrepU1 (FullMapIndex r s)
 
 type family ZIsZero (z :: Z) :: Bool where
   ZIsZero 'Zero = 'True
@@ -136,10 +196,6 @@ type family ZIsZero (z :: Z) :: Bool where
 
 type family IntertwinerOk (r :: Z) (s :: Z) :: Bool where
   IntertwinerOk r s = ZIsZero (FullMapIndex r s)
-
---------------------------------------------------------------------------------
--- Intertwiner hom: scalar iff charges match, else uninhabited carrier @()@
---------------------------------------------------------------------------------
 
 type family InterHom (r :: Z) (s :: Z) :: Type where
   InterHom r s = HomIf (ZEq r s)
@@ -194,122 +250,115 @@ composeHom
   :: forall a b c.
      (KnownSingZ a, KnownSingZ b, KnownSingZ c)
   => InterHom a b -> InterHom b c -> InterHom a c
-composeHom ab bc =
-  case ( zCmp (singZ @a) (singZ @b)
-       , zCmp (singZ @b) (singZ @c)
-       , zCmp (singZ @a) (singZ @c)
-       ) of
+composeHom ab bc = composeHomSing (singZ @a) (singZ @b) (singZ @c) ab bc
+
+composeHomSing
+  :: SingZ a -> SingZ b -> SingZ c
+  -> InterHom a b -> InterHom b c -> InterHom a c
+composeHomSing sa sb sc ab bc =
+  case (zCmp sa sb, zCmp sb sc, zCmp sa sc) of
     (ZSame, ZSame, ZSame) ->
       (bc :: Complex Double) * (ab :: Complex Double)
     (_, _, ZSame) -> 0
-    (_, _, ZDiff) -> (() :: InterHom a c)
+    (_, _, ZDiff) -> unsafeCoerce ()
 
-applyHom
+applyHomLinear
+  :: SingZ p -> SingZ q -> InterHom p q -> C (U1IrrepDim ('Rep p)) -> C (U1IrrepDim ('Rep q))
+applyHomLinear sp sq hom v =
+  case zCmp sp sq of
+    ZSame -> hom *^ v
+    ZDiff -> konst 0
+
+applyHomLinearZ
   :: forall p q. (KnownSingZ p, KnownSingZ q)
-  => InterHom p q -> IrrepU1 p -> IrrepU1 q
-applyHom hom (IrrepU1 v) =
-  case zCmp (singZ @p) (singZ @q) of
-    ZSame -> IrrepU1 (hom *^ v)
-    ZDiff -> IrrepU1 (konst 0)
+  => InterHom p q -> C (U1IrrepDim ('Rep p)) -> C (U1IrrepDim ('Rep q))
+applyHomLinearZ hom v = applyHomLinear (singZ @p) (singZ @q) hom v
 
---------------------------------------------------------------------------------
--- Category of all linear maps
---------------------------------------------------------------------------------
+type family RepZ (r :: U1Rep) :: Z where
+  RepZ ('Rep p) = p
 
-newtype U1Map (r :: U1Irreps) (s :: U1Irreps) = MkU1Map
-  { unU1Map :: FullMapHom r s }
-
-scalarMap :: Complex Double -> U1Map r s
-scalarMap z = MkU1Map (IrrepU1 (konst z))
-
-composeMap
-  :: forall a b c. KnownNat (U1IrrepDim (FullMapIndex a c))
-  => U1Map b c -> U1Map a b -> U1Map a c
-composeMap (MkU1Map (IrrepU1 bc)) (MkU1Map (IrrepU1 ab)) =
-  MkU1Map (IrrepU1 (bc * ab))
-
-instance Category U1Map where
-  type Object U1Map p = KnownNat (U1IrrepDim p)
-  id = scalarMap 1
-  (.) = composeMap
-
-applyMap :: FullMapHom r s -> IrrepU1 r -> IrrepU1 s
-applyMap (IrrepU1 m) (IrrepU1 v) = IrrepU1 (m * v)
-
-applyU1Map :: U1Map r s -> IrrepU1 r -> IrrepU1 s
-applyU1Map (MkU1Map hom) = applyMap hom
+type Pos1 = 'Pos 1
+type Neg1 = 'Neg 1
+type RepPos1 = 'Rep Pos1
+type RepNeg1 = 'Rep Neg1
 
 --------------------------------------------------------------------------------
 -- Category of intertwiners
 --------------------------------------------------------------------------------
 
-newtype U1Mor (p :: U1Irreps) (q :: U1Irreps) = MkU1Mor
-  { unU1Mor :: InterHom p q }
+data U1Mor (a :: U1Rep) (b :: U1Rep) where
+  RepMor :: forall p q. InterHom p q -> U1Mor ('Rep p) ('Rep q)
 
-scalarMor :: forall p. (ZEq p p ~ 'True) => Complex Double -> U1Mor p p
-scalarMor z = MkU1Mor z
+scalarMor :: forall p. (ZEq p p ~ 'True) => Complex Double -> U1Mor ('Rep p) ('Rep p)
+scalarMor z = RepMor z
 
-crossMor :: forall p q. (ZEq p q ~ 'False) => U1Mor p q
-crossMor = MkU1Mor (() :: InterHom p q)
+crossMor :: forall p q. (ZEq p q ~ 'False) => U1Mor ('Rep p) ('Rep q)
+crossMor = RepMor (() :: InterHom p q)
 
-composeMor
+composeU1Mor
   :: forall a b c.
-     (KnownSingZ a, KnownSingZ b, KnownSingZ c)
+     (Object U1Mor a, Object U1Mor b, Object U1Mor c)
   => U1Mor b c -> U1Mor a b -> U1Mor a c
-composeMor (MkU1Mor bc) (MkU1Mor ab) =
-  MkU1Mor (composeHom @a @b @c ab bc)
+composeU1Mor (RepMor bc) (RepMor ab) =
+  RepMor (composeHom @(RepZ a) @(RepZ b) @(RepZ c) ab bc)
+
+type family ObjectU1Mor (a :: U1Rep) :: Constraint where
+  ObjectU1Mor ('Rep p) =
+    ( KnownNat (U1IrrepDim ('Rep p)), KnownSingZ p, ZEq p p ~ 'True )
+
+type family ObjReflexive (a :: U1Rep) :: Constraint where
+  ObjReflexive ('Rep p) = ('Rep p ~ 'Rep (RepZ ('Rep p)))
 
 instance Category U1Mor where
-  type Object U1Mor p = (KnownNat (U1IrrepDim p), KnownSingZ p, ZEq p p ~ 'True)
-  id = scalarMor 1
-  (.) = composeMor
+  type Object U1Mor a = (ObjectU1Mor a, ObjReflexive a)
+  id = unsafeCoerce (scalarMor 1 :: U1Mor RepPos1 RepPos1)
+  (.) = composeU1Mor
 
-applyMor :: (KnownSingZ p, KnownSingZ q) => U1Mor p q -> IrrepU1 p -> IrrepU1 q
-applyMor (MkU1Mor hom) = applyHom hom
+repMorLinear
+  :: forall p q.
+     ( KnownSingZ p, KnownSingZ q
+     , KnownNat (U1IrrepDim ('Rep p)), KnownNat (U1IrrepDim ('Rep q))
+     )
+  => InterHom p q
+  -> LinearFunction (Complex Double) (ForgetTag ('Rep p)) (ForgetTag ('Rep q))
+repMorLinear hom =
+  linearFunction $ \(ForgetTag v) ->
+    ForgetTag (applyHomLinearZ @p @q hom v)
+
+instance Functor ForgetTag U1Mor (LinearFunction (Complex Double)) where
+  fmap (RepMor mor) = repMorLinear mor
 
 --------------------------------------------------------------------------------
 -- Examples
 --------------------------------------------------------------------------------
 
-type Pos1 = 'Pos 1
-type Neg1 = 'Neg 1
-
-phase :: U1Mor Pos1 Pos1
+phase :: U1Mor RepPos1 RepPos1
 phase = scalarMor (0 :+ 1)
 
-phaseSquared :: U1Mor Pos1 Pos1
+phaseSquared :: U1Mor RepPos1 RepPos1
 phaseSquared = phase . phase
 
 demoPhase :: C 1 -> C 1
-demoPhase v = unIrrepU1 (applyMor phase (IrrepU1 v))
+demoPhase v =
+  unForgetTag (getLinearFunction (fmap phase) (ForgetTag @RepPos1 v))
 
-posToNeg :: U1Mor Pos1 Neg1
+posToNeg :: U1Mor RepPos1 RepNeg1
 posToNeg = crossMor
 
-negToPos :: U1Mor Neg1 Pos1
+negToPos :: U1Mor RepNeg1 RepPos1
 negToPos = crossMor
 
 -- | @+1 → -1 → +1@ composes to scalar @0@, not @id@.
-posRoundTrip :: U1Mor Pos1 Pos1
+posRoundTrip :: U1Mor RepPos1 RepPos1
 posRoundTrip = negToPos . posToNeg
 
 demoZeroCross :: C 1 -> C 1
-demoZeroCross v = unIrrepU1 (applyMor posToNeg (IrrepU1 v))
+demoZeroCross v =
+  unForgetTag (getLinearFunction (fmap posToNeg) (ForgetTag @RepPos1 v))
 
 demoRoundTrip :: C 1 -> C 1
-demoRoundTrip v = unIrrepU1 (applyMor posRoundTrip (IrrepU1 v))
-
-posToNegMap :: U1Map Pos1 Neg1
-posToNegMap = scalarMap 1
-
-negToPosMap :: U1Map Neg1 Pos1
-negToPosMap = scalarMap 1
-
-posRoundTripMap :: U1Map Pos1 Pos1
-posRoundTripMap = negToPosMap . posToNegMap
-
-demoMapRoundTrip :: C 1 -> C 1
-demoMapRoundTrip v = unIrrepU1 (applyU1Map posRoundTripMap (IrrepU1 v))
+demoRoundTrip v =
+  unForgetTag (getLinearFunction (fmap posRoundTrip) (ForgetTag @RepPos1 v))
 
 -- | Type-level sanity checks.
 posToNegInter :: (InterHom Pos1 Neg1 ~ (), IntertwinerOk Pos1 Neg1 ~ 'False) => ()
