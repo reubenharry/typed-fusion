@@ -52,7 +52,8 @@ import Math.LinearMap.Category
   , sampleLinearFunction, contractTensorMap
   , LinearFunction, pattern LinearFunction, (-+$>)
   , getLinearMap, LinearMap (..), linearId, euclideanNorm
-  , recomposeLinMap, entireBasis, constructEigenSystem, Eigenvector (..), type (-+>), finishEigenSystem )
+  , recomposeLinMap, recomposeSB, entireBasis, constructEigenSystem, Eigenvector (..), type (-+>), finishEigenSystem
+  , trace, (-+$>), enumerateSubBasis, LSpace (..))
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
@@ -66,7 +67,8 @@ import Data.Proxy (Proxy (..))
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector.Sized as VS
 import Data.Complex (Complex ((:+)), conjugate, realPart, magnitude)
-import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), AdditiveGroup (zeroV), sumV)
+import Data.Number.NormedAlgebra (NormedAlgebra (RealPart))
+import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), AdditiveGroup (zeroV, (^-^)), sumV, Scalar)
 
 import TensorNetwork.MPS.Fixed3.Internal
   ( Site (..), MPS (..), OpSite (..), MPO (..), cdim, basis
@@ -76,7 +78,7 @@ import TensorNetwork.MPS.Fixed3
   , genMPS222, genMPO222, genSite, pauliX, pauliZ )
 import TensorNetwork.Categorical
   ( (⊗^), lunit, lunitInv, swapMap, splitBond, fuseBond )
-import GroundState (groundState, groundStateDense, groundStateEigen, hilbertSchmidtNorm)
+import GroundState (groundState, groundStateDense, groundStateEigen, hilbertSchmidtNorm, toDenseMatrix)
 import TensorNetwork.DMRG.Chain
   ( ChainEnd
   , chainLength
@@ -98,6 +100,7 @@ import TensorNetwork.MPS.Fixed3.Reference (amplitude)
 import Control.Monad (replicateM)
 import Control.Monad.Identity (Identity, runIdentity)
 import Control.Exception (SomeException, evaluate, try)
+import System.CPUTime (getCPUTime)
 import Data.Ord (comparing)
 import Data.List (sortBy)
 import qualified Data.Vector.Storable as VSt
@@ -115,21 +118,110 @@ type Centre bl p br = (C bl ⊗ C p) +> C br
 --------------------------------------------------------------------------------
 
 -- | The single-site effective Hamiltonian at the active site, as an
--- endomorphism of the site's own map space (never flattened). For a centre
--- tensor @x@, ⟨ψ_y|H|φ_x⟩ = @trace (R ∘ opWire op x ∘ (L ⊗^ id_p) ∘ dagger y)@
--- = ⟨y, Heff x⟩ (Hilbert–Schmidt), so by cyclicity
+-- endomorphism of the site's own map space (never flattened).
 --
---   @effectiveH L op R $ x = R ∘ opWire op x ∘ (L ⊗^ id_p)@.
+-- Built from the same left-to-right transfer as 'mpsMPOInner': for each
+-- pair of centre-site maps, 'setSite' inserts them into the surrounding
+-- 'MPS', then the operator is assembled in the Hilbert–Schmidt basis
+-- (Riesz representation in the canonical basis). Coefficients are obtained
+-- by solving @G C = M@ with @G_{ik} = e_i \<.\> e_k@ and
+-- @M_{ij} = \langle e_i, H e_j \rangle@ from 'mpsMPOInner' — a naive
+-- @\sum_i M_{ij} e_i@ image formula is wrong when the basis is not orthonormal.
+--
+-- 'applyNetworkHeff' applies @H@ with the correct non-orthonormal extension
+-- (@G^{-1}@ on input coordinates). 'groundStateNetworkHeff' solves
+-- @M \alpha = \lambda N \alpha@ with @N@ the full 'mpsInner' overlap matrix.
+networkHeffData
+  :: forall p b1 b2 b w l
+   . ( KnownNat p, KnownNat b1, KnownNat b2, KnownNat l, KnownNat w, KnownNat b )
+  => Int
+  -> (Site b1 p b2 -> SomeSite p b)
+  -> MPO p w l
+  -> MPS p b l
+  -> ( [Centre b1 p b2]
+     , HM.Matrix (Complex Double)
+     , HM.Matrix (Complex Double)
+     , HM.Matrix (Complex Double)
+     , [Centre b1 p b2]
+     )
+networkHeffData centreSite wrapSite mpo mps =
+  let es = enumerateSubBasis (entireBasis :: SubBasis (Centre b1 p b2))
+      n = length es
+      insert site = setSite centreSite (wrapSite site) mps
+      braAt i = insert (Site (es !! i))
+      bilinear braSite ketSite =
+        mpsMPOInner (insert braSite) mpo (insert ketSite)
+      mNet =
+        HM.fromLists
+          [ [ bilinear (Site (es !! i)) (Site (es !! j)) | j <- [0 .. n - 1] ]
+          | i <- [0 .. n - 1]
+          ]
+      gMat =
+        HM.fromLists
+          [ [ es !! i <.> es !! j | j <- [0 .. n - 1] ]
+          | i <- [0 .. n - 1]
+          ]
+      nMat =
+        HM.fromLists
+          [ [ realPart (mpsInner (braAt i) (braAt j)) :+ 0 | j <- [0 .. n - 1] ]
+          | i <- [0 .. n - 1]
+          ]
+      cMat =
+        fromMaybe (error "networkHeffData: singular Gram matrix") (HM.linearSolve gMat mNet)
+      imgs =
+        [ sumV [ (cMat `HM.atIndex` (i, j)) *^ es !! i | i <- [0 .. n - 1] ]
+        | j <- [0 .. n - 1]
+        ]
+  in (es, gMat, nMat, mNet, imgs)
+
+applyNetworkHeff
+  :: forall v. (InnerSpace v, Scalar v ~ Complex Double)
+  => [v] -> HM.Matrix (Complex Double) -> [v] -> v -> v
+applyNetworkHeff es gMat imgs x =
+  let rhs = HM.fromList [ es !! k <.> x | k <- [0 .. length es - 1] ]
+      alphaCol =
+        fromMaybe (error "applyNetworkHeff: singular Gram matrix") (HM.linearSolve gMat (HM.asColumn rhs))
+      alpha = HM.toList (HM.flatten alphaCol)
+  in sumV [ alpha !! j *^ imgs !! j | j <- [0 .. length imgs - 1] ]
+
+-- @M \alpha = \lambda G \alpha@ with @G@ the Hilbert–Schmidt Gram matrix.
+groundStateNetworkHeff
+  :: forall v
+   . ( FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double )
+  => [v] -> HM.Matrix (Complex Double) -> HM.Matrix (Complex Double) -> (Double, v)
+groundStateNetworkHeff _es gMat mNet =
+  let lChol = HM.chol (HM.sym gMat)
+      lInv = HM.inv lChol
+      cMat = lInv HM.<> mNet HM.<> HM.tr (HM.conj lInv)
+      (vals, vecs) = HM.eigSH (HM.sym cMat)
+      idx = HM.minIndex vals
+      yCol = HM.asColumn (HM.toColumns vecs !! idx)
+      alphaCol = HM.tr (HM.conj lInv) HM.<> yCol
+      alpha = HM.flatten alphaCol
+      alphaList = HM.toList alpha
+      quadForm mat =
+        sum
+          [ conjugate (alphaList !! i) * (mat `HM.atIndex` (i, j)) * alphaList !! j
+          | i <- [0 .. length alphaList - 1]
+          , j <- [0 .. length alphaList - 1]
+          ]
+      num = realPart (quadForm mNet)
+      den = realPart (quadForm gMat)
+      rayleigh = num / den
+      (vec, _) = recomposeSB (entireBasis :: SubBasis v) alphaList
+  in (rayleigh, vec)
+
 effectiveH
-  :: forall p w1 w2 b1 b2.
-     ( KnownNat p, KnownNat w1, KnownNat w2, KnownNat b1, KnownNat b2 )
-  => LeftEnv w1 b1 b1
-  -> OpSite w1 p w2
-  -> RightEnv w2 b2 b2
+  :: forall p b1 b2 b w l
+   . ( KnownNat p, KnownNat b1, KnownNat b2, KnownNat l, KnownNat w, KnownNat b )
+  => Int
+  -> (Site b1 p b2 -> SomeSite p b)
+  -> MPO p w l
+  -> MPS p b l
   -> Centre b1 p b2 +> Centre b1 p b2
-effectiveH l (OpSite op) r =
-  sampleLinearFunction -+$> LinearFunction
-    (\x -> r . opWire @p op x . (l ⊗^ (Cat.id :: C p +> C p)))
+effectiveH centreSite wrapSite mpo mps =
+  let (es, gMat, _nMat, _mNet, imgs) = networkHeffData centreSite wrapSite mpo mps
+  in sampleLinearFunction -+$> LinearFunction (applyNetworkHeff es gMat imgs)
 
 --------------------------------------------------------------------------------
 -- Gauge transport (SVD on flattened-domain compositions)
@@ -360,75 +452,74 @@ rightGaugeMPS mps0 =
             _ -> error "rightGaugeMPS: expected bulk site"
 
 solveCentreSite
-  :: forall p wl wr bl br
-   . ( KnownNat p, KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br )
-  => LeftEnv wl bl bl
-  -> OpSite wl p wr
-  -> RightEnv wr br br
+  :: forall p bl br b w l
+   . ( KnownNat p, KnownNat bl, KnownNat br, KnownNat l, KnownNat w, KnownNat b )
+  => (Site bl p br -> SomeSite p b)
+  -> Int
+  -> MPO p w l
+  -> MPS p b l
   -> Site bl p br
   -> (Double, Site bl p br)
-solveCentreSite l op r (Site _) =
-  let sys = (effectiveH @p l op r)
-      (e, c) = groundState sys
+solveCentreSite wrap centreSite mpo mps (Site _) =
+  let (es, gMat, _nMat, mNet, _imgs) = networkHeffData @p @bl @br centreSite wrap mpo mps
+      (e, c) = groundStateNetworkHeff es gMat mNet
   in (e, Site c)
 
 
 solveCentreSite'
-  :: forall p wl wr bl br
-   . ( KnownNat p, KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br )
-  => LeftEnv wl bl bl
-  -> OpSite wl p wr
-  -> RightEnv wr br br
+  :: forall p bl br b w l
+   . ( KnownNat p, KnownNat bl, KnownNat br, KnownNat l, KnownNat w, KnownNat b )
+  => (Site bl p br -> SomeSite p b)
+  -> Int
+  -> MPO p w l
+  -> MPS p b l
   -> Site bl p br
   -> (Double, Site bl p br)
-solveCentreSite' l op r (Site _) =
-  let sys = arr (effectiveH @p l op r) :: Centre bl p br -+> Centre bl p br
+solveCentreSite' wrap centreSite mpo mps (Site _) =
+  let sys = arr (effectiveH @p @bl @br centreSite wrap mpo mps) :: Centre bl p br -+> Centre bl p br
       (e, c) = groundStateEigen hilbertSchmidtNorm sys
   in (e, Site c)
 
 solveSiteAt
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
-  => Finite (ChainEnd l)
-  -> LeftEnvAtCentre w b
-  -> SomeOpSite p w
-  -> RightEnvAtCentre w b
+  => MPO p w l
+  -> MPS p b l
+  -> Finite (ChainEnd l)
   -> SomeSite p b
   -> SomeSite p b
-solveSiteAt c l op r cn =
+solveSiteAt mpo mps c cn =
   let i = siteInt c
       n = chainLength @l
-  in case (i, l, op, r, cn) of
-       (1, LeftEnvFirst lv, OpLeft o, RightEnvBulk rv, SiteLeft c) ->
-         SiteLeft (snd (solveCentreSite lv o rv c))
-       (j, LeftEnvBulk lv, OpBulk o, RightEnvBulk rv, SiteBulk c)
-         | j > 1 && j < n ->
-             SiteBulk (snd (solveCentreSite lv o rv c))
-       (n, LeftEnvBulk lv, OpRight o, RightEnvLast rv, SiteRight c) ->
-         SiteRight (snd (solveCentreSite lv o rv c))
+  in case (i, cn) of
+       (1, SiteLeft cSite) ->
+         SiteLeft (snd (solveCentreSite @p SiteLeft 1 mpo mps cSite))
+       (j, SiteBulk cSite) | j > 1 && j < n ->
+         SiteBulk (snd (solveCentreSite @p SiteBulk j mpo mps cSite))
+       (n, SiteRight cSite) ->
+         SiteRight (snd (solveCentreSite @p SiteRight n mpo mps cSite))
        _ ->
-         error ("solveSiteAt: site/op/env shape mismatch at index " ++ show i)
+         error ("solveSiteAt: site shape mismatch at index " ++ show i)
 
 centreEnergyAt
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
-  => Finite (ChainEnd l)
-  -> LeftEnvAtCentre w b
-  -> SomeOpSite p w
-  -> RightEnvAtCentre w b
+  => MPO p w l
+  -> MPS p b l
+  -> Finite (ChainEnd l)
   -> Double
-centreEnergyAt c l op r =
+centreEnergyAt mpo mps c =
   let i = siteInt c
-      n = chainLength @l
-  in case (i, l, op, r) of
-       (1, LeftEnvFirst lv, OpLeft o, RightEnvBulk rv) ->
-         fst (groundState (effectiveH @p lv o rv))
-       (j, LeftEnvBulk lv, OpBulk o, RightEnvBulk rv) | j > 1 && j < n ->
-         fst (groundState (effectiveH @p lv o rv))
-       (n, LeftEnvBulk lv, OpRight o, RightEnvLast rv) ->
-         fst (groundState (effectiveH @p lv o rv))
-       _ ->
-         error ("centreEnergyAt: site/op/env shape mismatch at index " ++ show i)
+  in case getSite i mps of
+       SiteLeft _ ->
+         let (es, gMat, _nMat, mNet, _) = networkHeffData @p @1 @b 1 SiteLeft mpo mps
+         in fst (groundStateNetworkHeff es gMat mNet)
+       SiteBulk _ ->
+         let (es, gMat, _nMat, mNet, _) = networkHeffData @p @b @b i SiteBulk mpo mps
+         in fst (groundStateNetworkHeff es gMat mNet)
+       SiteRight _ ->
+         let (es, gMat, _nMat, mNet, _) = networkHeffData @p @b @1 i SiteRight mpo mps
+         in fst (groundStateNetworkHeff es gMat mNet)
 
 moveRight
   :: forall p w b l
@@ -479,18 +570,17 @@ solveCenterAt
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
   => MPSZipper p b w l -> MPSZipper p b w l
-solveCenterAt z@MPSZipper{centreIndex = c, theMPS = mps, theMPO = mpo, leftEnv = l, rightEnv = r} =
+solveCenterAt z@MPSZipper{centreIndex = c, theMPS = mps, theMPO = mpo} =
   let i = siteInt c
-      solved = solveSiteAt @p @w @b @l c l (getOp i mpo) r (getSite i mps)
+      solved = solveSiteAt @p @w @b @l mpo mps c (getSite i mps)
   in z { theMPS = setSite i solved mps }
 
 centreEnergy
   :: forall p w b l
    . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
   => MPSZipper p b w l -> Double
-centreEnergy MPSZipper{centreIndex = c, theMPO = mpo, leftEnv = l, rightEnv = r} =
-  let i = siteInt c
-  in centreEnergyAt @p @w @b @l c l (getOp i mpo) r
+centreEnergy MPSZipper{centreIndex = c, theMPO = mpo, theMPS = mps} =
+  centreEnergyAt @p @w @b @l mpo mps c
 
 type ZipperStep p b w l = MPSZipper p b w l -> MPSZipper p b w l
 
@@ -718,27 +808,23 @@ prop_effectiveHMatchesInner =
   QC.forAll genMPO222 $ \mpo ->
     withMPS3 psiY $ \s1 y s3 ->
     withMPS3 psiX $ \_ x _ ->
-    withMPO3 mpo $ \o1 o2 o3 ->
-      let l1 = extendLeft leftBoundary s1 o1 s1
-          r3 = extendRight @2 s3 o3 s3 rightBoundary
-          heff = effectiveH @2 l1 o2 r3
-          lhs = siteLin y <.> (heff $ siteLin x)
+      let mpsForEnv = mps3 s1 y s3
+          (es, gMat, _nMat, _mNet, imgs) = networkHeffData @2 @2 @2 2 SiteBulk mpo mpsForEnv
+          lhs = siteLin y <.> applyNetworkHeff es gMat imgs (siteLin x)
           rhs = mpsMPOInner (mps3 s1 y s3) mpo (mps3 s1 x s3)
       in lhs QC.=== rhs
 
--- | For a Hermitian MPO (TFIM) the effective Hamiltonian is Hermitian:
 prop_effectiveHHermitian :: QC.Property
 prop_effectiveHHermitian =
   QC.forAll genMPS222 $ \psiY ->
   QC.forAll genMPS222 $ \psiX ->
     withMPS3 psiY $ \s1 y s3 ->
     withMPS3 psiX $ \_ x _ ->
-    withMPO3 (tfimMPO 1 0.7) $ \o1 o2 o3 ->
-      let l1 = extendLeft leftBoundary s1 o1 s1
-          r3 = extendRight @2 s3 o3 s3 rightBoundary
-          heff = effectiveH @2 l1 o2 r3
-          lhs = siteLin x <.> (heff $ siteLin y)
-          rhs = conjugate (siteLin y <.> (heff $ siteLin x))
+      let mpo = tfimMPO 1 0.7
+          mpsForEnv = mps3 s1 y s3
+          (es, gMat, _nMat, _mNet, imgs) = networkHeffData @2 @2 @2 2 SiteBulk mpo mpsForEnv
+          lhs = siteLin x <.> applyNetworkHeff es gMat imgs (siteLin y)
+          rhs = conjugate (siteLin y <.> applyNetworkHeff es gMat imgs (siteLin x))
           scale = 1 + magnitude lhs + magnitude rhs
       in QC.counterexample (show lhs ++ " /≈ " ++ show rhs)
            (magnitude (lhs - rhs) <= 1e-9 * scale)
@@ -755,18 +841,22 @@ prop_flatLeftSVDMatchesSiteMatrix =
         QC..&&. extract (getLinearMap (siteForLeftSVD @2 @2 @1 (siteLin s221)))
                 QC.=== siteMatrix @2 @2 @1 s221
 
--- | DMRG on the 3-site TFIM converges to the dense @C (p³)@ ground energy.
-prop_dmrgGroundEnergyMatchesDense :: QC.Property
-prop_dmrgGroundEnergyMatchesDense =
+-- | DMRG on 3-site TFIM reproduces the dense @C 8@ ground energy.
+prop_dmrgGroundStateEnergy :: QC.Property
+prop_dmrgGroundStateEnergy =
   QC.forAll (QC.choose (0, 99)) $ \seed ->
     let mpo = tfimMPO 1 0.7
         psi0 = seededMPS222 seed
+        eDense = denseGroundEnergy mpo
         DmrgResult { dmrgFinalEnergy = e, dmrgFinalMPS = psi } =
           runIdentity $ dmrg 10 1e-12 mpo (sweep solveCenterAt) psi0
-        eDense = denseGroundEnergy mpo
         tol = 1e-9
-    in QC.counterexample ("DMRG " ++ show e ++ " vs dense " ++ show eDense)
+    in QC.counterexample ("seed " ++ show seed ++ ": DMRG " ++ show e ++ " vs dense " ++ show eDense)
          (abs (e - eDense) <= tol QC..&&. energy mpo psi >= eDense - tol)
+
+-- | DMRG on the 3-site TFIM converges to the dense @C (p³)@ ground energy.
+prop_dmrgGroundEnergyMatchesDense :: QC.Property
+prop_dmrgGroundEnergyMatchesDense = prop_dmrgGroundStateEnergy
 
 
 -- | On a 'HilbertSpace' (@C 4@), the Krylov path matches the dense oracle.
@@ -901,37 +991,119 @@ siteMapsEqual (Site f) (Site g) =
   extract (getLinearMap f) QC.=== extract (getLinearMap g)
 
 -- | Compare dense and Krylov ground-state solves on network effective Hamiltonians.
+reportEffectiveH
+  :: forall a
+   . ( FiniteDimensional a, InnerSpace a, LSpace a, Scalar a ~ Complex Double
+     , RealFloat (RealPart (Scalar a)) )
+  => (a +> a) -> String -> IO ()
+reportEffectiveH heff label = do
+  let (eDense, _) = groundStateDense heff
+  putStrLn label
+  putStrLn $ "  dense eigenvalue = " ++ show eDense
+  eigenOutcome <- try (evaluate (fst (groundStateEigen hilbertSchmidtNorm (arr heff))))
+  case eigenOutcome of
+    Left (ex :: SomeException) ->
+      putStrLn $ "  constructEigen CRASHED = " ++ show ex
+    Right eEigen -> do
+      let diff = abs (eDense - eEigen)
+      putStrLn $ "  constructEigen eigen = " ++ show eEigen
+      putStrLn $ "  |dense - krylov|     = " ++ show diff
+      if diff <= 1e-8
+        then putStrLn "  OK (within 1e-8)"
+        else putStrLn "  MISMATCH — possible Krylov / norm bug"
+
 smokeNetworkEffectiveHamiltonian :: IO ()
 smokeNetworkEffectiveHamiltonian = do
   putStrLn "=== TFIM centre effective Hamiltonian (seed 42) ==="
-  withMPS3 (seededMPS222 42) $ \s1 _y s3 ->
-    withMPO3 (tfimMPO 1 0.7) $ \o1 o2 o3 ->
-      reportEffectiveH "Centre site 2:"
-        (effectiveH @2 (extendLeft leftBoundary s1 o1 s1) o2
-           (extendRight @2 s3 o3 s3 rightBoundary))
+  let (mps42, heff42) =
+        withMPS3 (seededMPS222 42) $ \s1 y s3 ->
+          let m = mps3 s1 y s3
+          in (m, effectiveH @2 @2 @2 2 SiteBulk (tfimMPO 1 0.7) m)
+  reportEffectiveH heff42 "Centre site 2:"
 
   putStrLn ""
   putStrLn "=== Random MPS/MPO effective Hamiltonian (QC seed 7) ==="
   let psi = unGen genMPS222 (mkQCGen 7) 30
       mpo = unGen genMPO222 (mkQCGen 7) 30
-  withMPS3 psi $ \s1 _y s3 ->
-    withMPO3 mpo $ \o1 o2 o3 ->
-      reportEffectiveH "Centre site 2:"
-        (effectiveH @2 (extendLeft leftBoundary s1 o1 s1) o2
-           (extendRight @2 s3 o3 s3 rightBoundary))
-  where
-    reportEffectiveH label heff = do
-      let (eDense, _) = groundStateDense heff
-      putStrLn label
-      putStrLn $ "  dense eigenvalue = " ++ show eDense
-      eigenOutcome <- try (evaluate (fst (groundStateEigen hilbertSchmidtNorm (arr heff))))
-      case eigenOutcome of
-        Left (ex :: SomeException) ->
-          putStrLn $ "  constructEigen CRASHED = " ++ show ex
-        Right eEigen -> do
-          let diff = abs (eDense - eEigen)
-          putStrLn $ "  constructEigen eigen = " ++ show eEigen
-          putStrLn $ "  |dense - krylov|     = " ++ show diff
-          if diff <= 1e-8
-            then putStrLn "  OK (within 1e-8)"
-            else putStrLn "  MISMATCH — possible Krylov / norm bug"
+      (_, heffRnd) =
+        withMPS3 psi $ \s1 y s3 ->
+          let m = mps3 s1 y s3
+          in (m, effectiveH @2 @2 @2 2 SiteBulk mpo m)
+  reportEffectiveH heffRnd "Centre site 2:"
+
+-- | Compare 'effectiveH' against 'mpsMPOInner'.
+checkHeffOracle :: IO ()
+checkHeffOracle = do
+  let psiY = unGen genMPS222 (mkQCGen 7) 30
+      psiX = unGen genMPS222 (mkQCGen 8) 30
+      mpo = unGen genMPO222 (mkQCGen 9) 30
+  withMPS3 psiY $ \s1 y s3 ->
+    withMPS3 psiX $ \_ x _ -> do
+      let mpsForEnv = mps3 s1 y s3
+          rhs = mpsMPOInner (mps3 s1 y s3) mpo (mps3 s1 x s3)
+          (es, gMat, _nMat, mNet, imgs) = networkHeffData @2 @2 @2 2 SiteBulk mpo mpsForEnv
+          lhs = siteLin y <.> applyNetworkHeff es gMat imgs (siteLin x)
+      putStrLn $ "mpsMPOInner = " ++ show rhs
+      putStrLn $ "networkHeff inner = " ++ show lhs
+      putStrLn $ "networkHeff == mpsMPOInner? " ++ show (lhs == rhs)
+
+-- | Step-by-step diagnostic for DMRG ground-state convergence (TFIM, seed 42).
+diagnoseDmrgGroundState :: IO ()
+diagnoseDmrgGroundState = do
+  let mpo = tfimMPO 1 0.7
+      psi0 = seededMPS222 42
+      eDense = denseGroundEnergy mpo
+  putStrLn $ "Dense ground energy: " ++ show eDense
+  putStrLn $ "Initial Rayleigh:     " ++ show (energy mpo psi0)
+
+  let z0 = toZipper mpo psi0
+  putStrLn $ "Initial centre energy (site 1): " ++ show (centreEnergy z0)
+
+  let z1 = solveCenterAt z0
+  putStrLn $ "After solve@1, centre energy: " ++ show (centreEnergy z1)
+  putStrLn $ "After solve@1, Rayleigh:      " ++ show (energy mpo (theMPS z1))
+
+  let z3 = solveCenterAt (moveRight z1)
+  putStrLn $ "After solve@2, centre energy: " ++ show (centreEnergy z3)
+  putStrLn $ "After solve@2, Rayleigh:      " ++ show (energy mpo (theMPS z3))
+
+  let (eSweep, psi1) = runIdentity $ sweep solveCenterAt mpo psi0
+  putStrLn $ "One full sweep centre energy: " ++ show eSweep
+  putStrLn $ "One full sweep Rayleigh:      " ++ show (energy mpo psi1)
+
+  let DmrgResult { dmrgFinalEnergy = eFinal, dmrgFinalMPS = psiFinal } =
+        runIdentity $ dmrg 10 1e-12 mpo (sweep solveCenterAt) psi0
+  putStrLn $ "After 10 sweeps centre energy: " ++ show eFinal
+  putStrLn $ "After 10 sweeps Rayleigh:      " ++ show (energy mpo psiFinal)
+  putStrLn $ "Match dense? " ++ show (abs (eFinal - eDense) <= 1e-9)
+
+-- | Run 3-site TFIM DMRG (@J=1@, @h=0.7@, seed @42@) and print sweep energies.
+-- See also @scripts/dmrg_smoke.hs@ (@cabal run dmrg-smoke@).
+smokeDmrg :: IO ()
+smokeDmrg = smokeDmrgParams 1 0.7 42 15 1e-10
+
+-- | Parameterised 3-site TFIM DMRG smoke run.
+smokeDmrgParams
+  :: Double -> Double -> Int -> Int -> Double -> IO ()
+smokeDmrgParams j h seed maxSweeps tol = do
+  putStrLn $
+    "=== 3-site TFIM DMRG (J=" ++ show j ++ ", h=" ++ show h
+    ++ ", seed=" ++ show seed ++ ") ==="
+  let mpo = tfimMPO j h
+      psi0 = seededMPS222 seed
+  t0 <- getCPUTime
+  let DmrgResult { dmrgFinalEnergy = e, dmrgFinalMPS = psi, dmrgSweepEnergies = es } =
+        runIdentity $ dmrg maxSweeps tol mpo (sweep solveCenterAt) psi0
+  t1 <- getCPUTime
+  let eDense = denseGroundEnergy mpo
+      eRayleigh = energy mpo psi
+  putStrLn $ "  done in " ++ show ((fromIntegral (t1 - t0) :: Double) / 1e12) ++ "s"
+  putStrLn $ "  dense ground energy = " ++ show eDense
+  putStrLn $ "  centre energy       = " ++ show e
+  putStrLn $ "  Rayleigh quotient   = " ++ show eRayleigh
+  putStrLn $ "  |centre - dense|    = " ++ show (abs (e - eDense))
+  putStrLn $ "  sweeps completed    = " ++ show (length es)
+  mapM_ print es
+  if abs (e - eDense) <= 1e-9 && eRayleigh >= eDense - 1e-9
+    then putStrLn "  OK"
+    else putStrLn "  FAIL — DMRG energy disagrees with dense ground state"

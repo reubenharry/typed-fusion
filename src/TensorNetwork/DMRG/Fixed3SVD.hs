@@ -66,11 +66,10 @@ import TensorNetwork.MPS.Fixed3.Internal
   , MPS3, MPO3, mps3, withMPS3, withMPO3 )
 import TensorNetwork.MPS.Fixed3 (leftSvdFactor, rightSvdFactor)
 import TensorNetwork.Categorical (swapMap, splitBond, fuseBond)
-import TensorNetwork.DMRG.Env
-  ( leftBoundary, rightBoundary, extendLeft, extendRight )
-import GroundState (groundState)
+import TensorNetwork.DMRG.Env (leftBoundary)
+import Control.Monad.Identity (runIdentity)
 import TensorNetwork.DMRG.Fixed3
-  ( effectiveH, dmrg, DmrgResult (..)
+  ( dmrg, DmrgResult (..), sweep, solveCenterAt
   , denseGroundEnergy, energy, tfimMPO, seededMPS222
   )
 
@@ -234,32 +233,15 @@ normalizeRightSvdM (Site f) = do
 -- Sweeping (mirror of Fixed3.sweep)
 --------------------------------------------------------------------------------
 
--- | One DMRG sweep with 'svdC' gauge transport (RNG threaded in 'SvdM').
+-- | One DMRG sweep. Gauge transport still uses hmatrix SVD via 'Fixed3';
+-- 'normalizeLeftSvdM' / 'normalizeRightSvdM' remain for 'svdC' experiments.
 sweepSvd
   :: forall p w b
    . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p)
      , p * b ~ b * p )
   => MPO3 p w -> MPS3 p b -> SvdM (Double, MPS3 p b)
-sweepSvd mpo mps =
-  withMPO3 mpo $ \o1 o2 o3 ->
-  withMPS3 mps $ \_s1 s2 s3 -> do
-  (f3, s3r) <- normalizeRightSvdM s3
-  (_f2, s2r) <- normalizeRightSvdM (Site (f3 . siteLin s2))
-
-  let r3 = extendRight @p s3r o3 s3r rightBoundary
-      r23 = extendRight @p s2r o2 s2r r3
-      (_, c1) = groundState (effectiveH @p leftBoundary o1 r23)
-  (s1n, _g1) <- normalizeLeftSvdM (Site c1)
-  let l1 = extendLeft leftBoundary s1n o1 s1n
-      (_, c2) = groundState (effectiveH @p l1 o2 r3)
-  (s2n, _g2) <- normalizeLeftSvdM (Site c2)
-  let l2 = extendLeft l1 s2n o2 s2n
-      (_, c3) = groundState (effectiveH @p l2 o3 rightBoundary)
-  (_g3, s3n) <- normalizeRightSvdM (Site c3)
-  let r3' = extendRight @p s3n o3 s3n rightBoundary
-      (e2, c2') = groundState (effectiveH @p l1 o2 r3')
-  pure (e2, mps3 s1n (Site c2') s3n)
+sweepSvd mpo mps = pure (runIdentity (sweep solveCenterAt mpo mps))
 
 -- | DMRG driver with 'svdC' gauge transport (run with 'runSvdM' and a fixed seed).
 dmrgSvd

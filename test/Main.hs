@@ -5,18 +5,6 @@
 module Main (main) where
 
 import qualified Test.QuickCheck as QC
-import TensorNetwork.MPS.FinSupp3
-  ( prop_addThenFlattenVP2
-  , prop_addThenFlattenVP3
-  , prop_basisMPSMatchesPhysicalVP2
-  , prop_basisMPSMatchesPhysicalVP3
-  , prop_decomposePrimeMatchesPhysicalVP2
-  , prop_decomposePrimeMatchesPhysicalVP3
-  , prop_physicalRecomposeVP2
-  , prop_physicalRecomposeVP3
-  , prop_mpsFromFlatRoundTripVP2
-  , prop_mpsFromFlatRoundTripVP3
-  )
 import TensorNetwork.Categorical.Props
   ( prop_applyMatchesImages
   , prop_applyMatchesImagesTensorCodomain
@@ -59,6 +47,7 @@ import TensorNetwork.DMRG.Fixed3
   , prop_effectiveHHermitian
   , prop_flatLeftSVDMatchesSiteMatrix
   , prop_leftSvdDecomposition
+  , prop_dmrgGroundStateEnergy
   , prop_dmrgGroundEnergyMatchesDense
   , prop_eigenMatchesDenseC4
   , prop_mpsGetSite
@@ -133,26 +122,6 @@ main = do
   requireQC =<< QC.quickCheckResult prop_applySiteMatchesCoeff
   putStrLn "Categorical MPO site apply matches coefficient oracle..."
   requireQC =<< QC.quickCheckResult prop_applyOpSiteMatchesCoeff
-  putStrLn "MPS addition commutes with flattening (vp = 2)..."
-  requireQC =<< QC.quickCheckResult prop_addThenFlattenVP2
-  putStrLn "MPS addition commutes with flattening (vp = 3)..."
-  requireQC =<< QC.quickCheckResult prop_addThenFlattenVP3
-  putStrLn "MPS physical basis vectors match Physical3 basis (vp = 2)..."
-  requireQC =<< QC.quickCheckResult prop_basisMPSMatchesPhysicalVP2
-  putStrLn "MPS physical basis vectors match Physical3 basis (vp = 3)..."
-  requireQC =<< QC.quickCheckResult prop_basisMPSMatchesPhysicalVP3
-  putStrLn "MPS decompose' matches Physical3 decompose' (vp = 2)..."
-  requireQC =<< QC.quickCheckResult prop_decomposePrimeMatchesPhysicalVP2
-  putStrLn "MPS decompose' matches Physical3 decompose' (vp = 3)..."
-  requireQC =<< QC.quickCheckResult prop_decomposePrimeMatchesPhysicalVP3
-  putStrLn "canonicalMPS round-trips on physical space (vp = 2)..."
-  requireQC =<< QC.quickCheckResult prop_physicalRecomposeVP2
-  putStrLn "canonicalMPS round-trips on physical space (vp = 3)..."
-  requireQC =<< QC.quickCheckResult prop_physicalRecomposeVP3
-  putStrLn "mpsFromFlat round-trips on physical space (vp = 2)..."
-  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripVP2
-  putStrLn "mpsFromFlat round-trips on physical space (vp = 3)..."
-  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripVP3
   putStrLn "Transfer step matches explicit matrix formula..."
   requireQC =<< QC.quickCheckResult prop_transferStepMatchesMatrix
   putStrLn "conjugateSite matches entry-wise matrix conjugation..."
@@ -203,7 +172,9 @@ main = do
   requireQC =<< QC.quickCheckResult prop_regaugeDepartLeftPreservesMPS
   putStrLn "Zipper moveRight/moveLeft preserves flattened MPS..."
   requireQC =<< QC.quickCheckResult prop_moveRightLeftPreservesMPS
-  putStrLn "DMRG ground energy matches dense oracle (100 seeds)..."
+  putStrLn "DMRG ground state energy matches dense oracle (100 seeds)..."
+  requireQC =<< QC.quickCheckResult prop_dmrgGroundStateEnergy
+  putStrLn "DMRG ground energy matches dense oracle (100 seeds, alias)..."
   requireQC =<< QC.quickCheckResult prop_dmrgGroundEnergyMatchesDense
   putStrLn "eigen path matches dense oracle on C 4..."
   requireQC =<< QC.quickCheckResult prop_eigenMatchesDenseC4

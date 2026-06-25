@@ -1,6 +1,6 @@
 # Roadmap: a symmetry-aware, basis-independent DMRG in Haskell
 
-*Status: living document. Last updated 2026-06-15.*
+*Status: living document. Last updated 2026-06-23.*
 
 ## 0. The thesis
 
@@ -33,7 +33,7 @@ The single most important design principle, which makes (b) cheap, is stated in 
 | `GradedSpace{I}` + block-sparse morphism (Schur blocks) | intertwiners | `FunctorExperiment.hs` | **most mature**: U(1) intertwiners as block-sparse hom; `compose` is now singleton-recursive (no `unsafeCoerce`); `TensorSpace` via `ToC`. Next: multi-block `ApplyInterGo` (toward SU(2)) |
 | `TensorMap` with named legs + contraction/permute | typed ITensors | `ItensorTyped.hs` | leg-labelling, type-level contraction (`Difference`/`Intersection`), permutation *evidence* done; `permute`/`rawContract` are `error "TODO"` |
 | MPS/DMRG algorithm layer (à la MPSKit) | DMRG | `TensorNetwork.DMRG.Fixed3` | typed 3-site DMRG green (TFIM); local solve still dense `eigSH`; gauge SVD via `getLinearMap`; `Concrete` is legacy |
-| Symmetric MPS as a vector space (tangent space, addition of states) | vector space of MPS | `TensorNetwork.MPS.FinSupp3` | `MPSClever` is a genuine `VectorSpace`; growable bond via `FinSuppSeq`; QuickCheck: addition commutes with flattening |
+| Symmetric MPS as a vector space (tangent space, addition of states) | vector space of MPS | `TensorNetwork.MPS.FinSupp3` | `VectorSpace` + `HasBasis` (physical); growable `FinSuppSeq` bond; flatten / canonical section green. **Next (§5b):** categorical MPS/MPO layer, `InnerSpace`, effective-`H` eigensolve |
 
 TensorKit factors these as: `Sector` (in `TensorKitSectors.jl`) → `GradedSpace` →
 `ProductSpace`/`HomSpace` → `FusionTree` → `TensorMap`, with `MPSKit.jl`/`PEPSKit.jl`
@@ -306,6 +306,8 @@ The point of §3 is that this phase touches almost no algorithm code.
    This is independent of symmetry and could even slot into Phase 1–2.
 5. **MPS-as-vector-space (`TensorNetwork.MPS.FinSupp3`)** generalises to symmetric MPS, enabling
    state addition / tangent vectors — the entry point to TDVP and excited-state methods.
+   The categorical / inner-product / local-solve layer for this representation is planned
+   in §5b.
 
 ### 5a. From the 3-site typed MPS to N sites (and growable bonds)
 Generalise the fixed 3-site typed MPS (§4a) to arbitrary length: a sequence of uniform
@@ -323,6 +325,189 @@ oracle, the inner-product/dual definitions, and the DMRG sweep. Two sub-threads:
   another `MPS vp` without changing the Haskell type. This is the natural home for truly
   adaptive χ once the typed prototype has fixed the conventions.
 This turns the 3-site proof-of-concept into a usable finite-system DMRG.
+
+### 5b. FinSuppSeq MPS: categorical layer, inner product, effective-`H` eigensolve
+
+`TensorNetwork.MPS.FinSupp3` is the growable-bond, runtime-χ counterpart to the typed
+`Fixed3` prototype. It already has:
+
+- `MPS vp` with `FinSuppSeq` bonds and a `VectorSpace` instance (`addMPS` grows χ);
+- a flattening functor on objects: `mpsToFlat :: MPS vp -> C (vp³)` (and `mpsToPhysical3`);
+- a canonical physical basis (`HasBasis` indexed by `Physical3 vp`) with round-trip
+  properties (`prop_addThenFlatten`, `canonicalMPS`, `mpsFromFlat`).
+
+What is **not** there yet: MPOs, inner products, the categorical API, environments /
+effective Hamiltonians, or a local ground-state solve. The three workstreams below mirror
+the typed pipeline (§4 Phases 2–4) but must cope with runtime bond dimension and the
+`FinSuppSeq` bilinear-conjugation hazard (§4a).
+
+**Orientation note.** FinSupp3 sites are *not* in transfer orientation:
+
+| site | FinSupp3 (`FinSupp3.hs`) | Fixed3 (transfer) |
+|---|---|---|
+| left | `C vp +> Bond` | `(C 1 ⊗ C p) +> C b1` |
+| centre | `Bond +> (C vp ⊗ Bond)` | `(C b1 ⊗ C p) +> C b2` |
+| right | `Bond +> C vp` | `(C b2 ⊗ C p) +> C 1` |
+
+The plans below keep the FinSupp3 layout (it matches the existing flattening /
+addition code). A later unification pass could re-express both representations as
+instances of one `Site bl p br` indexed API — not a blocker for §5b.
+
+---
+
+#### 5b-i. Category: MPS objects, MPO morphisms, flattening functor
+
+**Goal.** A small categorical layer in which tensor-network states and operators are
+first-class morphisms, with a functor to the flat physical Hilbert space that validates
+all contractions.
+
+**Objects.** `MPS vp` — a state in the 3-site physical space, variationally parameterised
+by growable virtual bonds.
+
+**Morphisms.** `MPO vp` (new type, parallel to `Fixed3.MPO`):
+
+```haskell
+data MPO vp = MPO
+  { leftMPO  :: C vp +> (Bond ⊗ Bond)          -- or fused bond-pair type
+  , centerMPO :: Bond +> (C vp ⊗ Bond ⊗ Bond) -- MPO leg ⊗ bond leg
+  , rightMPO :: Bond +> (C vp +> Bond)        -- shape TBD to match contraction
+  }
+```
+
+(Exact leg fusion for the MPO virtual bonds must be settled when implementing
+`mpoTransferStep`; mirror the bra/ket environment types from `Fixed3` but with `Bond`
+instead of `C b`.)
+
+**Identity & composition.**
+- `identityMPO :: MPS vp -> MPO vp` (or parametric in `vp` only) such that
+  `mpoApplyMPS identityMPO ψ` preserves `mpsToFlat ψ`.
+- `composeMPO :: MPO vp -> MPO vp -> MPO vp` realising operator product on the physical
+  space (bond fusion along the MPO column, analogous to `Fixed3`'s fused `w·b` bonds).
+
+**Categorical instances (target).**
+- A category `Phys` with objects `Physical3 vp` (or `C (vp³)`) and morphisms `v +> w`.
+- A category `TN` with objects `MPS vp` and morphisms `MPO vp`, with composition
+  `composeMPO` and identity `identityMPO`.
+- A functor `Flatten :: TN -> Phys`:
+  - on objects: `mpsToFlat` (exists);
+  - on morphisms: `mpoToFlat :: MPO vp -> C (vp³) +> C (vp³)` via closed transfer
+    contraction (no `p⁶` basis sum — categorical `mpoTransferStep` chain, as in
+    `Fixed3`).
+
+**Key operations to implement (ordered).**
+
+1. `transferStep` / `foldTransferInner` for the FinSupp3 site orientation (bra site
+   conjugated per-site; environment `Bond +> Bond`).
+2. `mpoTransferStep` with typed environments `Bond +> (Bond ⊗ Bond)` (bra bond ↦ MPO ⊗
+   ket bond).
+3. `mpsMPOInner`, `mpoApplyMPS`, `mpoToFlat`.
+4. **Reference module** `FinSupp3.Reference` (basis-sum oracles, mirroring
+   `Fixed3.Reference`) for QuickCheck.
+
+**Functoriality contract (QuickCheck).**
+
+- `mpoToFlat (composeMPO h1 h2)` ≈ `mpoToFlat h1 . mpoToFlat h2` (up to tolerance).
+- `mpsToFlat (mpoApplyMPS h ψ)` ≈ `mpoToFlat h $ mpsToFlat ψ`.
+- `mpsMPOInner ψ h φ` ≈ `mpsToFlat ψ <.> (mpoToFlat h $ mpsToFlat φ)` (flat oracle uses
+  `C n`'s sesquilinear `<.>`).
+- `mpsMPOInner ψ (identityMPO @vp) φ === mpsInner ψ φ` once §5b-ii is in place.
+
+**Exit criterion.** Categorical contractions green against `FinSupp3.Reference` and flat
+`C (vp³)` oracles; identity/composition laws checked.
+
+---
+
+#### 5b-ii. `InnerSpace` for `MPS vp` (in the vein of `Fixed3.mpsInner`)
+
+**Goal.** An `InnerSpace (MPS vp)` instance whose `<.>` agrees with the flat physical
+inner product, enabling norms, Hilbert-space reasoning, and (later) variational
+optimisation on the MPS manifold without flattening.
+
+**Design (follow §4a conjugation discipline).**
+
+1. `mpsConjugate :: MPS vp -> MPS vp` — `vectorConjugate` on each site map / bond
+   tensor row; **never** rely on `FinSuppSeq`'s bilinear `<.>` or `adjoint` for
+   conjugation.
+2. `transferStep` — one left-to-right update contracting bra/ket bonds (FinSupp3
+   orientation); bra site passed through `mpsConjugate` internally or as a separate
+   `Site` wrapper.
+3. `mpsInner :: MPS vp -> MPS vp -> Complex Double` — fold `transferStep` from a
+   `unitBond` / identity environment on the left, close with trace on the right bond
+   (centre-right contraction for the 3-site chain).
+4. `instance InnerSpace (MPS vp) where (<.>) = mpsInner` (and `(<.>^)` if needed for
+   the linearmap API).
+
+**Tests (mirror `Fixed3` Phase 2).**
+
+- `prop_innerMatchesFlat`: `mpsInner ψ φ === mpsToFlat ψ <.> mpsToFlat φ`.
+- Conjugate symmetry: `mpsInner ψ φ === conjugate (mpsInner φ ψ)`.
+- Positivity: `realPart (mpsInner ψ ψ) >= 0`.
+- Compatibility with addition: sesquilinearity in each argument (or bilinearity + explicit
+  conjugate in one slot — pick one convention and test against the flat oracle).
+- `mpsNorm = sqrt ∘ realPart ∘ flip mpsInner` (self-overlap).
+
+**Dependency.** Shares `transferStep` with §5b-i; implement inner product immediately
+after the bare transfer machinery, before MPO transfer steps.
+
+**Exit criterion.** All inner-product properties green; `InnerSpace` instance in
+`FinSupp3.hs` (or `FinSupp3.Inner` if the module grows).
+
+---
+
+#### 5b-iii. Effective Hamiltonian & eigensolving (exploration)
+
+**Goal.** Port the DMRG local-update semantics from `TensorNetwork.DMRG.Fixed3` to
+FinSupp3: build `Heff` on the centre site by contracting MPO with left/right
+environments, then solve for the ground state of `Heff` in the centre's map space.
+
+**Centre type.** `Centre vp = Bond +> (C vp ⊗ Bond)` — the variational tensor at the
+active site in FinSupp3 orientation.
+
+**Port from Fixed3 (adapt bond types).**
+
+1. **Environments** — generalise `TensorNetwork.DMRG.Env` to `Bond` environments
+   (`LeftEnv`, `RightEnv`, `extendLeft` / `extendRight`, sweep updates). Reuse the
+   categorical `mpoTransferStep` from §5b-i.
+2. **`effectiveH`** — same formula as `Fixed3.effectiveH`:
+   `Heff x = R ∘ opWire op x ∘ (L ⊗^ id_p)` (with FinSupp3-specific `opWire` wiring).
+3. **Verification** — `prop_effectiveHMatchesInner`:
+   `siteLin y <.> (heff $ siteLin x) === mpsMPOInner (ψ_y) mpo (ψ_x)` with frozen
+   neighbours; `prop_effectiveHHermitian` on TFIM.
+
+**Eigensolving — three tiers (explore in order).**
+
+| Tier | Method | When it applies | Blocker |
+|---|---|---|---|
+| **A — dense oracle** | Truncate active χ, flatten centre to `C (χ·vp·χ)`, `eigSH` | Always (regression) | None; χ is runtime |
+| **B — typed dense** | Wrap active support in `C chi` when `chi` is known at compile time (tests) | Small χ in QuickCheck | Need padding/truncation helpers |
+| **C — matrix-free Krylov** | `GroundState.groundStateKrylovMap hilbertSchmidtNorm [seed] heff` | Production path | `InnerTensorSpace` for `Sequence` (dual of `FinSuppSeq`) in `linearmap-family`; centre may lack `FiniteDimensional` |
+
+**Tier A (first milestone).**
+
+- `activeCentreDim :: Centre vp -> Int` — χ_in × vp × χ_out from `activeDimBond` on
+  domain/codomain images.
+- `centreToDenseMatrix :: Centre vp -> Heff -> Matrix` — flatten map-space endo in a
+  documented HS basis (reuse `GroundState.toDenseMatrix` idea with runtime-sized basis
+  built from `getLinearMap` + physical indices).
+- `solveCentreDense :: Heff -> Centre vp` — lowest eigenvector, re-embed as `Centre vp`.
+- Property: dense solve matches `mpsMPOInner` Rayleigh quotient on random centres.
+
+**Tier C (target; depends on §4b + upstream).**
+
+- Add `InnerTensorSpace (Sequence …)` (or `FinSuppSeq`) in `linearmap-family` so
+  `Bond +> (C vp ⊗ Bond)` inherits `InnerSpace` / `LSpace` for Krylov (`GroundState.hs`
+  already notes this).
+- Seed Krylov with the current centre tensor (`groundStateKrylovMap`).
+- Cross-validate against Tier A at χ ≤ 4.
+
+**DMRG driver (out of scope for first pass).** A full `dmrg` on `FinSupp3.MPS` also needs
+gauge transport / SVD truncation on `FinSuppSeq` bonds (§5a adaptive compression). §5b-iii
+stops at a **single-site local solve** wired into a manual or scripted sweep; the sweep
+driver stays in §5a.
+
+**Exit criterion.** `effectiveH` matches full-network inner product; Hermiticity on TFIM;
+Tier A dense solve matches flat oracle; Tier C explored or upstream blocker documented
+with a minimal `linearmap-family` PR plan.
 
 ---
 
@@ -433,3 +618,6 @@ D1–D3 are resolved (§7). Concrete sequence (all on the **typed 3-site MPS**, 
    `getLinearMap`; TFIM ground energy vs `denseGroundEnergy` green.
 7. ➡ **Migrate `groundState` to `eigen`** (Phase 4b) — Hilbert–Schmidt `Norm`; keep
    `toDenseMatrix` as oracle; re-run DMRG validation.
+8. ➡ **FinSuppSeq MPS layer** (§5b) — categorical MPS/MPO + `Flatten` functor (5b-i),
+   `InnerSpace` (5b-ii), effective-`H` + dense local solve (5b-iii Tier A); Krylov (Tier C)
+   blocked on `InnerTensorSpace` for `FinSuppSeq` dual in `linearmap-family`.

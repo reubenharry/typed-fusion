@@ -1,0 +1,141 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE NoStarIsType #-}
+
+module TensorNetwork.MPS.FinSupp3.Bond
+  ( activeDimBond
+  , offsetBond
+  , offsetBondVec
+  , activeDimIntoBond
+  , offsetCodomainIntoBond
+  , isZeroBond
+  , activeDimCenterSite
+  , activeDimCenterOut
+  , activeDimRightSite
+  , padLinearMapDomain
+  , padCenterDomain
+  , padRightDomain
+  , bondDimMPS
+  , offsetBondInTensor
+  , addIntoBondMap
+  , fuseBondPair
+  , bondCoeff
+  , applyBondMap
+  ) where
+
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
+import Data.List (foldl')
+import Data.VectorSpace.Free.FiniteSupportedSequence (FinSuppSeq (..))
+import Math.LinearMap.Category
+  ( type (+>), type (⊗), LinearMap (..), Tensor (..), AdditiveGroup (..), getLinearMap
+  , VectorSpace ((*^)), Scalar, sumV )
+import GHC.TypeLits (KnownNat)
+import Numeric.LinearAlgebra.Static (C)
+import TensorNetwork.MPS.FinSupp3.Internal
+  ( Field, Bond, BulkSite (..), RightSite (..), LeftSite (..), MPS (..) )
+
+bondCoeff :: Bond -> Int -> Field
+bondCoeff (FinSuppSeq v) i = if i < U.length v then v U.! i else 0
+
+applyBondMap :: (VectorSpace w, Scalar w ~ Field) => Bond -> Bond +> w -> w
+applyBondMap b (LinearMap imgs) =
+  sumV [ bondCoeff b i *^ imgs !! i | i <- [0 .. length imgs - 1] ]
+
+activeDimBond :: Bond -> Int
+activeDimBond (FinSuppSeq v)
+  | U.null v  = 0
+  | otherwise = 1 + go (U.length v - 1)
+  where
+    go i
+      | i < 0        = 0
+      | v U.! i /= 0 = i + 1
+      | otherwise    = go (i - 1)
+
+offsetBond :: Int -> Bond -> Bond
+offsetBond 0 b = b
+offsetBond n (FinSuppSeq v)
+  | n <= 0    = FinSuppSeq v
+  | otherwise = FinSuppSeq (U.replicate n 0 U.++ v)
+
+type BondVec = V.Vector Bond
+
+activeDimIntoBond :: BondVec -> Int
+activeDimIntoBond = V.foldl' max 0 . V.map activeDimBond
+
+offsetBondVec :: Int -> BondVec -> BondVec
+offsetBondVec n = V.map (offsetBond n)
+
+offsetCodomainIntoBond
+  :: Int -> (C vp +> Bond) -> (C vp +> Bond)
+offsetCodomainIntoBond n (LinearMap imgs) =
+  LinearMap (offsetBondVec n imgs)
+
+isZeroBond :: Bond -> Bool
+isZeroBond (FinSuppSeq v) = U.all (== 0) v
+
+activeDimCenterSite :: forall vp. KnownNat vp => [C vp ⊗ Bond] -> Int
+activeDimCenterSite imgs =
+  foldl'
+    (\acc (i, Tensor rows) ->
+       if V.any (not . isZeroBond) rows then i + 1 else acc)
+    0
+    (zip [0 ..] imgs)
+
+activeDimCenterOut :: forall vp. KnownNat vp => [C vp ⊗ Bond] -> Int
+activeDimCenterOut imgs =
+  maximum $
+    0 :
+      [ activeDimBond row
+      | Tensor rows <- imgs
+      , row <- V.toList rows
+      ]
+
+activeDimRightSite :: forall vp. KnownNat vp => [C vp] -> Int
+activeDimRightSite imgs =
+  foldl' (\acc (i, v) -> if v == zeroV then acc else i + 1) 0 (zip [0 ..] imgs)
+
+padLinearMapDomain :: AdditiveGroup w => Int -> [w] -> [w]
+padLinearMapDomain chi imgs =
+  take chi (imgs ++ replicate (max 0 (chi - length imgs)) zeroV)
+
+padCenterDomain
+  :: forall vp. KnownNat vp => Int -> Bond +> (C vp ⊗ Bond) -> Bond +> (C vp ⊗ Bond)
+padCenterDomain chi (LinearMap imgs) =
+  LinearMap (padLinearMapDomain chi imgs)
+
+padRightDomain
+  :: forall vp. KnownNat vp => Int -> Bond +> C vp -> Bond +> C vp
+padRightDomain chi (LinearMap imgs) =
+  LinearMap (padLinearMapDomain chi imgs)
+
+bondDimMPS :: forall vp. KnownNat vp => MPS vp -> Int
+bondDimMPS (MPS (LeftSite l) (BulkSite c) (RightSite r)) =
+  maximum
+    [ activeDimIntoBond (getLinearMap l)
+    , activeDimCenterSite (getLinearMap c)
+    , activeDimCenterOut (getLinearMap c)
+    , activeDimRightSite (getLinearMap r)
+    ]
+
+offsetBondInTensor
+  :: Int -> (C vp ⊗ Bond) -> (C vp ⊗ Bond)
+offsetBondInTensor n (Tensor tp) = Tensor (V.map (offsetBond n) tp)
+
+addIntoBondMap
+  :: KnownNat vp => Int -> (C vp +> Bond) -> (C vp +> Bond) -> (C vp +> Bond)
+addIntoBondMap chiF f g = f ^+^ offsetCodomainIntoBond chiF g
+
+fuseBondPair :: Int -> Int -> Bond -> Bond -> Bond
+fuseBondPair chiA chiB (FinSuppSeq a) (FinSuppSeq b) =
+  FinSuppSeq $
+    U.generate (chiA * chiB) $ \k ->
+      let i = k `mod` chiA
+          j = k `div` chiA
+          ai = if i < U.length a then a U.! i else 0
+          bj = if j < U.length b then b U.! j else 0
+      in ai * bj
