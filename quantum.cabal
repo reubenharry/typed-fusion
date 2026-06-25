@@ -64,6 +64,8 @@ library
         Symmetry.Utils
         Symmetry.Orphans
         Symmetry.ChargeEq
+        Symmetry.Group
+        Symmetry.IrrepDecide
         Symmetry.RepSingleton
         Symmetry.HomBlock
         Symmetry.FunctorExperiment

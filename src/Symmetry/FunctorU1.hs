@@ -70,6 +70,7 @@ import Symmetry.FunctorExperiment
   , U1RepList, ApplyIntertwiner (..), ToC (..), RepDim, U1Rep
   , BuildIdHom, HomSectorList
   )
+import Symmetry.Group (Group (U1))
 import Symmetry.RepSingleton (KnownRep)
 import Symmetry.Utils (Z (..), Add, Append, Scale)
 import TensorNetwork.Categorical (lunit)
@@ -157,7 +158,7 @@ repInterLinear
   :: forall r q.
      ( KnownNat (RepDim r), KnownNat (RepDim q)
      , U1RepList r, U1RepList q, ApplyIntertwiner r q
-     , KnownRep r, KnownRep q
+     , KnownRep U1 r, KnownRep U1 q
      )
   => Intertwiner r q
   -> LinearFunction (Complex Double) (ForgetTag ('Rep r)) (ForgetTag ('Rep q))
@@ -294,7 +295,7 @@ instance
 instance Category U1Mor where
   type Object U1Mor ('Rep r) =
     ( U1RepList r, KnownNat (RepDim r)
-    , BuildIdHom (HomSectorList r r), KnownRep r
+    , BuildIdHom (HomSectorList r r), KnownRep U1 r
     )
   type Object U1Mor ('Prod r q) =
     ( IsIrrep1 r ~ 'True, IsIrrep1 q ~ 'True

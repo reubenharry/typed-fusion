@@ -19,15 +19,44 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ExplicitForAll #-}
 -- The KnownNat solver discharges @KnownNat (m * n)@ (i.e. @KnownNat (HomBlockDim
 -- m n)@) from @KnownNat m@ and @KnownNat n@. The charge-keyed @compose@
 -- synthesizes blocks whose dimensions are existential (recovered from rep
 -- singletons), so these products can't be solved from the literal types alone.
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
-module Symmetry.FunctorExperiment where
+module Symmetry.FunctorExperiment
+  ( -- * U(1) aliases (backward compatible)
+    U1Rep
+  , RepDim
+  , U1RepList
+  , HomSectorList
+  , LookupMult
+  , IntertwinerSectors
+  , Intertwiner (..)
+  , BuildIdHom
+  , ApplyIntertwiner (..)
+  , ToC (..)
+  , -- * Group-indexed core (phase 1: @U1@ wired)
+    RepListG
+  , RepDimG
+  , GroupSpine (..)
+  , HomSectorListK
+  , RepLookup (..)
+  , LookupResult
+  , IntertwinerG (..)
+  , compose
+  , mkIdHom
+  , mkScalar
+  , intertwinerLinear
+  , repLinear
+  , ActsOnRep (..)
+  ) where
 
 import Data.Complex (Complex((:+)))
+import Data.Kind (Constraint, Type)
 import GHC.TypeLits (Nat, KnownNat, natVal, type (+))
 import qualified GHC.TypeNats
 import Data.Proxy (Proxy(..))
@@ -47,227 +76,199 @@ import Numeric.LinearAlgebra.Static.Orphans ()
 import Numeric.LinearAlgebra.Static
   (C, M, konst, create, extract, Sized(fromList), Domain(app))
 import qualified Data.Vector.Storable as V
-import Symmetry.Utils (Z(..), KnownZ, getZ, Append)
-import Symmetry.ChargeEq (ZEq, ZEqResult(..), sZEq)
+import Symmetry.Utils (Z(..), KnownZ, getZ)
+import Symmetry.ChargeEq (ZEqResult(..), sZEq)
+import Symmetry.Group
+  ( Group (..), Rep, Irreps, RepDimG
+  , GroupSpine (..), HomSectorListK, LookupMultK, IntertwinerHom
+  , HomSectorListU1, LookupMultU1
+  )
+import Symmetry.IrrepDecide (IrrepDecide (..), IrrepEqResult (..))
 import Symmetry.RepSingleton (SRep(..), KnownRep(..))
 import Symmetry.HomBlock
   ( HomBlockDim, U1HomBlock(..), composeBlock, zeroBlock, blockAsMat
   )
 
--- | A U(1) representation as a list of @(charge, multiplicity)@ sectors.
-type U1Rep = [(Z, Nat)]
+--------------------------------------------------------------------------------
+-- U(1) aliases
+--------------------------------------------------------------------------------
 
--- | Total dimension of a U(1) rep (sum of sector multiplicities).
-type family RepDim (r :: U1Rep) :: Nat where
-  RepDim '[] = 0
-  RepDim ('(z, m) ': rs) = m + RepDim rs
+type U1Rep = Rep U1
 
--- | Every sector in the list has a known charge and multiplicity.
-class U1RepList (rs :: U1Rep)
+type RepDim :: U1Rep -> Nat
+type RepDim r = RepDimG U1 r
 
-instance U1RepList '[]
+type U1RepList :: U1Rep -> Constraint
+type U1RepList = RepListG U1
+
+type HomSectorList :: U1Rep -> U1Rep -> [(Z, Nat, Nat)]
+type HomSectorList r q = HomSectorListU1 r q
+
+type LookupMult :: Z -> U1Rep -> Maybe Nat
+type LookupMult z q = LookupMultU1 z q
+
+type Intertwiner :: U1Rep -> U1Rep -> Type
+type Intertwiner = IntertwinerG U1
+
+type IntertwinerSectors :: [(Z, Nat, Nat)] -> Type
+type IntertwinerSectors hom = IntertwinerSectorsG U1 hom
+
+type BuildIdHom :: [(Z, Nat, Nat)] -> Constraint
+type BuildIdHom hom = BuildIdHomG U1 hom
+
+
+--------------------------------------------------------------------------------
+-- Group-indexed representation spine
+--------------------------------------------------------------------------------
+
+class RepListG (g :: Group) (rs :: Rep g)
+
+instance RepListG U1 '[]
 instance
-  ( KnownNat m, KnownZ z, U1RepList rest
-  ) => U1RepList ('(z, m) ': rest)
+  ( KnownNat m, KnownZ z, RepListG U1 rest
+  ) => RepListG U1 ('(z, m) ': rest)
 
--- | Look up the multiplicity of charge @z@ in a U(1) rep, if present. Defined by
--- branching on 'ZEq' (a @Bool@) rather than a non-linear type-family pattern, so
--- the singleton recursion in 'sLookupMult' can drive its reduction.
-type family LookupMult (z :: Z) (q :: U1Rep) :: Maybe Nat where
-  LookupMult _ '[]                = 'Nothing
-  LookupMult z ('(z2, m) ': rest) = LookupMultGo (ZEq z z2) m (LookupMult z rest)
-
-type family LookupMultGo (eq :: Bool) (m :: Nat) (rest :: Maybe Nat) :: Maybe Nat where
-  LookupMultGo 'True  m _    = 'Just m
-  LookupMultGo 'False _ rest = rest
-
--- | One hom block @(charge, target-mult, source-mult)@, or nothing when the
--- source charge has no matching target sector. The block records the /actual/
--- charge @z@ it came from (not @Zero@): composition merges blocks by charge and
--- must synthesize zero blocks where the middle rep drops a charge, so the charge
--- has to survive in the spine.
-type family MkBlock (z :: Z) (mm :: Maybe Nat) (n :: Nat) :: [(Z, Nat, Nat)] where
-  MkBlock _ 'Nothing  _ = '[]
-  MkBlock z ('Just m) n = '[ '( z, m, n)]
-
--- | Hom-space sector list for intertwiners @r -> q@: one @(z, m, n)@ block
--- per charge @z@ shared by source @r@ (multiplicity @n@) and target @q@
--- (multiplicity @m@). By Schur, only matching charges contribute. Carries the
--- block /shapes/ @m@, @n@ /and the charge @z@/ so composition can merge by
--- charge (no flattening to @m*n@, no loss of the charge label).
-type family HomSectorList (r :: U1Rep) (q :: U1Rep) :: [(Z, Nat, Nat)] where
-  HomSectorList '[] _              = '[]
-  HomSectorList ('(z, n) ': rs) q  =
-    Append (MkBlock z (LookupMult z q) n) (HomSectorList rs q)
-
--- | Intertwiner data indexed by its hom-sector spine. Each block records its
--- charge and @m@×@n@ shape in the spine index @('(z, m, n))@, so an endomorphism
--- block is just @InterCons@ with @m ~ n@ — there is no separate endo constructor
--- and no constructor overlap.
-data IntertwinerSectors (hom :: [(Z, Nat, Nat)]) where
-  InterNil  :: IntertwinerSectors '[]
-  InterCons :: forall z m n rest.
+-- | Intertwiner data indexed by its hom-sector spine.
+data IntertwinerSectorsG (g :: Group) (hom :: [(Irreps g, Nat, Nat)]) where
+  InterNil  :: IntertwinerSectorsG g '[]
+  InterCons :: forall g j m n rest.
     (KnownNat m, KnownNat n, KnownNat (HomBlockDim m n)) =>
     U1HomBlock m n
-    -> IntertwinerSectors rest
-    -> IntertwinerSectors ('(z, m, n) ': rest)
+    -> IntertwinerSectorsG g rest
+    -> IntertwinerSectorsG g ('(j, m, n) ': rest)
 
-instance Show (IntertwinerSectors hom) where
+instance Show (IntertwinerSectorsG g hom) where
   show InterNil = "InterNil"
   show (InterCons block rest) =
     show block ++ " : " ++ show rest
 
-newtype Intertwiner (r :: U1Rep) (q :: U1Rep) = MkIntertwiner
-  { unIntertwiner :: IntertwinerSectors (HomSectorList r q)
+newtype IntertwinerG (g :: Group) (r :: Rep g) (q :: Rep g) = MkIntertwiner
+  { unIntertwiner :: IntertwinerSectorsG g (IntertwinerHom g r q)
   }
-  deriving Show via (IntertwinerSectors (HomSectorList r q))
+  deriving Show via (IntertwinerSectorsG g (IntertwinerHom g r q))
 
-mkScalar :: Complex Double -> IntertwinerSectors '[ '(charge, 1, 1)]
+mkScalar :: Complex Double -> IntertwinerSectorsG U1 '[ '(charge, 1, 1)]
 mkScalar z = InterCons (U1HomBlock (konst z) :: U1HomBlock 1 1) InterNil
 
-class BuildIdHom (hom :: [(Z, Nat, Nat)]) where
-  idHom :: IntertwinerSectors hom
+class BuildIdHomG (g :: Group) (hom :: [(Irreps g, Nat, Nat)]) where
+  idHom :: IntertwinerSectorsG g hom
 
-instance BuildIdHom '[] where
+instance BuildIdHomG U1 '[] where
   idHom = InterNil
 
--- | Identity recurses structurally over the endo spine; @m@ is fixed by the
--- instance head @('(z, m, m))@ rather than recovered from a flattened
--- dimension (covers @Pos1@, @DoublePos1@, …).
 instance
-  ( KnownNat m, KnownNat (HomBlockDim m m), BuildIdHom rest
-  ) => BuildIdHom ('(z, m, m) ': rest) where
+  ( KnownNat m, KnownNat (HomBlockDim m m), BuildIdHomG U1 rest
+  ) => BuildIdHomG U1 ('(z, m, m) ': rest) where
   idHom = InterCons (U1HomBlock (konst 1) :: U1HomBlock m m) idHom
 
-mkIdHom :: forall a. (U1RepList a, BuildIdHom (HomSectorList a a)) => Intertwiner a a
-mkIdHom = MkIntertwiner (idHom @(HomSectorList a a))
+instance BuildIdHomG SU2 '[] where
+  idHom = InterNil
 
--- | Look up the multiplicity of charge @z@ in a rep, returning a witness that
--- ties the value-level answer to the 'LookupMult' type family — the singleton
--- counterpart of 'LookupMult'. Decided via 'sZEq' (so GHC reduces the family on
--- the resulting @'True@\/@'False@), recursing on the rep singleton 'SRep'.
-data LookupResult (z :: Z) (q :: U1Rep) where
-  Absent  :: (LookupMult z q ~ 'Nothing)            => LookupResult z q
-  Present :: (LookupMult z q ~ 'Just m, KnownNat m) => Proxy m -> LookupResult z q
+instance
+  ( KnownNat m, KnownNat (HomBlockDim m m), BuildIdHomG SU2 rest
+  ) => BuildIdHomG SU2 ('(j, m, m) ': rest) where
+  idHom = InterCons (U1HomBlock (konst 1) :: U1HomBlock m m) idHom
 
-sLookupMult :: forall z q. Sing (z :: Z) -> SRep q -> LookupResult z q
-sLookupMult _  SRepNil = Absent
-sLookupMult sz (SRepCons @z2 @m @rs (sz2 :: Sing z2) (rest :: SRep rs)) =
-  case sZEq sz sz2 of
-    ZEqTrue  -> Present (Proxy @m)
-    ZEqFalse -> case sLookupMult sz rest of
-      Absent     -> Absent
-      Present pm -> Present pm
+mkIdHom
+  :: forall g a.
+     ( GroupSpine g, RepLookup g, RepListG g a
+     , BuildIdHomG g (IntertwinerHom g a a), KnownRep g a
+     )
+  => IntertwinerG g a a
+mkIdHom = MkIntertwiner idHom
+
+class (GroupSpine g, IrrepDecide g) => RepLookup g where
+  sLookupMult :: Sing (j :: Irreps g) -> SRep g (q :: Rep g) -> LookupResult g j q
+
+data family LookupResult (g :: Group) (j :: Irreps g) (q :: Rep g)
+
+data instance LookupResult U1 (z :: Z) (q :: Rep U1) where
+  Absent  :: LookupMultU1 z q ~ 'Nothing            => LookupResult U1 z q
+  Present :: (LookupMultU1 z q ~ 'Just m, KnownNat m) => Proxy m -> LookupResult U1 z q
+
+instance RepLookup U1 where
+  sLookupMult _ SRepNilU1 = Absent
+  sLookupMult sz (SRepCons @z2 @m sz2 rest) =
+    case sIrrepEq @U1 sz sz2 of
+      IrrepEqTrue  -> Present (Proxy @m)
+      IrrepEqFalse -> case sLookupMult sz rest of
+        Absent     -> Absent
+        Present pm -> Present pm
 
 --------------------------------------------------------------------------------
--- Charge-keyed view of a @b -> c@ intertwiner (for composition)
+-- Label-keyed view of a @b -> c@ intertwiner (for composition)
 --------------------------------------------------------------------------------
 
--- | One @b -> c@ block tagged with the charge @z@ it lives at. Indexed by the
--- (fixed) target rep @c@ so it carries the proof @LookupMult z c ~ 'Just tgt@:
--- once 'findBC' matches the charge, the /target/ dimension lines up for free by
--- @'Just@-injectivity. The /source/ dimension @src@ is existential (the source
--- rep @b@ is consumed by 'bcIndex' and not in the index), so it is reconciled by
--- a 'GHC.TypeNats.sameNat' check that Schur guarantees succeeds.
-data BCEntry (c :: U1Rep) where
-  BCEntry :: forall z src tgt c.
-             ( KnownNat src, KnownNat tgt, LookupMult z c ~ 'Just tgt )
-          => Sing z -> U1HomBlock tgt src -> BCEntry c
+data family BCEntry (g :: Group) (c :: Rep g)
 
--- | Flatten a @b -> c@ intertwiner into its charge-tagged blocks. Recurses on
--- the rep spine of @b@ in lockstep with the hom spine (both are driven by @b@),
--- so the two stay aligned with no lookups.
+data instance BCEntry U1 (c :: Rep U1) where
+  BCEntryU1 :: forall z src tgt c.
+               ( KnownNat src, KnownNat tgt, LookupMultU1 z c ~ 'Just tgt )
+            => Sing z -> U1HomBlock tgt src -> BCEntry U1 c
+
+type BCEntryG g c = BCEntry g c
+
 bcIndex
-  :: forall b c. SRep b -> SRep c
-  -> IntertwinerSectors (HomSectorList b c) -> [BCEntry c]
-bcIndex SRepNil _ InterNil = []
-bcIndex (SRepCons (sbz :: Sing bz) (brest :: SRep brest)) sc homBC =
-  case sLookupMult sbz sc of
+  :: SRep U1 b -> SRep U1 c
+  -> IntertwinerSectors (HomSectorList b c) -> [BCEntry U1 c]
+bcIndex SRepNilU1 _ InterNil = []
+bcIndex (SRepCons sbz brest) sc homBC =
+  case sLookupMult @U1 sbz sc of
     Absent -> bcIndex brest sc homBC
     Present (_ :: Proxy pc) -> case homBC of
-      InterCons blk rest -> BCEntry sbz blk : bcIndex brest sc rest
+      InterCons blk rest -> BCEntryU1 sbz blk : bcIndex brest sc rest
 
--- | Find the @b -> c@ block at charge @az@. Called only when @az@ is present in
--- both @b@ and @c@, so the block exists (the empty-list case is unreachable).
--- The target dim @p@ matches by injectivity; the source dim @m@ is recovered by
--- a 'GHC.TypeNats.sameNat' check (Schur guarantees the stored block has source
--- dimension @m@, the @b@-multiplicity of @az@).
 findBC
   :: forall az c m p.
-     ( LookupMult az c ~ 'Just p, KnownNat m, KnownNat p )
-  => Sing az -> [BCEntry c] -> U1HomBlock p m
+     (LookupMultU1 az c ~ 'Just p, KnownNat m, KnownNat p)
+  => Sing az -> [BCEntry U1 c] -> U1HomBlock p m
 findBC _ [] =
-  error "findBC: b->c block absent (unreachable: charge present in both b and c)"
-findBC saz (BCEntry (sz :: Sing z) (blk :: U1HomBlock tgt src) : rest) =
+  error "findBC: b->c block absent (unreachable: label present in both b and c)"
+findBC saz (BCEntryU1 (sz :: Sing z) (blk :: U1HomBlock tgt src) : rest) =
   case saz %~ sz of
     Proved Refl -> case GHC.TypeNats.sameNat (Proxy @src) (Proxy @m) of
       Just Refl -> blk
       Nothing   -> error "findBC: source dim mismatch (unreachable by Schur)"
     Disproved _ -> findBC saz rest
 
---------------------------------------------------------------------------------
--- Composition: a charge-keyed merge over the source rep spine
---------------------------------------------------------------------------------
-
--- | The heart of 'compose'. Recurses on the source rep @a@ (which drives both
--- @HomSectorList a b@ and @HomSectorList a c@), consuming the @a -> b@ spine in
--- lockstep and looking @b -> c@ blocks up by charge in @bcIx@. At each charge:
---
---   * present in neither @b@ nor @c@: nothing to do;
---   * present in @c@ only: emit the zero block (composite through absent @b@);
---   * present in @b@ only: consume the @a -> b@ block, emit nothing (the target
---     sector is absent in @c@);
---   * present in both: compose the looked-up @b -> c@ block with the @a -> b@
---     block.
 composeGo
-  :: forall a b c.
-     SRep a -> SRep b -> SRep c
+  :: SRep U1 a -> SRep U1 b -> SRep U1 c
   -> IntertwinerSectors (HomSectorList a b)
-  -> [BCEntry c]
+  -> [BCEntry U1 c]
   -> IntertwinerSectors (HomSectorList a c)
-composeGo SRepNil _ _ InterNil _ = InterNil
-composeGo (SRepCons @az @an (saz :: Sing az) (arest :: SRep arest)) sb sc ab bcIx =
-  case (sLookupMult saz sb, sLookupMult saz sc) of
+composeGo SRepNilU1 _ _ InterNil _ = InterNil
+composeGo (SRepCons @az @an saz rest) sb sc ab bcIx =
+  case (sLookupMult @U1 saz sb, sLookupMult @U1 saz sc) of
     (Absent, Absent) ->
-      composeGo arest sb sc ab bcIx
+      composeGo rest sb sc ab bcIx
     (Absent, Present (_ :: Proxy p)) ->
-      InterCons (zeroBlock @p @an) (composeGo arest sb sc ab bcIx)
+      InterCons (zeroBlock @p @an) (composeGo rest sb sc ab bcIx)
     (Present (_ :: Proxy m), Absent) ->
       case ab of
-        InterCons _ abRest -> composeGo arest sb sc abRest bcIx
+        InterCons _ abRest -> composeGo rest sb sc abRest bcIx
     (Present (_ :: Proxy m), Present (_ :: Proxy p)) ->
       case ab of
         InterCons abBlk abRest ->
           InterCons
             (composeBlock (findBC saz bcIx :: U1HomBlock p m) abBlk)
-            (composeGo arest sb sc abRest bcIx)
+            (composeGo rest sb sc abRest bcIx)
 
--- | Compose intertwiners @a -> b@ and @b -> c@ into @a -> c@, by structural
--- recursion on the rep singletons (no @unsafeCoerce@). The result is exactly
--- @Intertwiner a c@: functoriality of @Hom@ holds /by construction/, including
--- the zero-block case where the middle rep drops a shared charge.
 compose
-  :: forall a b c. (KnownRep a, KnownRep b, KnownRep c)
+  :: forall a b c. (KnownRep U1 a, KnownRep U1 b, KnownRep U1 c)
   => Intertwiner b c -> Intertwiner a b -> Intertwiner a c
 compose (MkIntertwiner bc) (MkIntertwiner ab) =
   MkIntertwiner
-    (composeGo (repSing @a) (repSing @b) (repSing @c) ab
-       (bcIndex (repSing @b) (repSing @c) bc))
+    (composeGo (repSing @U1 @a) (repSing @U1 @b) (repSing @U1 @c) ab
+       (bcIndex (repSing @U1 @b) (repSing @U1 @c) bc))
 
--- | Intertwiners form a category: identity is 'mkIdHom', composition is the
--- singleton-recursive 'compose'. Now that 'compose' is total (no @unsafeCoerce@),
--- this instance is honest. The object constraint bundles everything @id@ and
--- @(.)@ need: a runtime rep singleton ('KnownRep'), the per-sector witnesses
--- ('U1RepList'), and the identity-hom builder.
-instance Category Intertwiner where
-  type Object Intertwiner a =
-    ( KnownRep a, U1RepList a, BuildIdHom (HomSectorList a a)
+instance Category (IntertwinerG U1) where
+  type Object (IntertwinerG U1) a =
+    ( RepLookup U1, KnownRep U1 a, U1RepList a, BuildIdHom (HomSectorList a a)
     , KnownNat (RepDim a)
     )
-  id = mkIdHom
+  id = mkIdHom @U1
   (.) = compose
 
--- | Representation space: one flat complex vector @C (RepDim r)@.
 newtype ToC (r :: U1Rep) = ToC (C (RepDim r))
 
 zeroRep :: KnownNat (RepDim r) => ToC r
@@ -293,32 +294,28 @@ instance (KnownZ z, KnownNat m) => ActsOnRep ('(z, m) ': '[]) where
 natValInt :: KnownNat n => Proxy n -> Int
 natValInt = fromIntegral . natVal
 
--- | @(offset, multiplicity)@ of charge @z@ in @q@, walking sectors in spine order.
-chargeSectorLoc :: forall (z :: Z) (q :: U1Rep). Sing z -> SRep q -> Maybe (Int, Int)
+chargeSectorLoc :: forall (z :: Z) (q :: Rep U1). Sing z -> SRep U1 q -> Maybe (Int, Int)
 chargeSectorLoc sz = go 0
   where
-    go :: forall q0. Int -> SRep q0 -> Maybe (Int, Int)
-    go _ SRepNil = Nothing
-    go !off (SRepCons @z2 @m (sz2 :: Sing z2) rest) =
+    go :: forall q0. Int -> SRep U1 q0 -> Maybe (Int, Int)
+    go _ SRepNilU1 = Nothing
+    go !off (SRepCons @z2 @m sz2 rest) =
       let mInt = natValInt (Proxy @m)
-      in case sZEq @z @z2 sz sz2 of
+      in case sZEq sz sz2 of
            ZEqTrue  -> Just (off, mInt)
            ZEqFalse -> go (off + mInt) rest
 
--- | Prefix offset of the sector at charge @z@ in rep @q@, if present.
-targetChargeOffset :: forall (z :: Z) (q :: U1Rep). Sing z -> SRep q -> Int
+targetChargeOffset :: forall (z :: Z) (q :: Rep U1). Sing z -> SRep U1 q -> Int
 targetChargeOffset sz sq = case chargeSectorLoc @z @q sz sq of
   Just (off, _) -> off
   Nothing ->
     error "targetChargeOffset: charge absent (unreachable for hom blocks)"
 
--- | Read a length-@n@ slice from flat vector @v@ starting at byte offset @off@.
 takeAtOffset :: forall n total. (KnownNat n, KnownNat total) => Int -> C total -> C n
 takeAtOffset off v =
   fromMaybe (error "takeAtOffset: slice out of range") $
     create (V.fromList (take (natValInt (Proxy @n)) (drop off (V.toList (extract v)))))
 
--- | Write @block@ into @vec@ at offset @off@ (target sectors do not overlap).
 writeAtOffset :: forall m total. (KnownNat m, KnownNat total) => Int -> C m -> C total -> C total
 writeAtOffset off block vec =
   fromMaybe (error "writeAtOffset: patch out of range") $
@@ -329,7 +326,6 @@ writeAtOffset off block vec =
     m = natValInt (Proxy @m)
     merged = take off xs ++ ys ++ drop (off + m) xs
 
--- | One compiled block: source/target offsets and a pre-built matrix.
 data CompiledStep where
   CompiledStep :: forall m n.
     (KnownNat m, KnownNat n) =>
@@ -341,15 +337,14 @@ runCompiledStep
 runCompiledStep (CompiledStep @m @n srcOff tgtOff mat) input output =
   writeAtOffset tgtOff (app mat (takeAtOffset @n srcOff input)) output
 
--- | Walk @SRep r@ in lockstep with the hom spine (same alignment as 'bcIndex').
 collectCompiledSteps
-  :: forall r q hom. SRep r -> SRep q -> IntertwinerSectors hom -> Int -> [CompiledStep]
-collectCompiledSteps SRepNil _ InterNil _ = []
-collectCompiledSteps SRepNil _ (InterCons _ _) _ =
+  :: forall r q hom. SRep U1 r -> SRep U1 q -> IntertwinerSectorsG U1 hom -> Int -> [CompiledStep]
+collectCompiledSteps SRepNilU1 _ InterNil _ = []
+collectCompiledSteps SRepNilU1 _ (InterCons _ _) _ =
   error "collectCompiledSteps: hom spine longer than source rep (unreachable)"
-collectCompiledSteps (SRepCons @z @srcMult (saz :: Sing z) srest) sq hom !srcOff =
+collectCompiledSteps (SRepCons @z @srcMult saz srest) sq hom !srcOff =
   let srcDim = natValInt (Proxy @srcMult)
-  in case sLookupMult saz sq of
+  in case sLookupMult @U1 saz sq of
        Absent -> collectCompiledSteps srest sq hom (srcOff + srcDim)
        Present _ -> case hom of
          InterCons blk homRest ->
@@ -360,59 +355,52 @@ collectCompiledSteps (SRepCons @z @srcMult (saz :: Sing z) srest) sq hom !srcOff
 collectCompiledSteps (SRepCons _ _) _ InterNil _ =
   error "collectCompiledSteps: source rep longer than hom spine (unreachable)"
 
--- | Compile an intertwiner to a flat @C (RepDim r) -> C (RepDim q)@ function.
--- Block matrices are built once; each application only slices and matmuls.
 compileIntertwiner
   :: forall r q.
-     ( KnownRep r, KnownRep q
+     ( KnownRep U1 r, KnownRep U1 q
      , KnownNat (RepDim r), KnownNat (RepDim q)
      )
-  => IntertwinerSectors (HomSectorList r q) -> C (RepDim r) -> C (RepDim q)
+  => IntertwinerSectorsG U1 (HomSectorList r q) -> C (RepDim r) -> C (RepDim q)
 compileIntertwiner sectors input =
   foldl (\acc step -> runCompiledStep step input acc) (konst 0) steps
   where
-    steps = collectCompiledSteps (repSing @r) (repSing @q) sectors 0
+    steps = collectCompiledSteps (repSing @U1 @r) (repSing @U1 @q) sectors 0
 
--- | Apply an intertwiner to a rep vector (@hom@ fixed by @r@ and @q@).
 class ApplyInterGo (hom :: [(Z, Nat, Nat)]) (r :: U1Rep) (q :: U1Rep) where
-  applyInterGo :: IntertwinerSectors hom -> ToC r -> ToC q
+  applyInterGo :: IntertwinerSectorsG U1 hom -> ToC r -> ToC q
 
 instance
-  ( KnownRep r, KnownRep q
+  ( KnownRep U1 r, KnownRep U1 q
   , KnownNat (RepDim r), KnownNat (RepDim q)
   , hom ~ HomSectorList r q
   ) => ApplyInterGo hom r q where
   applyInterGo sectors (ToC v) =
     ToC (compileIntertwiner @r @q sectors v)
 
--- | Apply an intertwiner to a rep vector (@hom@ fixed by @r@ and @q@).
 class ApplyIntertwiner (r :: U1Rep) (q :: U1Rep) where
   applyInter
-    :: IntertwinerSectors (HomSectorList r q) -> ToC r -> ToC q
+    :: IntertwinerSectorsG U1 (HomSectorList r q) -> ToC r -> ToC q
 
 instance ApplyInterGo (HomSectorList r q) r q => ApplyIntertwiner r q where
   applyInter = applyInterGo
 
 intertwinerLinear
   :: forall r q.
-     ( KnownRep r, KnownRep q
+     ( KnownRep U1 r, KnownRep U1 q
      , U1RepList r, U1RepList q, ApplyIntertwiner r q
      , KnownNat (RepDim r), KnownNat (RepDim q)
      )
   => Intertwiner r q
   -> LinearFunction (Complex Double) (ToC r) (ToC q)
 intertwinerLinear (MkIntertwiner sectors) =
-  let steps = collectCompiledSteps (repSing @r) (repSing @q) sectors 0
+  let steps = collectCompiledSteps (repSing @U1 @r) (repSing @U1 @q) sectors 0
       applyVec (v :: C (RepDim r)) =
         foldl (\acc step -> runCompiledStep step v acc) (konst 0) steps
   in LinearFunction (\(ToC v) -> ToC (applyVec v))
 
--- | Hom functor @Rep_{U(1)} -> Vect@: objects @r |-> ToC r@, morphisms via
--- compiled block matmul ('intertwinerLinear').
-instance Functor ToC Intertwiner (LinearFunction (Complex Double)) where
+instance Functor ToC (IntertwinerG U1) (LinearFunction (Complex Double)) where
   fmap = intertwinerLinear
 
--- | @TensorSpace@ delegates to flat @C (RepDim r)@ (no @HList@).
 instance KnownNat (RepDim r) => AdditiveGroup (ToC r) where
   ToC a ^+^ ToC b = ToC (a ^+^ b)
   zeroV = ToC zeroV
@@ -507,13 +495,6 @@ phase = MkIntertwiner (mkScalar (0 :+ 1))
 phaseSquared :: Intertwiner Pos1 Pos1
 phaseSquared = compose phase phase
 
--- | Composition through an /empty/ middle rep — the case the old @unsafeCoerce@
--- got wrong. @Pos1 -> '[] -> Pos1@: both legs are the (only) zero map to\/from
--- the empty rep, so the composite is the zero endomorphism of @Pos1@.
---
--- @HomSectorList Pos1 Pos1 ~ '[ '( 'Pos 1, 1, 1)]@, so the honest composite is
--- @InterCons (1×1 zero block) InterNil@ — NOT @InterNil@ (which is what
--- @unsafeCoerce@ produced, and which crashed when applied).
 posToEmpty :: Intertwiner Pos1 '[]
 posToEmpty = MkIntertwiner InterNil
 
@@ -526,11 +507,6 @@ zeroThroughEmpty = compose emptyToPos posToEmpty
 zeroThroughEmpty' ::  (ToC Pos1) -+> (ToC Pos1)
 zeroThroughEmpty' = fmap zeroThroughEmpty
 
--- zeroThroughEmpty'' ::  (ToC Pos1) +> (ToC Pos1)
--- zeroThroughEmpty'' = arr zeroThroughEmpty'
-
--- | Applying 'zeroThroughEmpty' yields the zero vector (the payoff: a genuine
--- zero block, applied without crashing).
 testZeroThroughEmpty :: ToC Pos1
 testZeroThroughEmpty =
   getLinearFunction (intertwinerLinear zeroThroughEmpty) repSpace1
@@ -573,7 +549,5 @@ negPhase =
     $ InterNil
     )
 
--- | Block-diagonal action: @+1@ on the @Pos@ sector, @i@ on the @Neg@ sector.
 testPosNegPhase :: ToC PosNeg1
 testPosNegPhase = getLinearFunction (intertwinerLinear negPhase) repPosNeg1
-
