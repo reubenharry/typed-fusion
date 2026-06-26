@@ -24,6 +24,7 @@ module Symmetry.Group
   , LookupMultGo
   , GroupSpine (..)
   , IntertwinerHom
+  , LookupMultG
   , HomSectorListU1
   , LookupMultU1
   , HomSectorListSU2
@@ -98,6 +99,10 @@ type family HomSectorListSU2 (r :: Rep SU2) (q :: Rep SU2) :: [(Nat, Nat, Nat)] 
 type family IntertwinerHom (g :: Group) (r :: Rep g) (q :: Rep g) :: [(Irreps g, Nat, Nat)] where
   IntertwinerHom U1 r q = HomSectorListU1 r q
   IntertwinerHom SU2 r q = HomSectorListSU2 r q
+
+type family LookupMultG (g :: Group) (j :: Irreps g) (q :: Rep g) :: Maybe Nat where
+  LookupMultG U1 z q = LookupMultU1 z q
+  LookupMultG SU2 j q = LookupMultSU2 j q
 
 class GroupSpine (g :: Group) where
   type HomSectorListK (r :: Rep g) (q :: Rep g) :: [(Irreps g, Nat, Nat)]

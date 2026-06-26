@@ -25,35 +25,52 @@ module TensorNetwork.MPS.FinSupp3.Properties
   , prop_mpsFromFlatRoundTripVP3
   , prop_mpsToFlatMatchesReferenceVP2
   , prop_mpsToFlatMatchesReferenceVP3
+  , prop_leftTransferMatchesReferenceVP2
+  , prop_bulkTransferMatchesReferenceVP2
+  , prop_rightTransferMatchesReferenceVP2
   , prop_mpoApplyFlatMatchesReferenceVP2
   , prop_composeMPOMatchesFlatVP2
+  , prop_composeMPOElementMatchesSumVP2
+  , prop_mpoFromElementRoundTripVP2
   , prop_identityMPOVP2
+  , prop_identityMPOElementsVP2
+  , prop_tensorEncodeVP2
+  , prop_amplitudeEncodeVP2
+  , prop_amplitudeMatchesDecomposeVP2
   ) where
 
 import Data.Complex (Complex ((:+)))
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import GHC.TypeLits (KnownNat, natVal)
-import Math.LinearMap.Category (LinearMap (..), Tensor (..), getLinearMap)
+import qualified Control.Arrow.Constrained as AC
+import Math.LinearMap.Category (LinearMap (..), Tensor (..), getLinearMap, (⊗))
 import Math.LinearMap.Category.Instances ()
 import Numeric.LinearAlgebra.Static (C, Sized (create))
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import qualified Numeric.LinearAlgebra as LA
+import Data.VectorSpace.Free.FiniteSupportedSequence (FinSuppSeq (..))
 import qualified Test.QuickCheck as QC
 import qualified Control.Applicative as App
 import Control.Monad (replicateM)
 import Data.Basis (HasBasis (basisValue), decompose')
+import Data.Finite (finites)
 import Data.VectorSpace (AdditiveGroup ((^+^)))
 import TensorNetwork.MPS.FinSupp3.Internal
   ( Field, Bond (..), LeftSite (..), BulkSite (..), RightSite (..)
   , OpLeft (..), OpBulk (..), OpRight (..), MPS (..), MPO (..), Physical3
-  , PhysicalDim3 )
+  , PhysicalDim3, one1, basisCvp )
+import TensorNetwork.MPS.FinSupp3.Contraction
+  ( leftTransfer, bulkTransfer, rightTransfer )
 import TensorNetwork.MPS.FinSupp3.Physical
-  ( mpsToFlat, mpsToTensor, mpsFromFlat, canonicalMPS, physicalToFlat
+  ( mpsToFlat, mpsToTensor, mpsFromFlat, mpsFromPhysical, canonicalMPS, physicalToFlat
   , allPhysicalBasis )
-import TensorNetwork.MPS.FinSupp3.Reference (mpsToFlatReference, mpoApplyFlatReference)
-import TensorNetwork.MPS.FinSupp3.MPO (identityMPO, composeMPO, mpoApplyMPS, mpoApplyFlat)
+import TensorNetwork.MPS.FinSupp3.Reference
+  ( mpsToFlatReference, mpoApplyFlatReference, amplitude, mpoElement
+  , applyLeftSite, applyBulkSite, applyRightSite, cvpCoeff )
+import TensorNetwork.MPS.FinSupp3.Bond (bondCoeff)
+import TensorNetwork.MPS.FinSupp3.MPO (identityMPO, composeMPO, mpoApplyMPS, mpoApplyFlat, mpoFromElement)
 
 smallComplex :: QC.Gen Field
 smallComplex = do
@@ -75,7 +92,7 @@ genBond = do
 
 genLeftSite :: forall p. KnownNat p => QC.Gen (LeftSite p)
 genLeftSite = do
-  n <- fromIntegral (natVal (Proxy @p))
+  let n = fromIntegral (natVal (Proxy @p))
   LeftSite . LinearMap App.<$> V.replicateM n genBond
 
 genBulkSite :: forall p. KnownNat p => QC.Gen (BulkSite p)
@@ -97,7 +114,7 @@ genMPS = do
 
 genOpLeft :: forall p. KnownNat p => QC.Gen (OpLeft p)
 genOpLeft = do
-  n <- fromIntegral (natVal (Proxy @p))
+  let n = fromIntegral (natVal (Proxy @p))
   chi <- QC.choose (0, 3)
   OpLeft . LinearMap App.<$> V.replicateM n (Tensor App.<$> replicateM chi genCvp)
 
@@ -118,6 +135,46 @@ genMPO = do
   c <- genOpBulk @p
   r <- genOpRight @p
   App.pure (MPO l c r)
+
+bondCoeffsMatch :: Bond -> Bond -> Bool
+bondCoeffsMatch a b =
+  let len = max (bondActiveLen a) (bondActiveLen b)
+  in all (\i -> bondCoeff a i == bondCoeff b i) [0 .. len - 1]
+
+bondActiveLen :: Bond -> Int
+bondActiveLen (FinSuppSeq v) =
+  if U.null v then 0 else go (U.length v - 1)
+  where
+    go i
+      | i < 0        = 0
+      | v U.! i /= 0 = i + 1
+      | otherwise    = go (i - 1)
+
+prop_amplitudeMatchesDecomposeVP2 :: QC.Property
+prop_amplitudeMatchesDecomposeVP2 =
+  QC.forAll (genMPS @2) $ \m ->
+    QC.conjoin
+      [ amplitude m s1 s2 s3
+          QC.=== decompose' (mpsToTensor m)
+               (finites @2 !! s1, (finites @2 !! s2, finites @2 !! s3))
+      | s1 <- [0 .. 1], s2 <- [0 .. 1], s3 <- [0 .. 1]
+      ]
+
+prop_amplitudeEncodeVP2 :: QC.Property
+prop_amplitudeEncodeVP2 =
+  QC.forAll (genMPS @2) $ \m ->
+    let t = mpsToTensor m
+        m' = mpsFromPhysical t
+    in QC.conjoin
+         [ amplitude m' s1 s2 s3 QC.=== amplitude m s1 s2 s3
+         | s1 <- [0 .. 1], s2 <- [0 .. 1], s3 <- [0 .. 1]
+         ]
+
+prop_tensorEncodeVP2 :: QC.Property
+prop_tensorEncodeVP2 =
+  QC.forAll (genMPS @2) $ \m ->
+    physicalToFlat (mpsToTensor (mpsFromPhysical (mpsToTensor m)))
+      QC.=== physicalToFlat (mpsToTensor (m :: MPS 2))
 
 prop_addThenFlatten
   :: ( KnownNat p, KnownNat (PhysicalDim3 p) ) => MPS p -> MPS p -> QC.Property
@@ -178,6 +235,27 @@ prop_mpsToFlatMatchesReferenceVP3 :: QC.Property
 prop_mpsToFlatMatchesReferenceVP3 =
   QC.forAll (genMPS @3) $ \m -> mpsToFlat m QC.=== mpsToFlatReference m
 
+prop_leftTransferMatchesReferenceVP2 :: QC.Property
+prop_leftTransferMatchesReferenceVP2 =
+  QC.forAll (genLeftSite @2) $ \site ->
+  QC.forAll (QC.choose (0, 1)) $ \s ->
+    bondCoeffsMatch (leftTransfer site AC.$ (one1 ⊗ basisCvp @2 s)) (applyLeftSite site s)
+
+prop_bulkTransferMatchesReferenceVP2 :: QC.Property
+prop_bulkTransferMatchesReferenceVP2 =
+  QC.forAll (genBulkSite @2) $ \site ->
+  QC.forAll genBond $ \bond ->
+  QC.forAll (QC.choose (0, 1)) $ \s ->
+    bondCoeffsMatch (bulkTransfer site AC.$ (bond ⊗ basisCvp @2 s)) (applyBulkSite site bond s)
+
+prop_rightTransferMatchesReferenceVP2 :: QC.Property
+prop_rightTransferMatchesReferenceVP2 =
+  QC.forAll (genRightSite @2) $ \site ->
+  QC.forAll genBond $ \bond ->
+  QC.forAll (QC.choose (0, 1)) $ \s ->
+    cvpCoeff (rightTransfer site AC.$ (bond ⊗ basisCvp @2 s)) 0
+      QC.=== applyRightSite site bond s
+
 prop_mpoApplyFlatMatchesReferenceVP2 :: QC.Property
 prop_mpoApplyFlatMatchesReferenceVP2 =
   QC.forAll (genMPO @2) $ \h ->
@@ -192,6 +270,75 @@ prop_composeMPOMatchesFlatVP2 =
         mpsToFlat (mpoApplyMPS (composeMPO h1 h2) m)
           QC.=== mpoApplyFlat h1 (mpoApplyFlat h2 (mpsToFlat m))
 
+allIndexTriples :: [Int] -> [(Int, Int, Int)]
+allIndexTriples ix = [(i, j, k) | i <- ix, j <- ix, k <- ix]
+
+allIndexSextuples :: [Int] -> [(Int, Int, Int, Int, Int, Int)]
+allIndexSextuples ix =
+  [ (t1, t2, t3, s1, s2, s3)
+  | t1 <- ix, t2 <- ix, t3 <- ix, s1 <- ix, s2 <- ix, s3 <- ix
+  ]
+
+composedMPOElement
+  :: MPO 2 -> MPO 2 -> Int -> Int -> Int -> Int -> Int -> Int -> Field
+composedMPOElement h1 h2 t1 t2 t3 s1 s2 s3 =
+  sum
+    [ mpoElement h1 t1 t2 t3 u1 u2 u3
+        * mpoElement h2 u1 u2 u3 s1 s2 s3
+    | u1 <- [0, 1], u2 <- [0, 1], u3 <- [0, 1]
+    ]
+
+prop_composeMPOElementMatchesSumVP2 :: QC.Property
+prop_composeMPOElementMatchesSumVP2 =
+  QC.forAll (genMPO @2) $ \h1 ->
+    QC.forAll (genMPO @2) $ \h2 ->
+      QC.conjoin
+        [ mpoElement (composeMPO h1 h2) t1 t2 t3 s1 s2 s3
+            QC.=== composedMPOElement h1 h2 t1 t2 t3 s1 s2 s3
+        | (t1, t2, t3, s1, s2, s3) <- allIndexSextuples [0, 1]
+        ]
+
+genSparseMPOTerms :: QC.Gen [((Int, Int, Int, Int, Int, Int), Field)]
+genSparseMPOTerms = do
+  n <- QC.choose (1, 6)
+  replicateM n $ do
+    t1 <- QC.elements [0, 1]
+    t2 <- QC.elements [0, 1]
+    t3 <- QC.elements [0, 1]
+    s1 <- QC.elements [0, 1]
+    s2 <- QC.elements [0, 1]
+    s3 <- QC.elements [0, 1]
+    c <- smallComplex
+    App.pure ((t1, t2, t3, s1, s2, s3), c)
+
+sparseMPOElementFromTerms
+  :: [((Int, Int, Int, Int, Int, Int), Field)]
+  -> Int -> Int -> Int -> Int -> Int -> Int -> Field
+sparseMPOElementFromTerms terms t1 t2 t3 s1 s2 s3 =
+  sum
+    [ c
+    | ((a, b, c', d, e, f), c) <- terms
+    , a == t1, b == t2, c' == t3, d == s1, e == s2, f == s3
+    ]
+
+prop_mpoFromElementRoundTripVP2 :: QC.Property
+prop_mpoFromElementRoundTripVP2 =
+  QC.forAll genSparseMPOTerms $ \terms ->
+    let f = sparseMPOElementFromTerms terms
+        h = mpoFromElement @2 f
+    in QC.conjoin
+         [ mpoElement h t1 t2 t3 s1 s2 s3 QC.=== f t1 t2 t3 s1 s2 s3
+         | (t1, t2, t3, s1, s2, s3) <- allIndexSextuples [0, 1]
+         ]
+
 prop_identityMPOVP2 :: QC.Property
 prop_identityMPOVP2 =
   QC.forAll (genMPS @2) $ \m -> mpsToFlat (mpoApplyMPS (identityMPO @2) m) QC.=== mpsToFlat m
+
+prop_identityMPOElementsVP2 :: QC.Property
+prop_identityMPOElementsVP2 =
+  QC.conjoin
+    [ mpoElement (identityMPO @2) t1 t2 t3 s1 s2 s3
+        QC.=== (if t1 == s1 && t2 == s2 && t3 == s3 then 1 else 0)
+    | (t1, t2, t3, s1, s2, s3) <- allIndexSextuples [0, 1]
+    ]

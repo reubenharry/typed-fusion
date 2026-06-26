@@ -41,6 +41,23 @@ import TensorNetwork.MPS.Fixed3
   , prop_canonicalMPSRoundTripP2
   , prop_canonicalMPSRoundTripP3
   )
+import TensorNetwork.MPS.FinSupp3
+  ( prop_addThenFlattenVP2
+  , prop_addThenFlattenVP3
+  , prop_basisMPSMatchesPhysicalVP2
+  , prop_basisMPSMatchesPhysicalVP3
+  , prop_decomposePrimeMatchesPhysicalVP2
+  , prop_decomposePrimeMatchesPhysicalVP3
+  , prop_physicalRecomposeVP2
+  , prop_physicalRecomposeVP3
+  , prop_mpsFromFlatRoundTripVP2
+  , prop_mpsFromFlatRoundTripVP3
+  , prop_mpsToFlatMatchesReferenceVP2
+  , prop_mpsToFlatMatchesReferenceVP3
+  , prop_mpoApplyFlatMatchesReferenceVP2
+  , prop_composeMPOMatchesFlatVP2
+  , prop_identityMPOVP2
+  )
 import TensorNetwork.DMRG.Fixed3
   ( DmrgResult (..)
   , prop_effectiveHMatchesInner
@@ -122,6 +139,32 @@ main = do
   requireQC =<< QC.quickCheckResult prop_applySiteMatchesCoeff
   putStrLn "Categorical MPO site apply matches coefficient oracle..."
   requireQC =<< QC.quickCheckResult prop_applyOpSiteMatchesCoeff
+  putStrLn "FinSupp MPS addition commutes with flattening (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_addThenFlattenVP2
+  putStrLn "FinSupp MPS addition commutes with flattening (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_addThenFlattenVP3
+  putStrLn "FinSupp basis MPS matches Physical3 (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_basisMPSMatchesPhysicalVP2
+  putStrLn "FinSupp basis MPS matches Physical3 (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_basisMPSMatchesPhysicalVP3
+  putStrLn "FinSupp decompose' matches Physical3 (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_decomposePrimeMatchesPhysicalVP2
+  putStrLn "FinSupp decompose' matches Physical3 (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_decomposePrimeMatchesPhysicalVP3
+  putStrLn "FinSupp canonicalMPS round-trips (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_physicalRecomposeVP2
+  putStrLn "FinSupp canonicalMPS round-trips (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_physicalRecomposeVP3
+  putStrLn "FinSupp mpsFromFlat round-trips (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripVP2
+  putStrLn "FinSupp mpsFromFlat round-trips (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripVP3
+  putStrLn "FinSupp mpsToFlat matches reference (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_mpsToFlatMatchesReferenceVP2
+  putStrLn "FinSupp mpsToFlat matches reference (vp = 3)..."
+  requireQC =<< QC.quickCheckResult prop_mpsToFlatMatchesReferenceVP3
+  putStrLn "FinSupp mpoApplyMPS matches flat reference (vp = 2)..."
+  requireQC =<< QC.quickCheckResult prop_mpoApplyFlatMatchesReferenceVP2
   putStrLn "Transfer step matches explicit matrix formula..."
   requireQC =<< QC.quickCheckResult prop_transferStepMatchesMatrix
   putStrLn "conjugateSite matches entry-wise matrix conjugation..."

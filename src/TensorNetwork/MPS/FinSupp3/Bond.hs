@@ -25,6 +25,10 @@ module TensorNetwork.MPS.FinSupp3.Bond
   , fuseBondPair
   , bondCoeff
   , applyBondMap
+  , addBondPadded
+  , scaleBond
+  , applyBulkSiteBond
+  , applyBulkBondPhys
   ) where
 
 import qualified Data.Vector as V
@@ -35,16 +39,57 @@ import Math.LinearMap.Category
   ( type (+>), type (⊗), LinearMap (..), Tensor (..), AdditiveGroup (..), getLinearMap
   , VectorSpace ((*^)), Scalar, sumV )
 import GHC.TypeLits (KnownNat)
-import Numeric.LinearAlgebra.Static (C)
+import Numeric.LinearAlgebra.Static (C, Sized (extract))
+import qualified Data.Vector.Storable as VS
 import TensorNetwork.MPS.FinSupp3.Internal
-  ( Field, Bond, BulkSite (..), RightSite (..), LeftSite (..), MPS (..) )
+  ( Field, Bond, BulkSite (..), RightSite (..), LeftSite (..), MPS (..), vpDim )
 
 bondCoeff :: Bond -> Int -> Field
 bondCoeff (FinSuppSeq v) i = if i < U.length v then v U.! i else 0
 
+bondLength :: Bond -> Int
+bondLength (FinSuppSeq v) = U.length v
+
+scaleBond :: Field -> Bond -> Bond
+scaleBond μ (FinSuppSeq v) = FinSuppSeq (U.map (μ *) v)
+
+addBondPadded :: Bond -> Bond -> Bond
+addBondPadded (FinSuppSeq a) (FinSuppSeq b) =
+  let n = max (U.length a) (U.length b)
+  in FinSuppSeq $
+       U.generate n $ \i ->
+         (if i < U.length a then a U.! i else 0)
+           + (if i < U.length b then b U.! i else 0)
+
 applyBondMap :: (VectorSpace w, Scalar w ~ Field) => Bond -> Bond +> w -> w
 applyBondMap b (LinearMap imgs) =
-  sumV [ bondCoeff b i *^ imgs !! i | i <- [0 .. length imgs - 1] ]
+  let n = max (bondLength b) (length imgs)
+  in sumV
+       [ bondCoeff b i *^ imgAt i
+       | i <- [0 .. n - 1]
+       ]
+  where
+    imgAt i
+      | i < length imgs = imgs !! i
+      | otherwise       = zeroV
+
+applyBulkSiteBond :: KnownNat p => BulkSite p -> Bond -> Int -> Bond
+applyBulkSiteBond (BulkSite (LinearMap imgs)) bond s =
+  foldr addBondPadded (FinSuppSeq U.empty) $
+    [ scaleBond (bondCoeff bond i) (rows V.! s)
+    | (i, Tensor rows) <- zip [0 ..] imgs
+    ]
+
+cvpCoeff :: KnownNat p => C p -> Int -> Field
+cvpCoeff v s = (VS.toList (extract v)) !! s
+
+-- | Apply a bulk site to a bond vector and full physical vector.
+applyBulkBondPhys :: forall p. KnownNat p => BulkSite p -> Bond -> C p -> Bond
+applyBulkBondPhys site bond phys =
+  sumV
+    [ cvpCoeff phys s *^ applyBulkSiteBond site bond s
+    | s <- [0 .. vpDim @p - 1]
+    ]
 
 activeDimBond :: Bond -> Int
 activeDimBond (FinSuppSeq v)

@@ -11,6 +11,7 @@ module TensorNetwork.MPS.FinSupp3.MPO
   , composeMPO
   , mpoApplyMPS
   , mpoApplyFlat
+  , mpoFromElement
   ) where
 
 import Data.Maybe (fromMaybe)
@@ -19,9 +20,9 @@ import Math.LinearMap.Category.Instances ()
 import Numeric.LinearAlgebra.Static (C, Sized (..), create)
 import GHC.TypeLits (KnownNat)
 import qualified Data.Vector as V
-import qualified Data.Vector.Unboxed as U
+import qualified Numeric.LinearAlgebra as LA
 import TensorNetwork.MPS.FinSupp3.Internal
-  ( Field, Bond, OpLeft (..), OpBulk (..), OpRight (..), MPO (..)
+  ( Field, Bond, OpLeft (..), OpBulk (..), OpRight (..), MPO (..), MPS (..)
   , mpo3, basisCvp, vpDim, PhysicalDim3 )
 import TensorNetwork.MPS.FinSupp3.Reference (mpoElement, mpoApplyFlatReference)
 import TensorNetwork.MPS.FinSupp3.Physical (mpsFromFlat, mpsToFlat)
@@ -34,7 +35,7 @@ mpoApplyFlat
   :: forall p. (KnownNat p, KnownNat (PhysicalDim3 p)) => MPO p -> C (PhysicalDim3 p) -> C (PhysicalDim3 p)
 mpoApplyFlat = mpoApplyFlatReference
 
-composeMPO :: KnownNat p => MPO p -> MPO p -> MPO p
+composeMPO :: forall p. KnownNat p => MPO p -> MPO p -> MPO p
 composeMPO h1 h2 = mpoFromElement composed
   where
     composed t1 t2 t3 s1 s2 s3 =
@@ -45,13 +46,13 @@ composeMPO h1 h2 = mpoFromElement composed
         , u3 <- [0 .. vpDim @p - 1]
         ]
 
-identityMPO :: KnownNat p => MPO p
+identityMPO :: forall p. KnownNat p => MPO p
 identityMPO =
   mpoFromElement $ \t1 t2 t3 s1 s2 s3 ->
     if t1 == s1 && t2 == s2 && t3 == s3 then 1 else 0
 
 mpoFromElement
-  :: KnownNat p
+  :: forall p. KnownNat p
   => (Int -> Int -> Int -> Int -> Int -> Int -> Field)
   -> MPO p
 mpoFromElement elem =
@@ -67,23 +68,23 @@ mpoFromElement elem =
        [] -> mpo3 (OpLeft zeroV) (OpBulk zeroV) (OpRight zeroV)
        _  ->
          mpo3
-           (OpLeft (LinearMap (V.toList (mpoLeftImgs @p terms))))
+           (OpLeft (LinearMap (mpoLeftImgs @p terms)))
            (OpBulk (LinearMap (mpoCenterImgs @p terms)))
-           (OpRight (LinearMap (mpoRightImgs terms)))
+           (OpRight (LinearMap (mpoRightImgs @p terms)))
 
 mpoLeftImgs
   :: forall p. KnownNat p => [((Int, Int, Int, Int, Int, Int), Field)] -> V.Vector (Bond ⊗ C p)
 mpoLeftImgs terms =
   V.generate (vpDim @p) $ \t ->
-    Tensor (V.fromList [ mpoLeftRow @p t r terms | r <- [0 .. length terms - 1] ])
+    Tensor [ mpoLeftRow @p t r terms | r <- [0 .. length terms - 1] ]
 
 mpoLeftRow
   :: forall p. KnownNat p => Int -> Int -> [((Int, Int, Int, Int, Int, Int), Field)] -> C p
 mpoLeftRow t r terms =
   fromMaybe (error "mpoLeftRow") $
     create
-      ( U.fromList
-          [ sum [ c | (i, ((t1, _, _, s1, _, _), c)) <- zip [0 ..] terms, t1 == t, i == r, s1 == s ]
+      ( LA.fromList
+          [ sum [ 1 | (i, ((t1, _, _, s1, _, _), _)) <- zip [0 ..] terms, t1 == t, i == r, s1 == s ]
           | s <- [0 .. vpDim @p - 1]
           ]
       )
@@ -91,24 +92,25 @@ mpoLeftRow t r terms =
 mpoCenterImgs
   :: forall p. KnownNat p => [((Int, Int, Int, Int, Int, Int), Field)] -> [Bond ⊗ C p]
 mpoCenterImgs terms =
-  [ Tensor (V.generate (length terms) $ \r ->
-      if r == i
-        then fromMaybe (error "mpoCenterImgs") (create (coeffRow @p s2 c))
-        else zeroCvp @p
-    )
-  | (i, ((_, _, _, _, s2, _), c)) <- zip [0 ..] terms
+  [ Tensor
+      [ if r == i
+          then fromMaybe (error "mpoCenterImgs") (create (coeffRow s2 1))
+          else zeroCvp
+      | r <- [0 .. length terms - 1]
+    ]
+  | (i, ((_, _, _, _, s2, _), _)) <- zip [0 ..] terms
   ]
   where
     coeffRow s2 c =
-      U.fromList [ if s == s2 then c else 0 | s <- [0 .. vpDim @p - 1] ]
+      LA.fromList [ if s == s2 then c else 0 | s <- [0 .. vpDim @p - 1] ]
     zeroCvp :: KnownNat p => C p
-    zeroCvp = fromMaybe (error "zeroCvp") (create (U.replicate (vpDim @p) 0))
+    zeroCvp = fromMaybe (error "zeroCvp") (create (LA.fromList (replicate (vpDim @p) 0)))
 
 mpoRightImgs :: forall p. KnownNat p => [((Int, Int, Int, Int, Int, Int), Field)] -> [C p]
 mpoRightImgs terms =
-  [ fromMaybe (error "mpoRightImgs") (create (coeffRow @p s3 c))
+  [ fromMaybe (error "mpoRightImgs") (create (coeffRow s3 c))
   | ((_, _, _, _, _, s3), c) <- terms
   ]
   where
-    coeffRow s3 c =
-      U.fromList [ if s == s3 then c else 0 | s <- [0 .. vpDim @p - 1] ]
+    coeffRow t3 c =
+      LA.fromList [ if s == t3 then c else 0 | s <- [0 .. vpDim @p - 1] ]

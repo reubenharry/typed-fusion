@@ -80,6 +80,7 @@ library
         TensorNetwork.DMRG.Fixed3
         TensorNetwork.DMRG.Fixed3SVD
         TensorNetwork.MPS.Fixed3
+        TensorNetwork.MPS.FinSupp3
         TensorNetwork.DMRG.Concrete
         GroundState
         -- Off-roadmap experiments / scratch (kept building, see src/Experiments/)
@@ -98,6 +99,15 @@ library
     other-modules:
         TensorNetwork.MPS.Fixed3.Internal
         TensorNetwork.MPS.Fixed3.Reference
+        TensorNetwork.MPS.FinSupp3.Internal
+        TensorNetwork.MPS.FinSupp3.Bond
+        TensorNetwork.MPS.FinSupp3.VectorSpace
+        TensorNetwork.MPS.FinSupp3.Physical
+        TensorNetwork.MPS.FinSupp3.Contraction
+        TensorNetwork.MPS.FinSupp3.Reference
+        TensorNetwork.MPS.FinSupp3.MPO
+        TensorNetwork.MPS.FinSupp3.InnerSpace
+        TensorNetwork.MPS.FinSupp3.Properties
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -185,6 +195,44 @@ executable groundstate-smoke
 executable effective-hamiltonian-smoke
     import:           warnings
     main-is:          effective_hamiltonian_smoke.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum
+    default-language: GHC2021
+
+executable finsupp-debug-tensor
+    import:           warnings
+    main-is:          finsupp_debug_tensor.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum
+    default-language: GHC2021
+
+executable finsupp-contract-test
+    import:           warnings
+    main-is:          finsupp_contract_test.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        QuickCheck
+    default-language: GHC2021
+
+executable finsupp-smoke
+    import:           warnings
+    main-is:          finsupp_smoke.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        QuickCheck
+    default-language: GHC2021
+
+executable debug-finsupp-basis
+    import:           warnings
+    main-is:          debug_finsupp_basis.hs
     hs-source-dirs:   scripts
     build-depends:
         base ^>=4.19.2.0,

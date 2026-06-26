@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -47,7 +49,7 @@ instance InnerSpace Bond where
 bondToC :: forall n. KnownNat n => Bond -> C n
 bondToC (FinSuppSeq v) =
   fromMaybe (error "bondToC: dimension too small for bond support") $
-    create (LA.fromList (padTo n (U.toList v)))
+    create (LA.fromList (padTo dim (U.toList v)))
   where
-    n = fromIntegral (natVal (Proxy @n))
+    dim = fromIntegral (natVal (Proxy @n))
     padTo k xs = xs ++ replicate (max 0 (k - length xs)) 0

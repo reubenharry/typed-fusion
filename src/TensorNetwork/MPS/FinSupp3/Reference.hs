@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -21,12 +22,12 @@ module TensorNetwork.MPS.FinSupp3.Reference
   , cvpCoeff
   ) where
 
-import Prelude hiding (($))
-import Control.Arrow.Constrained (($))
+import qualified Control.Arrow.Constrained as AC
 import Math.LinearMap.Category (type (⊗), Tensor (..))
 import Math.LinearMap.Category.Instances ()
-import Numeric.LinearAlgebra.Static (C, Sized (unwrap, fromList, extract))
+import Numeric.LinearAlgebra.Static (C, Sized (fromList, extract))
 import GHC.TypeLits (KnownNat)
+import Data.VectorSpace.Free.FiniteSupportedSequence (FinSuppSeq (..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as VS
@@ -34,39 +35,42 @@ import TensorNetwork.MPS.FinSupp3.Internal
   ( Bond (..), Field, LeftSite (..), BulkSite (..), RightSite (..)
   , OpLeft (..), OpBulk (..), OpRight (..), MPS (..), MPO (..)
   , withMPS3, withMPO3, basisCvp, vpDim, PhysicalDim3 )
-import TensorNetwork.MPS.FinSupp3.Bond (applyBondMap)
+import TensorNetwork.MPS.FinSupp3.Bond (applyBondMap, applyBulkSiteBond)
 
 cvpCoeff :: KnownNat p => C p -> Int -> Field
-cvpCoeff v s = (VS.toList (unwrap (extract v))) !! s
+cvpCoeff v s = (VS.toList (extract v)) !! s
 
-codomainBondRows :: KnownNat p => Bond ⊗ C p -> V.Vector (C p)
-codomainBondRows (Tensor rows) = rows
+-- | @Bond ⊗ C p@ is a list of @C p@ (one per bond index).
+bondTensorRows :: Bond ⊗ C p -> [C p]
+bondTensorRows (Tensor rows) = rows
 
 applyLeftSite :: forall p. KnownNat p => LeftSite p -> Int -> Bond
-applyLeftSite (LeftSite l) s = l $ basisCvp @p s
+applyLeftSite (LeftSite l) s = (AC.$) l (basisCvp @p s)
+
+-- | @C p ⊗ Bond@ is a vector of bond rows (one per physical index).
+physicalBondRow :: KnownNat p => C p ⊗ Bond -> Int -> Bond
+physicalBondRow (Tensor rows) s = rows V.! s
 
 applyBulkSite :: KnownNat p => BulkSite p -> Bond -> Int -> Bond
-applyBulkSite (BulkSite c) bond s =
-  let Tensor rows = applyBondMap bond (bulkLin c)
-  in rows V.! s
+applyBulkSite site bond s = applyBulkSiteBond site bond s
 
 applyRightSite :: KnownNat p => RightSite p -> Bond -> Int -> Field
-applyRightSite (RightSite r) bond s = cvpCoeff (applyBondMap bond (rightLin r)) s
+applyRightSite (RightSite r) bond s = cvpCoeff (applyBondMap bond r) s
 
 applyOpLeft :: forall p. KnownNat p => OpLeft p -> Int -> Int -> Bond
 applyOpLeft (OpLeft op) t s =
-  let rows = codomainBondRows (opLeftLin op $ basisCvp @p t)
+  let rows = bondTensorRows ((AC.$) op (basisCvp @p t))
   in FinSuppSeq $
-       U.fromList [ cvpCoeff (rows V.! r) s | r <- [0 .. V.length rows - 1] ]
+       U.fromList [ cvpCoeff (rows !! r) s | r <- [0 .. length rows - 1] ]
 
 applyOpBulk :: KnownNat p => OpBulk p -> Bond -> Int -> Int -> Bond
 applyOpBulk (OpBulk op) wl t s =
-  let rows = codomainBondRows (applyBondMap wl (opBulkLin op))
+  let rows = bondTensorRows (applyBondMap wl op)
   in FinSuppSeq $
-       U.fromList [ cvpCoeff (rows V.! r) s | r <- [0 .. V.length rows - 1] ]
+       U.fromList [ cvpCoeff (rows !! r) s | r <- [0 .. length rows - 1] ]
 
 applyOpRight :: KnownNat p => OpRight p -> Bond -> Int -> Int -> Field
-applyOpRight (OpRight op) wl _ s = cvpCoeff (applyBondMap wl (opRightLin op)) s
+applyOpRight (OpRight op) wl _ s = cvpCoeff (applyBondMap wl op) s
 
 amplitude :: KnownNat p => MPS p -> Int -> Int -> Int -> Field
 amplitude mps s1 s2 s3 =
@@ -94,7 +98,7 @@ mpoElement mpo t1 t2 t3 s1 s2 s3 =
         w2 = applyOpBulk c w1 t2 s2
     in applyOpRight r w2 t3 s3
 
-flatCoeff :: forall p. KnownNat p => C (PhysicalDim3 p) -> Int -> Int -> Int -> Field
+flatCoeff :: forall p. (KnownNat p, KnownNat (PhysicalDim3 p)) => C (PhysicalDim3 p) -> Int -> Int -> Int -> Field
 flatCoeff v s1 s2 s3 = cvpCoeff v (flatIndex3 (vpDim @p) s1 s2 s3)
 
 mpoApplyFlatReference
@@ -102,8 +106,8 @@ mpoApplyFlatReference
 mpoApplyFlatReference mpo v =
   fromList
     [ sum
-        [ mpoElement mpo t1 t2 t3 s1 s2 s3 * flatCoeff v s1 s2 s3
-        | t1 <- [0 .. vp - 1], t2 <- [0 .. vp - 1], t3 <- [0 .. vp - 1]
+        [ mpoElement mpo t1 t2 t3 s1 s2 s3 * flatCoeff @p v s1 s2 s3
+        | s1 <- [0 .. vp - 1], s2 <- [0 .. vp - 1], s3 <- [0 .. vp - 1]
         ]
-    | s3 <- [0 .. vp - 1], s2 <- [0 .. vp - 1], s1 <- [0 .. vp - 1] ]
+    | t3 <- [0 .. vp - 1], t2 <- [0 .. vp - 1], t1 <- [0 .. vp - 1] ]
   where vp = vpDim @p

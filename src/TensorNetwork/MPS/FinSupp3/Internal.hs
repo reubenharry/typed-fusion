@@ -95,6 +95,15 @@ withMPS3 (MPS l c r) k = k l c r
 withMPO3 :: MPO3 p -> (OpLeft p -> OpBulk p -> OpRight p -> a) -> a
 withMPO3 (MPO l c r) k = k l c r
 
+instance Show (LeftSite p) where show _ = "LeftSite"
+instance Show (BulkSite p) where show _ = "BulkSite"
+instance Show (RightSite p) where show _ = "RightSite"
+instance Show (OpLeft p) where show _ = "OpLeft"
+instance Show (OpBulk p) where show _ = "OpBulk"
+instance Show (OpRight p) where show _ = "OpRight"
+instance Show (MPS p) where show _ = "MPS"
+instance Show (MPO p) where show _ = "MPO"
+
 vpDim :: forall p. KnownNat p => Int
 vpDim = fromIntegral (natVal (Proxy @p))
 

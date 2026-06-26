@@ -34,7 +34,7 @@ data SRep (g :: Group) (r :: Rep g) where
   SRepNilU1   :: SRep U1 '[]
   SRepNilSU2  :: SRep SU2 '[]
   SRepCons    :: forall z m rs. KnownNat m => Sing z -> SRep U1 rs -> SRep U1 ('(z, m) ': rs)
-  SRepConsSU2 :: forall j m rs. KnownNat m => Sing j -> SRep SU2 rs -> SRep SU2 ('(j, m) ': rs)
+  SRepConsSU2 :: forall j m rs. (KnownNat j, KnownNat m) => Sing j -> SRep SU2 rs -> SRep SU2 ('(j, m) ': rs)
 
 -- | Materialize the 'SRep' singleton for a statically-known rep.
 class KnownRep (g :: Group) (r :: Rep g) where
@@ -49,5 +49,5 @@ instance (SingI z, KnownNat m, KnownRep U1 rs) => KnownRep U1 ('(z, m) ': rs) wh
 instance KnownRep SU2 '[] where
   repSing = SRepNilSU2
 
-instance (SingI j, KnownNat m, KnownRep SU2 rs) => KnownRep SU2 ('(j, m) ': rs) where
+instance (SingI j, KnownNat j, KnownNat m, KnownRep SU2 rs) => KnownRep SU2 ('(j, m) ': rs) where
   repSing = SRepConsSU2 (sing @j) (repSing @SU2 @rs)

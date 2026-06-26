@@ -67,7 +67,7 @@ import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C)
 import Symmetry.FunctorExperiment
   ( Intertwiner (..), compose, mkIdHom, intertwinerLinear
-  , U1RepList, ApplyIntertwiner (..), ToC (..), RepDim, U1Rep
+  , U1RepList, ApplyIntertwiner (..), ToCG (..), RepDim, U1Rep
   , BuildIdHom, HomSectorList
   )
 import Symmetry.Group (Group (U1))
@@ -164,10 +164,10 @@ repInterLinear
   -> LinearFunction (Complex Double) (ForgetTag ('Rep r)) (ForgetTag ('Rep q))
 repInterLinear mor =
   linearFunction $ \(ForgetTag v) ->
-    ForgetTag (unToC (getLinearFunction (intertwinerLinear mor) (ToC v)))
+    ForgetTag (unToC (getLinearFunction (intertwinerLinear mor) (ToCG v)))
 
-unToC :: ToC r -> C (RepDim r)
-unToC (ToC v) = v
+unToC :: ToCG U1 r -> C (RepDim r)
+unToC (ToCG v) = v
 
 --------------------------------------------------------------------------------
 -- @TensorSpace@ for @ForgetTag@ (mirrors @FunctorExperiment.ToC@)

@@ -16,6 +16,7 @@
 --   * 'TensorNetwork.MPS.FinSupp3.Physical' — flatten / encode / 'HasBasis'
 --   * 'TensorNetwork.MPS.FinSupp3.Reference' — coefficient oracles
 --   * 'TensorNetwork.MPS.FinSupp3.MPO' — operators, 'composeMPO', 'mpoApplyMPS'
+--   * 'TensorNetwork.MPS.FinSupp3.InnerSpace' — sesquilinear bond inner product
 --   * 'TensorNetwork.MPS.FinSupp3.Properties' — QuickCheck
 module TensorNetwork.MPS.FinSupp3
   ( module TensorNetwork.MPS.FinSupp3.Internal
