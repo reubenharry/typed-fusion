@@ -18,7 +18,7 @@ import Data.Maybe (fromMaybe)
 import Math.LinearMap.Category (type (⊗), Tensor (..), LinearMap (..), AdditiveGroup (zeroV))
 import Math.LinearMap.Category.Instances ()
 import Numeric.LinearAlgebra.Static (C, Sized (..), create)
-import GHC.TypeLits (KnownNat)
+import GHC.TypeLits (KnownNat, type (*))
 import qualified Data.Vector as V
 import qualified Numeric.LinearAlgebra as LA
 import TensorNetwork.MPS.FinSupp3.Internal
@@ -28,7 +28,9 @@ import TensorNetwork.MPS.FinSupp3.Reference (mpoElement, mpoApplyFlatReference)
 import TensorNetwork.MPS.FinSupp3.Physical (mpsFromFlat, mpsToFlat)
 
 mpoApplyMPS
-  :: forall p. (KnownNat p, KnownNat (PhysicalDim3 p)) => MPO p -> MPS p -> MPS p
+  :: forall p.
+     ( KnownNat p, KnownNat (PhysicalDim3 p), KnownNat (p * p) )
+  => MPO p -> MPS p -> MPS p
 mpoApplyMPS mpo mps = mpsFromFlat (mpoApplyFlat mpo (mpsToFlat mps))
 
 mpoApplyFlat

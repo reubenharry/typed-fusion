@@ -42,7 +42,7 @@ module TensorNetwork.MPS.FinSupp3.Properties
 import Data.Complex (Complex ((:+)))
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
-import GHC.TypeLits (KnownNat, natVal)
+import GHC.TypeLits (KnownNat, natVal, type (*))
 import qualified Control.Arrow.Constrained as AC
 import Math.LinearMap.Category (LinearMap (..), Tensor (..), getLinearMap, (⊗))
 import Math.LinearMap.Category.Instances ()
@@ -177,7 +177,8 @@ prop_tensorEncodeVP2 =
       QC.=== physicalToFlat (mpsToTensor (m :: MPS 2))
 
 prop_addThenFlatten
-  :: ( KnownNat p, KnownNat (PhysicalDim3 p) ) => MPS p -> MPS p -> QC.Property
+  :: ( KnownNat p, KnownNat (PhysicalDim3 p), KnownNat (p * p) )
+  => MPS p -> MPS p -> QC.Property
 prop_addThenFlatten m1 m2 =
   mpsToFlat (m1 ^+^ m2) QC.=== mpsToFlat m1 ^+^ mpsToFlat m2
 

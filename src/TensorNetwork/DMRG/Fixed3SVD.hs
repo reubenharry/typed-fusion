@@ -63,7 +63,7 @@ import Experiments.SVD (svdC, SVDPendants (..))
 import Math.VectorSpace.Initializable (InitialVectors (..))
 import TensorNetwork.MPS.Fixed3.Internal
   ( Site (..), cdim
-  , MPS3, MPO3, mps3, withMPS3, withMPO3 )
+  , MPS3, MPO3, mps3, withMPS3, withMPO3, OpWireNats )
 import TensorNetwork.MPS.Fixed3 (leftSvdFactor, rightSvdFactor)
 import TensorNetwork.Categorical (swapMap, splitBond, fuseBond)
 import TensorNetwork.DMRG.Env (leftBoundary)
@@ -106,7 +106,9 @@ siteFromLeftSVD
 siteFromLeftSVD g = g . fuseBond @p @bl . swapMap
 
 siteFromStorage
-  :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br))
+  :: forall bl p br
+   . ( KnownNat bl, KnownNat p, KnownNat br
+     , KnownNat (p * br), KnownNat (p * bl) )
   => M bl (p * br) -> Site bl p br
 siteFromStorage = Site . siteLinearMap
 
@@ -138,14 +140,13 @@ sampleCnVectors n = state $ \g ->
       vs = unGen (vectorOf n (genC @k)) (mkQCGen qcSeed) (n * 20)
   in (vs, g')
 
--- | Thin isometry @C dom +> C cod@: columns are 'domainSingularVector'
--- (matching hmatrix @thinSVD@ @U@ for a tall @dom × cod@ layout).
+-- | Thin isometry @C dom +> C cod@: columns are codomain images (length @cod@).
 pendantsToIsoMap
   :: forall dom cod
    . (KnownNat dom, KnownNat cod)
   => [SVDPendants (C dom) (C cod)] -> C dom +> C cod
 pendantsToIsoMap ps =
-  LinearMap (colsToM (map domainSingularVector (take (cdim @cod) ps)))
+  LinearMap (colsToM (map codomainSingularVector (take (cdim @dom) ps)))
 
 -- | Bond factor @Σ V†@ from pendant codomain vectors and singular values.
 leftBondFromPendants
@@ -213,7 +214,8 @@ normalizeLeftSvdM (Site f) = do
 
 normalizeRightSvdM
   :: forall bl p br
-   . (KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br))
+   . ( KnownNat bl, KnownNat p, KnownNat br
+     , KnownNat (p * br), KnownNat (p * bl) )
   => Site bl p br
   -> SvdM (C bl +> C bl, Site bl p br)
 normalizeRightSvdM (Site f) = do
@@ -239,7 +241,7 @@ sweepSvd
   :: forall p w b
    . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p)
-     , p * b ~ b * p )
+     , p * b ~ b * p, OpWireNats p w w b b )
   => MPO3 p w -> MPS3 p b -> SvdM (Double, MPS3 p b)
 sweepSvd mpo mps = pure (runIdentity (sweep solveCenterAt mpo mps))
 
@@ -248,7 +250,7 @@ dmrgSvd
   :: forall p w b
    . ( KnownNat p, KnownNat w, KnownNat b
      , KnownNat (p * b), KnownNat (b * p)
-     , p * b ~ b * p )
+     , p * b ~ b * p, OpWireNats p w w b b )
   => Int -> Double -> MPO3 p w -> MPS3 p b -> SvdM (DmrgResult p b 1)
 dmrgSvd maxSweeps tol mpo = dmrg maxSweeps tol mpo sweepSvd
 

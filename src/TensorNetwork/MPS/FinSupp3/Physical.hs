@@ -6,6 +6,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE NoStarIsType #-}
 
 module TensorNetwork.MPS.FinSupp3.Physical
   ( mpsToTensor
@@ -33,7 +34,7 @@ import Math.LinearMap.Category.Backend.HMatrix ()
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Numeric.LinearAlgebra.Static (C, Sized (unwrap))
 import Numeric.LinearAlgebra.Static.COrphans ()
-import GHC.TypeLits (KnownNat)
+import GHC.TypeLits (KnownNat, type (*))
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector as V
 import TensorNetwork.MPS.FinSupp3.Internal
@@ -59,11 +60,17 @@ physicalFromClosedLegs closed =
        ]
 
 mpsToTensor
-  :: forall p. (KnownNat p, KnownNat (PhysicalDim3 p)) => MPS p -> Physical3 p
+  :: forall p.
+     ( KnownNat p, KnownNat (PhysicalDim3 p)
+     , KnownNat (p * p), KnownNat (p * p * p) )
+  => MPS p -> Physical3 p
 mpsToTensor = physicalFromClosedLegs . mpsChainClose
 
 mpsToFlat
-  :: forall p. (KnownNat p, KnownNat (PhysicalDim3 p)) => MPS p -> C (PhysicalDim3 p)
+  :: forall p.
+     ( KnownNat p, KnownNat (PhysicalDim3 p)
+     , KnownNat (p * p), KnownNat (p * p * p) )
+  => MPS p -> C (PhysicalDim3 p)
 mpsToFlat m =
   unsafeFromArray (permuteFlatLegs13 @p (toArray (mpsChainClose m)))
 
@@ -167,11 +174,11 @@ mpsCenterImgs _ terms =
 mpsRightImgs :: forall p. KnownNat p => [((Int, Int, Int), Field)] -> [C p]
 mpsRightImgs terms = [ basisCvp @p s3 | ((_, _, s3), _) <- terms ]
 
-canonicalMPS :: (KnownNat p, KnownNat (PhysicalDim3 p)) => MPS p -> MPS p
+canonicalMPS :: (KnownNat p, KnownNat (PhysicalDim3 p), KnownNat (p * p)) => MPS p -> MPS p
 canonicalMPS = mpsFromPhysical . mpsToTensor
 
 instance
-  ( KnownNat p, KnownNat (PhysicalDim3 p) ) =>
+  ( KnownNat p, KnownNat (PhysicalDim3 p), KnownNat (p * p) ) =>
   HasBasis (MPS p)
   where
   type Basis (MPS p) = Basis (Physical3 p)

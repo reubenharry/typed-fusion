@@ -15,6 +15,7 @@
 -- for the next phase.
 module Symmetry.Group
   ( Group (..)
+  , GroupElement
   , Irreps
   , Rep
   , IrrepDim
@@ -37,6 +38,11 @@ import Symmetry.ChargeEq (NatEq, ZEq)
 import Symmetry.Utils (Z, Append)
 
 data Group = U1 | SU2
+
+-- | Concrete group element used by representation actions.
+type family GroupElement (g :: Group) :: Type where
+  GroupElement U1 = Double
+  GroupElement SU2 = (Double, Double)
 
 type family Irreps (g :: Group) :: Type where
   Irreps U1 = Z

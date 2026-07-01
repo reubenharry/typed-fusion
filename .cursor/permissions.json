@@ -1,0 +1,20 @@
+{
+  "terminalAllowlist": [
+    "cabal build",
+    "cabal repl",
+    "cabal run",
+    "cabal test",
+    "cabal exec",
+    "cabal path",
+    "ghc",
+    "ghci",
+    "stack",
+    "git show",
+    "git diff",
+    "git status",
+    "git log",
+    "find",
+    "rg",
+    "grep"
+  ]
+}

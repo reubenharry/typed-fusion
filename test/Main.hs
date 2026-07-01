@@ -61,7 +61,13 @@ import TensorNetwork.MPS.FinSupp3
 import TensorNetwork.DMRG.Fixed3
   ( DmrgResult (..)
   , prop_effectiveHMatchesInner
+  , prop_effectiveHMatchesMatrix
   , prop_effectiveHHermitian
+  , prop_gMatIsIdentity
+  , prop_nMatIsIdentityAtGaugedCentre
+  , prop_heffMatrixHermitian
+  , prop_solveMatchesDenseOracle
+  , prop_rightGaugeMPSPreservesMPS
   , prop_flatLeftSVDMatchesSiteMatrix
   , prop_leftSvdDecomposition
   , prop_dmrgGroundStateEnergy
@@ -71,7 +77,14 @@ import TensorNetwork.DMRG.Fixed3
   , prop_mpsSetSiteRoundTrip
   , prop_regaugeDepartRightPreservesMPS
   , prop_regaugeDepartLeftPreservesMPS
+  , prop_regaugeAfterRightGaugePreservesMPS
   , prop_moveRightLeftPreservesMPS
+  , prop_moveRightPreservesMPS
+  , prop_moveLeftPreservesMPS
+  , prop_zipperTourPreservesMPS
+  , prop_solveCenterAtLowersRayleigh
+  , prop_nMatIsIdentityAfterSolveAndMove
+  , prop_sweepLowersRayleigh
   , prop_regaugeDepartRightPreservesAmplitudes
   , tfimMPO
   , dmrg
@@ -201,8 +214,20 @@ main = do
   requireQC =<< QC.quickCheckResult prop_canonicalMPSRoundTripP3
   putStrLn "<y, Heff x> matches the full network contraction..."
   requireQC =<< QC.quickCheckResult prop_effectiveHMatchesInner
+  putStrLn "toDenseMatrix effectiveH matches heffMatrix..."
+  requireQC =<< QC.quickCheckResult prop_effectiveHMatchesMatrix
   putStrLn "Effective Hamiltonian is Hermitian (TFIM)..."
   requireQC =<< QC.quickCheckResult prop_effectiveHHermitian
+  putStrLn "HS Gram matrix G ≈ I on centre basis..."
+  requireQC =<< QC.quickCheckResult prop_gMatIsIdentity
+  putStrLn "Physical overlap N ≈ I at gauged centre (site 2)..."
+  requireQC =<< QC.quickCheckResult prop_nMatIsIdentityAtGaugedCentre
+  putStrLn "Dense heffMatrix is Hermitian..."
+  requireQC =<< QC.quickCheckResult prop_heffMatrixHermitian
+  putStrLn "solveCentreSite matches min eig of sym M..."
+  requireQC =<< QC.quickCheckResult prop_solveMatchesDenseOracle
+  putStrLn "rightGaugeMPS preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_rightGaugeMPSPreservesMPS
   putStrLn "Flat left-SVD layout matches siteMatrix oracle..."
   requireQC =<< QC.quickCheckResult prop_flatLeftSVDMatchesSiteMatrix
   putStrLn "Left SVD decomposition M ≈ U F..."
@@ -213,8 +238,22 @@ main = do
   requireQC =<< QC.quickCheckResult prop_regaugeDepartRightPreservesMPS
   putStrLn "Regauge moveLeft preserves flattened MPS..."
   requireQC =<< QC.quickCheckResult prop_regaugeDepartLeftPreservesMPS
+  putStrLn "Regauge after rightGaugeMPS preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_regaugeAfterRightGaugePreservesMPS
   putStrLn "Zipper moveRight/moveLeft preserves flattened MPS..."
   requireQC =<< QC.quickCheckResult prop_moveRightLeftPreservesMPS
+  putStrLn "Single moveRight preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_moveRightPreservesMPS
+  putStrLn "Single moveLeft preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_moveLeftPreservesMPS
+  putStrLn "Full zipper tour preserves flattened MPS..."
+  requireQC =<< QC.quickCheckResult prop_zipperTourPreservesMPS
+  putStrLn "solveCenterAt lowers Rayleigh quotient..."
+  requireQC =<< QC.quickCheckResult prop_solveCenterAtLowersRayleigh
+  putStrLn "N ≈ I after solve and moveRight..."
+  requireQC =<< QC.quickCheckResult prop_nMatIsIdentityAfterSolveAndMove
+  putStrLn "One sweep lowers Rayleigh quotient..."
+  requireQC =<< QC.quickCheckResult prop_sweepLowersRayleigh
   putStrLn "DMRG ground state energy matches dense oracle (100 seeds)..."
   requireQC =<< QC.quickCheckResult prop_dmrgGroundStateEnergy
   putStrLn "DMRG ground energy matches dense oracle (100 seeds, alias)..."

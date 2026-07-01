@@ -34,6 +34,7 @@ module TensorNetwork.MPS.Fixed3.Reference
   , mpsToTensorReference
   , mpsToFlatReference
   , flatIndex3
+  , permuteFlatLegs13
   , mpsInnerReference
   , mpsMPOInnerReference
     -- * Transfer-step oracles
@@ -163,6 +164,22 @@ mpsToTensorReference mps =
 -- | Flat index of @(s₁,s₂,s₃)@, co-lexicographic (first index fastest).
 flatIndex3 :: Int -> Int -> Int -> Int -> Int
 flatIndex3 p s1 s2 s3 = s1 + p * s2 + p * p * s3
+
+-- | Swap @s₁ ↔ s₃@ in the co-lex flat array for @C p ⊗ (C p ⊗ C p)@.
+--
+-- 'transposeMap' after 'mpsChainMap' closes the chain with legs @s₁@ and @s₃@
+-- exchanged relative to 'flatIndex3'; this restores canonical flat order.
+permuteFlatLegs13
+  :: forall p. KnownNat p => VS.Vector (Complex Double) -> VS.Vector (Complex Double)
+permuteFlatLegs13 v =
+  VS.generate (VS.length v) $ \k ->
+    let ki = fromIntegral k
+        vp = cdim @p
+        s1 = ki `mod` vp
+        k1 = ki `div` vp
+        s2 = k1 `mod` vp
+        s3 = k1 `div` vp
+    in v VS.! flatIndex3 vp s3 s2 s1
 
 -- | Flattened physical state @C (p³)@ in the canonical co-lexicographic
 -- order, @(s₁,s₂,s₃) ↦ s₁ + p·s₂ + p²·s₃@ (oracle).

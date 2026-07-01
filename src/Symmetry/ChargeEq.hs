@@ -35,6 +35,7 @@ module Symmetry.ChargeEq
   , ZEqResult(..), sZEq, fromNatEq
     -- * Reflexivity
   , natEqRefl, zEqRefl
+  , chargeInteger
   ) where
 
 import Data.Proxy (Proxy(..))
@@ -42,7 +43,7 @@ import Data.Type.Equality ((:~:)(..))
 import Data.Type.Ord (OrderingI(..))
 import GHC.TypeLits (Nat, CmpNat)
 import qualified GHC.TypeNats
-import Data.Singletons (Sing)
+import Data.Singletons (Sing, fromSing)
 import Data.Singletons.TH (genSingletons, singDecideInstances)
 import Symmetry.Utils (Z(..))
 
@@ -133,3 +134,9 @@ zEqRefl :: Sing (z :: Z) -> ZEq z z :~: 'True
 zEqRefl SZero    = Refl
 zEqRefl (SPos a) = natEqRefl a
 zEqRefl (SNeg a) = natEqRefl a
+
+-- | Total order key for U(1) charge singletons (used by 'DirectSum' map keys).
+chargeInteger :: Sing (z :: Z) -> Integer
+chargeInteger SZero = 0
+chargeInteger (SPos sn) = fromIntegral (fromSing sn)
+chargeInteger (SNeg sn) = negate (fromIntegral (fromSing sn))

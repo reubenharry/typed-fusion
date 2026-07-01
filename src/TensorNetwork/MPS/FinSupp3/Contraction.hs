@@ -22,18 +22,19 @@ module TensorNetwork.MPS.FinSupp3.Contraction
   ) where
 
 import Prelude hiding (id, ($), (.))
+import Data.List (foldl')
 import qualified Control.Category.Constrained as Cat
 import Control.Category.Constrained ((.))
 import Control.Arrow.Constrained (arr, ($))
 import Math.LinearMap.Category
-  ( type (+>), type (⊗), (-+$>), LinearFunction, pattern LinearFunction )
+  ( type (+>), type (⊗), (⊗), (-+$>), LinearFunction, pattern LinearFunction )
 import Math.LinearMap.Coercion (uncurryLinearMap, (-+$=>))
 import Data.VectorSpace (VectorSpace ((*^)), InnerSpace ((<.>)))
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C)
-import GHC.TypeLits (KnownNat)
+import GHC.TypeLits (KnownNat, type (*))
 import Math.VectorSpace.DimensionAware (toArray)
 import qualified Data.Vector.Storable as VS
 import TensorNetwork.Categorical
@@ -42,7 +43,7 @@ import TensorNetwork.Dagger (transposeMap)
 import TensorNetwork.MPS.FinSupp3.Bond (applyBulkBondPhys)
 import TensorNetwork.MPS.FinSupp3.Internal
   ( Bond, Field, LeftSite (..), BulkSite (..), RightSite (..), MPS (..), Physical3
-  , withMPS3, one1, vpDim )
+  , withMPS3, one1, vpDim, basisCvp )
 
 idC :: forall n. KnownNat n => C n +> C n
 idC = Cat.id
@@ -99,7 +100,9 @@ rightTransfer site =
 
 -- | Whole chain as @(((C 1 ⊗ C p) ⊗ C p) ⊗ C p) +> C 1@ on growable 'Bond' bonds.
 mpsChainMap
-  :: forall p. KnownNat p => MPS p -> ((((C 1 ⊗ C p) ⊗ C p) ⊗ C p) +> C 1)
+  :: forall p.
+     ( KnownNat p, KnownNat (p * p), KnownNat (p * p * p) )
+  => MPS p -> ((((C 1 ⊗ C p) ⊗ C p) ⊗ C p) +> C 1)
 mpsChainMap mps =
   withMPS3 mps $ \l c r ->
     rightTransfer @p r
@@ -107,7 +110,9 @@ mpsChainMap mps =
 
 -- | Closed physical tensor before @s₁ ↔ s₃@ leg reordering (see 'physicalFromClosedLegs').
 mpsChainClose
-  :: forall p. KnownNat p => MPS p -> Physical3 p
+  :: forall p.
+     ( KnownNat p, KnownNat (p * p), KnownNat (p * p * p) )
+  => MPS p -> Physical3 p
 mpsChainClose mps =
   ( rassocMap
   . ((lunit ⊗^ idC @p) ⊗^ idC @p)

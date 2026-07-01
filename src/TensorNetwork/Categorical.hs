@@ -5,6 +5,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoStarIsType #-}
 
 -- | Morphism-level building blocks missing from @linearmap-category@'s export
@@ -14,7 +16,7 @@
 -- These are the operations a tensor network actually wires diagrams with:
 --
 --   * '⊗^' — the monoidal product of morphisms,
---     @f ⊗^ g : (u ⊗ u') +> (v ⊗ v')@ (fork's 'tensorOfMaps');
+--     @f ⊗^ g : (u ⊗ u') +> (v ⊗ v')@;
 --   * 'swapMap', 'lassocMap', 'rassocMap' — braiding and associators as
 --     first-class @+>@ morphisms;
 --   * 'lunit' \/ 'runit' (and inverses) — the @C 1@ boundary unitors.
@@ -25,7 +27,11 @@ module TensorNetwork.Categorical
   , swapMap
   , lassocMap
   , rassocMap
-    -- * Boundary (C 1) unitors
+    -- * Boundary unitors ('BoundaryUnit', typically @Scalar bond@)
+  , BoundaryUnit (..)
+  , lunitAt
+  , lunitInvAt
+  , lunitScalarLeg
   , lunit
   , lunitInv
   , runit
@@ -38,35 +44,51 @@ module TensorNetwork.Categorical
   ) where
 
 import Prelude hiding (($), (.))
+import qualified Prelude as Hask
 import Control.Category.Constrained (id, (.))
 import Control.Arrow.Constrained (arr, ($))
 import Math.LinearMap.Category
-  ( type (+>), type (⊗), Tensor
-  , TensorSpace (..), LinearSpace (..)
-  , tensorOfMaps, getAntilinearFunction
-  , LinearFunction, pattern LinearFunction, (-+$>), Dimensional )
+  ( type (+>), type (⊗), Tensor (..), (⊗)
+  , TensorSpace (..), TensorProduct, LinearSpace (..), LSpace
+  , FiniteDimensional (..), Num' (..)
+  , getAntilinearFunction, LinearMap (..)
+  , LinearFunction, pattern LinearFunction, (-+$>), Dimensional
+  , tensorOfMaps, applyDualVector, HilbertSpace, DualVector )
 import Math.LinearMap.Coercion (lassocTensor, rassocTensor, (-+$=>))
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
-import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
+import Math.VectorSpace.DimensionAware
+  ( toArray, unsafeFromArray, Dimension, dimensionalitySing
+  , dimensionality, DimensionalityCases (StaticDimensionalCase) )
 import Numeric.LinearAlgebra.Static.COrphans ()
-import Numeric.LinearAlgebra.Static (C, Sized (konst))
-import GHC.TypeLits (KnownNat, type (*))
+import Numeric.LinearAlgebra.Static (C, Sized (konst), M, extract)
+import qualified Numeric.LinearAlgebra.HMatrix as HM
+import GHC.TypeLits (KnownNat, type (*), natVal)
+import Data.Proxy (Proxy (..))
 import qualified Data.Vector.Storable as VS
-import Data.Complex (Complex)
+import Data.Complex (Complex ((:+)))
+import Unsafe.Coerce (unsafeCoerce)
 import Data.VectorSpace (Scalar, VectorSpace ((*^)))
+import Math.OrphanInstances ()
 
 -- | Scalar field shorthand for this module.
 type ℂ = Complex Double
 
--- | Monoidal (Kronecker) product of linear maps:
+-- | Monoidal product of linear maps via basis recomposition:
 --
 --   @(f ⊗^ g) $ (x ⊗ y) = (f $ x) ⊗ (g $ y)@
---
--- Plain-function form of the fork's 'tensorOfMaps'.
 (⊗^)
-  :: ( LinearSpace u, LinearSpace u', TensorSpace v, TensorSpace v'
-     , Scalar u ~ ℂ, Scalar u' ~ ℂ, Scalar v ~ ℂ, Scalar v' ~ ℂ )
+  :: forall u v u' v'
+   . ( LSpace u, LSpace u', LSpace v, LSpace v'
+     , FiniteDimensional u, FiniteDimensional u'
+     , TensorSpace v, TensorSpace v'
+     , TensorSpace (u ⊗ u'), TensorSpace (v ⊗ v')
+     , Num' (Scalar v), Fractional (Scalar v), Eq (Scalar v)
+     , Scalar u ~ ℂ, Scalar u' ~ ℂ, Scalar v ~ ℂ, Scalar v' ~ ℂ
+     , Scalar u ~ Scalar u', Scalar u ~ Scalar v, Scalar v ~ Scalar v'
+     , Scalar (DualVector u) ~ ℂ, Scalar (DualVector u') ~ ℂ
+     , Scalar (DualVector u) ~ Scalar v'
+     , Scalar (DualVector u') ~ Scalar v )
   => (u +> v) -> (u' +> v') -> ((u ⊗ u') +> (v ⊗ v'))
 f ⊗^ g = (tensorOfMaps -+$> f) -+$> g
 infixr 7 ⊗^
@@ -106,17 +128,71 @@ scalarizeC1 = applyDualVector -+$> oneC1
 unscalarizeC1 :: LinearFunction ℂ ℂ (C 1)
 unscalarizeC1 = LinearFunction (*^ oneC1)
 
+-- | A one-dimensional Hilbert space used as the monoidal unit at open MPS
+-- boundaries. For static MPS this is typically @Scalar bond ~ ℂ@; @C 1@ is also
+-- supported for typed bond legs.
+class
+  ( TensorSpace unit, LinearSpace unit
+  , HilbertSpace unit
+  , DualVector unit ~ unit, Scalar unit ~ ℂ
+  ) =>
+  BoundaryUnit unit
+  where
+    unitVector :: unit
+    scalarizeUnit :: LinearFunction ℂ unit ℂ
+    unscalarizeUnit :: LinearFunction ℂ ℂ unit
+
+instance BoundaryUnit (C 1) where
+  unitVector = oneC1
+  scalarizeUnit = scalarizeC1
+  unscalarizeUnit = unscalarizeC1
+
+instance BoundaryUnit (Complex Double) where
+  unitVector = 1 :+ 0
+  scalarizeUnit = LinearFunction Hask.id
+  unscalarizeUnit = LinearFunction Hask.id
+
+-- | Left unitor when the boundary is the scalar field @s@ and
+-- @TensorProduct s v ~ v@ (so @s ⊗ v@ is stored as @Tensor v@).
+lunitScalarLeg
+  :: forall v
+   . ( BoundaryUnit (Complex Double), Num' (Complex Double)
+     , LinearSpace v, TensorSpace v, TensorSpace (Complex Double ⊗ v)
+     , Scalar v ~ Complex Double
+     , TensorProduct (Complex Double) v ~ v )
+  => (Complex Double ⊗ v) +> v
+lunitScalarLeg = arr (LinearFunction getTensorProduct)
+
+-- | Left unitor at an abstract boundary unit: @(unit ⊗ v) +> v@.
+lunitAt
+  :: forall unit v
+   . ( BoundaryUnit unit
+     , LinearSpace v, TensorSpace v, TensorSpace (unit ⊗ v)
+     , Scalar v ~ ℂ )
+  => (unit ⊗ v) +> v
+lunitAt = arr (fromFlatTensor . (fmapTensor -+$> scalarizeUnit @unit) . transposeTensor)
+
+-- | Inverse left unitor: @v +> (unit ⊗ v)@.
+lunitInvAt
+  :: forall unit v
+   . ( BoundaryUnit unit
+     , LinearSpace v, TensorSpace v, TensorSpace (unit ⊗ v)
+     , Scalar v ~ ℂ )
+  => v +> (unit ⊗ v)
+lunitInvAt =
+  arr (transposeTensor . (fmapTensor -+$> unscalarizeUnit @unit) . toFlatTensor)
+
 -- | Left unitor at the @C 1@ boundary bond: @(C 1 ⊗ v) +> v@.
 lunit
-  :: forall v. (LinearSpace v, Scalar v ~ ℂ)
+  :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
   => (C 1 ⊗ v) +> v
-lunit = arr (fromFlatTensor . (fmapTensor -+$> scalarizeC1) . transposeTensor)
+lunit = lunitAt @(C 1) @v
 
 -- | Inverse left unitor: @v +> (C 1 ⊗ v)@.
 lunitInv
-  :: forall v. (LinearSpace v, Scalar v ~ ℂ)
+  :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
   => v +> (C 1 ⊗ v)
-lunitInv = arr (transposeTensor . (fmapTensor -+$> unscalarizeC1) . toFlatTensor)
+lunitInv = lunitInvAt @(C 1) @v
 
 -- | Right unitor: @(v ⊗ C 1) +> v@.
 runit

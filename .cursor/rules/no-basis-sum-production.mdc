@@ -1,0 +1,42 @@
+---
+description: Ban explicit basis enumeration in production tensor-network contraction paths
+alwaysApply: true
+---
+
+# Basis-sum ban (production paths)
+
+In any module **other than** `*.Reference` and QuickCheck **oracles** that live there:
+
+## Do not
+
+Implement contractions, amplitudes, or physical-state maps by:
+
+- `enumerateSubBasis` / `basis @n i` / `cdim` loops over indices
+- `sum` / `sumV` over basis indices to define a contraction or amplitude
+- `recomposeLinMap` + explicit coefficient lists **to define** a contraction (only for **random generation** of maps in `gen*`)
+
+## Do instead
+
+- **Contractions are morphisms**: composition (`.$`, `.`, `⊗^`), `trace`, `siteDagger` / `dagger`, unitors (`lunit` / `runit` or their generalization), `applySite` on values already built categorically (not by indexing into a basis list)
+- **`physicalInner = (<.>)`** on a physical vector is fine; the ban is on **how** that vector is obtained
+- **Reference / oracles only**: explicit basis sums belong in `TensorNetwork.*.Reference` (or props that call those oracles). Production code may call `physicalInner` but must not build physical vectors by summing `basis @p i`
+- **If categorical closure is blocked**: use `undefined` and name the blocker (e.g. uniform-boundary chain close, tensor-domain `composeLinear`). Never substitute a basis-sum implementation to get green tests
+
+## Compiling vs correct
+
+```haskell
+-- BAD (production): amplitude from basis enumeration
+physicalCoefficient mps s1 s2 s3 =
+  sumV [ basis @bond i3 <.> chainAmp mps (basis @bond i0) s1 s2 s3
+       | i0 <- [0 .. cdim @bond - 1], i3 <- [0 .. cdim @bond - 1] ]
+
+-- GOOD (production): close the categorical chain, then inner product if needed
+mpsInner psi phi = trace -+$> foldTransferInner (mpsConjugate psi) phi
+
+-- GOOD (Reference module only): explicit basis-sum oracle for QuickCheck
+-- see TensorNetwork.MPS.Fixed3.Reference.mpsInnerReference
+```
+
+## Short form
+
+**No basis arithmetic outside `*.Reference`.** Coefficients-by-enumeration is for oracles and `gen*` only.

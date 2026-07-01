@@ -18,11 +18,10 @@
 --     are the monoidal unit @C 1@. Bonds are typed (@KnownNat@), so a
 --     bond-dimension mismatch between adjacent sites is a type error.
 --
---   * __Morphism-level production path.__ Every contraction below is built
---     from composition, monoidal products of maps ('⊗^'), associators,
---     braiding, unitors, bond fusion and 'dagger' — no coefficient loops, no
---     matrix reshaping. The explicit basis sums live only in
---     "TensorNetwork.MPS.Fixed3.Reference" as QuickCheck oracles.
+--   * __Inner product.__ 'mpsInner' contracts via morphism composition
+--     ('transferStep': @ket ∘ (env ⊗^ id) ∘ dagger bra@).
+--     Explicit basis sums live in "TensorNetwork.MPS.Fixed3.Reference"
+--     as QuickCheck oracles.
 --
 --   * __MPO sites are stored in transfer orientation__ (domain physical =
 --     bra-side index, codomain physical = ket-side index); see
@@ -35,40 +34,43 @@ import Control.Category.Constrained (id, (.))
 import Control.Arrow.Constrained (($))
 import Math.LinearMap.Category
   ( type (+>), type (⊗), (⊗), Tensor (..)
-  , FiniteDimensional (..), SubBasis
-  , getLinearMap
+  , FiniteDimensional (..), SubBasis, entireBasis
+  , getLinearMap, getLinearFunction
   , trace, (-+$>), LinearMap (..)
   , sampleLinearFunction, LinearFunction, pattern LinearFunction )
-import Math.LinearMap.Category.Instances.Deriving ()
+import Math.LinearMap.Coercion (curryLinearMap, uncurryLinearMap, (-+$=>))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import TensorNetwork.MPS.Fixed3.Internal
   ( Site (..), MPS (..), OpSite (..), MPO (..), one1, cdim, basis
-  , MPS3, MPO3, mps3, mpo3, withMPS3, withMPO3 )
+  , MPS3, MPO3, mps3, mpo3, withMPS3, withMPO3, OpWireNats )
 import TensorNetwork.MPS.Fixed3.Reference
   ( applySite, applyOpSite, siteCoeff, opSiteCoeff, envCoeff, env3Coeff
   , matrixTransferCoeff, matrixMPOTransferCoeff
-  , mpsInnerReference, mpsToFlatReference, mpsMPOInnerReference )
+  , mpsInnerReference, mpsToFlatReference, mpsMPOInnerReference
+  , permuteFlatLegs13, flatIndex3 )
 import qualified TensorNetwork.MPS.Fixed3.Reference as Ref
 import GroundState (toDenseMatrix)
 import TensorNetwork.Categorical
   ( (⊗^), swapMap, lassocMap, rassocMap, lunit, lunitInv
   , fuseBond, splitBond, conjugateMap )
-import TensorNetwork.Dagger (dagger, transposeMap)
+import TensorNetwork.Dagger (dagger, transposeMap, siteDagger)
 -- Orphan instances making @C n@ (and tensors over it) linearmap-category spaces.
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static
-  ( C, M, R, Sized (..)
-  , Domain (diagR, mul), complex, extract )
-import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
+  ( C, M, R, Sized (fromList, create)
+  , Domain (diagR, mul), complex, extract, unwrap )
+import TensorNetwork.MPS.LinmapStorage
+  ( siteLinFromRows, tensorCodomainLinFromFlatRows
+  , linMapFromColumnImages, envLinFromTensorImages )
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 import GHC.TypeLits (KnownNat, type (*))
 import Data.Complex (Complex ((:+)), conjugate, realPart, imagPart, magnitude)
 import Data.List (foldl')
 import Data.Maybe (fromMaybe)
 import Data.Vector.Sized (toList)
-import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^)), sumV)
+import Data.VectorSpace (InnerSpace ((<.>)), VectorSpace ((*^), Scalar), sumV)
 import Control.Monad (replicateM)
 import qualified Data.Vector.Storable as VS
 import qualified Test.QuickCheck as QC
@@ -80,13 +82,10 @@ import qualified Test.QuickCheck as QC
 -- with the left unitor, reassociate, and apply to @1 ∈ C 1@.
 mpsToTensor
   :: forall p b.
-     ( KnownNat p, KnownNat b )
+     ( KnownNat p, KnownNat b
+     , KnownNat (p * p), KnownNat (b * p), KnownNat (b * p * p) )
   => MPS3 p b -> C p ⊗ (C p ⊗ C p)
-mpsToTensor mps =
-  ( rassocMap
-      . ((lunit ⊗^ idC @p) ⊗^ idC @p)
-      . transposeMap (mpsChainMap mps) )
-    $ konst 1
+mpsToTensor = physicalFromClosedLegs . mpsChainClose
 
 
 -- | Encode a physical tensor as an MPS via two-step TT-SVD on morphisms.
@@ -117,7 +116,8 @@ mpsFromPhysical tensor =
 -- | Left-to-right ⟨ψ|φ⟩ transfer contraction over an open-boundary MPS chain.
 foldTransferInner
   :: forall p b l.
-     ( KnownNat p, KnownNat b, KnownNat l )
+     ( KnownNat p, KnownNat b, KnownNat l
+     , KnownNat (b * p), KnownNat (p * b), p * b ~ b * p )
   => MPS p b l -> MPS p b l -> C 1 +> C 1
 foldTransferInner (MPS lB bulkB rB) (MPS lK bulkK rK) =
   let env0 = transferStep @p lB lK (Cat.id :: C 1 +> C 1)
@@ -132,7 +132,8 @@ foldTransferInner (MPS lB bulkB rB) (MPS lK bulkK rK) =
 -- environment at the left, closed with the trace on @C 1 +> C 1@.
 mpsInner
   :: forall p a l.
-     ( KnownNat p, KnownNat a, KnownNat l )
+     ( KnownNat p, KnownNat a, KnownNat l
+     , KnownNat (a * p), KnownNat (p * a), p * a ~ a * p )
   => MPS p a l -> MPS p a l -> Complex Double
 mpsInner mps1 mps2 = trace -+$> foldTransferInner @p @a @l mps1 mps2
 
@@ -202,17 +203,44 @@ createOrFail x = fromMaybe (error "createOrFail") (create x)
 -- Map to physical space
 --------------------------------------------------------------------------------
 
+-- | @(C 1 ⊗ C p) +> C b@ from a left boundary site.
+leftTransfer
+  :: Site 1 p b -> (C 1 ⊗ C p) +> C b
+leftTransfer (Site f) = f
+
+-- | @(C b ⊗ C p) +> C b@ from a bulk site (uncurried transfer orientation).
+bulkTransfer
+  :: Site b p b -> (C b ⊗ C p) +> C b
+bulkTransfer (Site f) = f
+
+-- | @(C b ⊗ C p) +> C 1@ from a right boundary site.
+rightTransfer
+  :: Site b p 1 -> (C b ⊗ C p) +> C 1
+rightTransfer (Site f) = f
+
 -- | The whole chain as one morphism eating the boundary bond and all three
 -- physical legs: @(((C 1 ⊗ p) ⊗ p) ⊗ p) +> C 1@. Pure composition.
 mpsChainMap
   :: forall p b.
-     ( KnownNat p, KnownNat b )
+     ( KnownNat p, KnownNat b
+     , KnownNat (p * p), KnownNat (b * p), KnownNat (b * p * p) )
   => MPS3 p b -> ((((C 1 ⊗ C p) ⊗ C p) ⊗ C p) +> C 1)
 mpsChainMap mps =
-  withMPS3 mps $ \(Site l) (Site c) (Site r) ->
-    r . ((c . (l ⊗^ idC @p)) ⊗^ idC @p)
+  withMPS3 mps $ \l c r ->
+    rightTransfer r
+      . ((bulkTransfer c . (leftTransfer l ⊗^ idC @p)) ⊗^ idC @p)
 
-
+-- | Close the categorical chain to 'Physical3' (before @s₁ ↔ s₃@ correction).
+mpsChainClose
+  :: forall p b.
+     ( KnownNat p, KnownNat b
+     , KnownNat (p * p), KnownNat (b * p), KnownNat (b * p * p) )
+  => MPS3 p b -> Physical3 p
+mpsChainClose mps =
+  ( rassocMap
+      . ((lunit ⊗^ idC @p) ⊗^ idC @p)
+      . transposeMap (mpsChainMap mps) )
+    $ one1
 
 -- | Flattened physical state @C (p³)@ in the canonical 'toArray'
 -- (co-lexicographic) order — the same order
@@ -221,10 +249,12 @@ mpsChainMap mps =
 mpsToFlat
   :: forall p b.
      ( KnownNat p, KnownNat b
-     , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p) )
+     , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
+     , KnownNat (b * p), KnownNat (b * p * p) )
   => MPS3 p b -> C (p * p * p)
 mpsToFlat mps =
-  unsafeFromArray (toArray (mpsToTensor mps) :: VS.Vector (Complex Double))
+  unsafeFromArray
+    ( permuteFlatLegs13 @p (toArray (mpsChainClose mps) :: VS.Vector (Complex Double)) )
 
 --------------------------------------------------------------------------------
 -- Physical space ↔ MPS (SVD / TT decomposition)
@@ -237,6 +267,20 @@ mpsToFlat mps =
 -- @C p ⊗ (C p ⊗ C p)@.
 type Physical3 p = C p ⊗ (C p ⊗ C p)
 
+-- | Rebuild 'Physical3' from closed coefficients with @s₁ ↔ s₃@ leg order
+-- corrected (matches 'mpsToFlatReference' / 'flatIndex3').
+physicalFromClosedLegs
+  :: forall p. KnownNat p => Physical3 p -> Physical3 p
+physicalFromClosedLegs closed =
+  let perm = permuteFlatLegs13 @p (toArray closed :: VS.Vector (Complex Double))
+      p = cdim @p
+  in sumV
+       [ perm VS.! flatIndex3 p s1 s2 s3
+           *^ (basis @p s1 ⊗ (basis @p s2 ⊗ basis @p s3))
+       | s1 <- [0 .. p - 1]
+       , s2 <- [0 .. p - 1]
+       , s3 <- [0 .. p - 1]
+       ]
 
 
 -- | Thin SVD with bond truncation/padding to a typed width @b@.
@@ -280,9 +324,9 @@ svdSplit
   :: forall n d b. (KnownNat n, KnownNat d, KnownNat b)
   => C n +> C d -> (C n +> C b, C b +> C d)
 svdSplit (LinearMap lm) =
-  let (u, s, vt) = svdCut @n @d @b lm
-  in ( LinearMap u
-     , LinearMap (mul (diagR 0 (complex s)) vt) )
+  let (u, s, vt) = svdCut @d @n @b lm
+  in ( LinearMap (mul (diagR 0 (complex s)) vt)
+     , LinearMap u )
 
 -- | Split @C n +> (C m ⊗ C p)@ (tensor codomain) at bond @b@.
 svdSplitTensor
@@ -291,9 +335,9 @@ svdSplitTensor
      , mp ~ m * p )
   => C n +> (C m ⊗ C p) -> (C n +> C b, C b +> (C m ⊗ C p))
 svdSplitTensor (LinearMap lm) =
-  let (u, s, vt) = svdCut @n @mp @b lm
-  in ( LinearMap u
-     , LinearMap (mul (diagR 0 (complex s)) vt) )
+  let (u, s, vt) = svdCut @mp @n @b lm
+  in ( LinearMap (mul (diagR 0 (complex s)) vt)
+     , LinearMap u )
 
 -- | Reshape the first-cut residual @C b₁ +> (C p ⊗ C p)@ for the second SVD:
 -- @C (b₁·p) +> C p@.
@@ -317,26 +361,43 @@ leftSiteFromFactor
   :: forall p b1. (KnownNat p, KnownNat b1) => (C p +> C b1) -> Site 1 p b1
 leftSiteFromFactor f = Site (f . lunit @(C p))
 
--- | Right boundary site from the second-cut residual @C b +> C p@.
+-- | Embed @C b₂ +> C p@ as right boundary site @(C b₂ ⊗ C p) +> C 1@.
 rightSiteFromFactor
   :: forall p b2
-   . (KnownNat p, KnownNat b2, KnownNat (p * 1))
+   . (KnownNat p, KnownNat b2, KnownNat (p * 1), KnownNat (b2 * p), KnownNat (p * b2))
   => (C b2 +> C p) -> Site b2 p 1
-rightSiteFromFactor (LinearMap m) = Site (siteLinearMap m)
+rightSiteFromFactor f =
+  let m = getLinearMap f
+  in Site (siteLinFromRows @b2 @p @1
+         [ fromList [staticMatAt m s lB]
+         | lB <- [0 .. cdim @b2 - 1], s <- [0 .. cdim @p - 1] ])
 
--- | Reshape @M b₁ (p²)@ to @M (b₁·p) p@ for the second TT-SVD cut.
+-- | Reshape @M (p²) b₁@ (standard linmap) to @M p (b₁·p)@ for the second TT-SVD cut.
 reshapeResidual
   :: forall p b1
    . (KnownNat p, KnownNat b1, KnownNat (b1 * p), KnownNat (p * p))
-  => M b1 (p * p) -> M (b1 * p) p
+  => M (p * p) b1 -> M p (b1 * p)
 reshapeResidual g1 =
   createOrFail $
     HM.fromLists
-      [ [ staticMatAt g1 α (s2 + p * s3) | s3 <- [0 .. p - 1] ]
-      | α <- [0 .. b1 - 1], s2 <- [0 .. p - 1] ]
+      [ [ staticMatAt g1 (s2 + p * s3) α | α <- [0 .. b1 - 1], s2 <- [0 .. p - 1] ]
+      | s3 <- [0 .. p - 1] ]
   where
     p = cdim @p
     b1 = cdim @b1
+
+-- | Embed @C b₂ +> C p@ (storage @M p b₂@) as right boundary site @M 1 (b₂·p)@.
+boundToSite
+  :: forall b2 p
+   . (KnownNat b2, KnownNat p, KnownNat (b2 * p))
+  => M p b2 -> M 1 (b2 * p)
+boundToSite m =
+  createOrFail $
+    HM.fromLists
+      [ [ staticMatAt m s lB | lB <- [0 .. b2 - 1], s <- [0 .. p - 1] ] ]
+  where
+    b2 = cdim @b2
+    p = cdim @p
 
 
 -- | Encode a flat physical vector as an MPS via TT-SVD.
@@ -365,7 +426,7 @@ canonicalMPS
    . ( KnownNat p, KnownNat b
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * b), KnownNat (p * b), KnownNat (p * 1)
-     , KnownNat (b * p), p * b ~ b * p )
+     , KnownNat (b * p), KnownNat (b * p * p), p * b ~ b * p )
   => MPS3 p b -> MPS3 p b
 canonicalMPS = mpsFromPhysical . mpsToTensor
 
@@ -393,24 +454,29 @@ mpsConjugate mps =
     mps3 (conjugateSite l) (conjugateSite c) (conjugateSite r)
 
 -- | One transfer-matrix update for ⟨ψ|φ⟩. The environment maps the bra bond
--- to the ket bond; the bra site enters via 'dagger' (the only conjugation):
+-- to the ket bond; the bra site enters via 'dagger' (the only conjugation).
 --
---   @transferStep bra ket env = ket ∘ (env ⊗^ id_p) ∘ dagger bra@
+-- Equivalent to @ket ∘ (env ⊗^ id_p) ∘ dagger bra@ (same wiring as
+-- 'mpoTransferStep' without the MPO leg).
+--
+--   @transferStep bra ket env = ket ∘ (env ⊗^ id) ∘ dagger bra@
 transferStep
   :: forall p alB arB alK arK.
-     ( KnownNat p, KnownNat alB, KnownNat arB, KnownNat alK, KnownNat arK )
+     ( KnownNat p, KnownNat alB, KnownNat arB, KnownNat alK, KnownNat arK
+     , KnownNat (alB * p), KnownNat (alK * p), KnownNat (p * arB)
+     , p * alB ~ alB * p )
   => Site alB p arB        -- ^ bra site (conjugated internally)
   -> Site alK p arK        -- ^ ket site
   -> (C alB +> C alK)      -- ^ environment: bra bond ↦ ket bond
   -> (C arB +> C arK)
 transferStep (Site bra) (Site ket) env =
-  ket . (env ⊗^ idC @p) . dagger bra
+  ket . (env ⊗^ idC @p) . siteDagger bra
 
 
 
 -- | The MPS norm @√⟨ψ|ψ⟩@.
 mpsNorm
-  :: (KnownNat p, KnownNat b)
+  :: (KnownNat p, KnownNat b, KnownNat (b * p), KnownNat (p * b), p * b ~ b * p)
   => MPS3 p b -> Double
 mpsNorm psi = sqrt (realPart (mpsInner psi psi))
 
@@ -425,7 +491,7 @@ mpsNorm psi = sqrt (realPart (mpsInner psi psi))
 --   @(C wl ⊗ C bl) ⊗ C p  +>  C wr ⊗ C br@
 opWire
   :: forall p wl wr bl br.
-     ( KnownNat p, KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br )
+     OpWireNats p wl wr bl br
   => ((C wl ⊗ C p) +> (C wr ⊗ C p))     -- ^ MPO site map
   -> ((C bl ⊗ C p) +> C br)             -- ^ ket site map
   -> (((C wl ⊗ C bl) ⊗ C p) +> (C wr ⊗ C br))
@@ -444,22 +510,23 @@ opWire op ket =
 --   @mpoTransferStep bra op ket env = opWire op ket ∘ (env ⊗^ id_p) ∘ dagger bra@
 mpoTransferStep
   :: forall p wl wr alB arB alK arK.
-     ( KnownNat p, KnownNat wl, KnownNat wr
-     , KnownNat alB, KnownNat arB, KnownNat alK, KnownNat arK )
+     ( OpWireNats p wl wr alK arK
+     , KnownNat alB, KnownNat arB
+     , KnownNat (alB * p), KnownNat (wl * alK), KnownNat (p * arB)
+     , p * alB ~ alB * p )
   => Site alB p arB        -- ^ bra site (conjugated internally)
   -> OpSite wl p wr
   -> Site alK p arK        -- ^ ket site
   -> (C alB +> (C wl ⊗ C alK))
   -> (C arB +> (C wr ⊗ C arK))
 mpoTransferStep (Site bra) (OpSite op) (Site ket) env =
-  opWire @p op ket . (env ⊗^ idC @p) . dagger bra
+  opWire @p op ket . (env ⊗^ idC @p) . siteDagger bra
 
 -- | Apply one MPO site to one MPS site; the product bond is fused into the
 -- typed bond @C (w·b)@ via 'fuseBond' / 'splitBond'.
 applyOpSiteToSite
   :: forall wl p wr bl br.
-     ( KnownNat wl, KnownNat p, KnownNat wr, KnownNat bl, KnownNat br
-     , KnownNat (wl * bl), KnownNat (wr * br) )
+     ( OpWireNats p wl wr bl br, KnownNat (wl * bl), KnownNat (wr * br) )
   => OpSite wl p wr -> Site bl p br -> Site (wl * bl) p (wr * br)
 applyOpSiteToSite (OpSite op) (Site ket) =
   Site $
@@ -472,7 +539,10 @@ applyOpSiteToSite (OpSite op) (Site ket) =
 mpoApplyMPS
   :: forall p w b.
      ( KnownNat p, KnownNat w, KnownNat b
-     , KnownNat (w * b) )
+     , KnownNat (w * b), KnownNat (w * p), KnownNat (b * p), KnownNat (p * b)
+     , KnownNat ((w * p) * p), KnownNat (w * (b * p)), KnownNat (w * (p * b))
+     , KnownNat ((w * b) * p), KnownNat (p * b)
+     , p * 1 ~ 1 * p, p * b ~ b * p )
   => MPO3 p w -> MPS3 p b -> MPS3 p (w * b)
 mpoApplyMPS mpo mps =
   withMPO3 mpo $ \lOp cOp rOp ->
@@ -485,7 +555,12 @@ mpoApplyMPS mpo mps =
 -- | Left-to-right ⟨ψ|H|φ⟩ MPO–MPS transfer contraction.
 foldMPOTransferInner
   :: forall p a w b l.
-     ( KnownNat p, KnownNat a, KnownNat b, KnownNat w, KnownNat l )
+     ( KnownNat p, KnownNat a, KnownNat b, KnownNat w, KnownNat l
+     , KnownNat (a * p), KnownNat (b * p), KnownNat (w * b), KnownNat (p * a)
+     , KnownNat (w * (p * a)), KnownNat (w * (a * p)), KnownNat (w * p)
+     , KnownNat (p * b), KnownNat (p * a), KnownNat (w * (b * p))
+     , KnownNat ((w * b) * p), KnownNat (w * (p * b))
+     , p * a ~ a * p, p * 1 ~ 1 * p, p * b ~ b * p )
   => MPS p a l -> MPO p w l -> MPS p b l -> C 1 +> (C 1 ⊗ C 1)
 foldMPOTransferInner (MPS lB bulkB rB) (MPO lOp bulkOp rOp) (MPS lK bulkK rK) =
   let env0 = mpoTransferStep @p @1 @w @1 @a @1 @b lB lOp lK (lunitInv @(C 1))
@@ -503,7 +578,10 @@ mpsMPOInner
   :: forall p a w b l.
      ( KnownNat p
      , KnownNat a, KnownNat b
-     , KnownNat w, KnownNat l )
+     , KnownNat w, KnownNat l
+     , OpWireNats p w w a b
+     , KnownNat (a * p), KnownNat (p * a), KnownNat (w * a)
+     , p * a ~ a * p, p * 1 ~ 1 * p, p * b ~ b * p )
   => MPS p a l -> MPO p w l -> MPS p b l -> Complex Double
 mpsMPOInner mpsB mpo mpsK =
   trace -+$> (lunit @(C 1) . foldMPOTransferInner @p @a @w @b @l mpsB mpo mpsK)
@@ -522,7 +600,9 @@ mpoApplyPhysical
      ( KnownNat p, KnownNat w, KnownNat (w * p)
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
-     , KnownNat (p * p), p * p ~ p * p )
+     , KnownNat (p * p), KnownNat (p * p * p), KnownNat (w * p * p)
+     , KnownNat (w * p), KnownNat ((w * p) * p), KnownNat (w * (p * p))
+     , KnownNat (((w * p) * p) * p), KnownNat (w * (p * p)), p * p ~ p * p )
   => MPO3 p w -> Physical3 p -> Physical3 p
 mpoApplyPhysical mpo =
   mpsToTensor . mpoApplyMPS mpo . mpsFromPhysical @p @p
@@ -534,7 +614,9 @@ mpoApplyFlat
      ( KnownNat p, KnownNat w, KnownNat (w * p)
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
-     , KnownNat (p * p), p * p ~ p * p )
+     , KnownNat (p * p), KnownNat (p * p * p), KnownNat (w * p * p)
+     , KnownNat (w * p), KnownNat ((w * p) * p), KnownNat (w * (p * p))
+     , KnownNat (((w * p) * p) * p), KnownNat (p * p), p * p ~ p * p )
   => MPO3 p w -> C (p * p * p) -> C (p * p * p)
 mpoApplyFlat mpo =
   mpsToFlat . mpoApplyMPS mpo . mpsFromPhysicalFlat @p @p
@@ -546,7 +628,9 @@ mpoToMatrix
      ( KnownNat p, KnownNat w, KnownNat (w * p)
      , KnownNat (p * p), KnownNat (p * (p * p)), KnownNat (p * p * p)
      , KnownNat (p * p), KnownNat (p * p), KnownNat (p * 1)
-     , KnownNat (p * p), p * p ~ p * p )
+     , KnownNat (p * p), KnownNat (p * p * p), KnownNat (w * p * p)
+     , KnownNat (w * p), KnownNat ((w * p) * p), KnownNat (w * (p * p))
+     , KnownNat (((w * p) * p) * p), KnownNat (p * p), p * p ~ p * p )
   => MPO3 p w -> M (p * p * p) (p * p * p)
 mpoToMatrix mpo =
   createOrFail
@@ -602,9 +686,7 @@ genC = do
 -- | Random endomorphism @C n +> C n@.
 genEndo
   :: forall n. KnownNat n => QC.Gen (C n +> C n)
-genEndo = do
-  imgs <- replicateM (cdim @n) (genC @n)
-  pure (fst $ recomposeLinMap (entireBasis :: SubBasis (C n)) imgs)
+genEndo = linMapFromColumnImages <$> replicateM (cdim @n) (genC @n)
 
 -- | Random tensor @C a ⊗ C b@ with small Gaussian-integer entries.
 genTensor
@@ -619,20 +701,26 @@ genTensor = do
 
 -- | Random typed MPO environment @C a +> (C w ⊗ C b)@.
 genEnv3
-  :: forall a w b. (KnownNat a, KnownNat w, KnownNat b)
+  :: forall a w b. (KnownNat a, KnownNat w, KnownNat b, KnownNat (w * b))
   => QC.Gen (C a +> (C w ⊗ C b))
-genEnv3 = do
-  imgs <- replicateM (cdim @a) (genTensor @w @b)
-  pure (fst $ recomposeLinMap (entireBasis :: SubBasis (C a)) imgs)
+genEnv3 =
+  envLinFromTensorImages <$> replicateM (cdim @a) (genTensor @w @b)
 
--- | Random site in the linearmap-category basis order.
+-- | Build a site in standard linmap storage @M br (bl·p)@ from application-oracle
+-- rows (@bl·p@ images in @C br@, same order as 'siteMatrix').
+siteFromApplicationRows
+  :: forall bl p br
+   . (KnownNat bl, KnownNat p, KnownNat br, KnownNat (bl * p), KnownNat (p * br))
+  => [C br] -> Site bl p br
+siteFromApplicationRows rows = Site (siteLinFromRows rows)
+
+-- | Random site with column storage matching 'applyTensorLinMap'.
 genSite
-  :: forall bl p br. (KnownNat bl, KnownNat p, KnownNat br)
+  :: forall bl p br
+   . (KnownNat bl, KnownNat p, KnownNat br, KnownNat (bl * p), KnownNat (p * br))
   => QC.Gen (Site bl p br)
-genSite = do
-  imgs <- replicateM (cdim @bl * cdim @p) (genC @br)
-  let lin = fst $ recomposeLinMap (entireBasis :: SubBasis (C bl ⊗ C p)) imgs
-  pure (Site lin)
+genSite =
+  siteFromApplicationRows <$> replicateM (cdim @bl * cdim @p) (genC @br)
 
 -- | Random @MPS 2 2 2@ (physical dim 2, both bonds 2).
 genMPS222 :: QC.Gen (MPS3 2 2)
@@ -644,12 +732,13 @@ genMPS333 = mps3 <$> genSite @1 @3 @3 <*> genSite @3 @3 @3 <*> genSite @3 @3 @1
 
 -- | Random MPO site in the linearmap-category basis order.
 genOpSite
-  :: forall wl p wr. (KnownNat wl, KnownNat p, KnownNat wr)
+  :: forall wl p wr
+   . (KnownNat wl, KnownNat p, KnownNat wr, KnownNat (wl * p), KnownNat (wr * p))
   => QC.Gen (OpSite wl p wr)
 genOpSite = do
   imgs <- replicateM (cdim @wl * cdim @p) (genTensor @wr @p)
-  let lin = fst $ recomposeLinMap (entireBasis :: SubBasis (C wl ⊗ C p)) imgs
-  pure (OpSite lin)
+  let flats = [ fromList (VS.toList (toArray t)) | t <- imgs ]
+  pure (OpSite (tensorCodomainLinFromFlatRows @wl @p @wr flats))
 
 -- | Random @MPO 2 2 2@ (physical dim 2, both operator bonds 2).
 genMPO222 :: QC.Gen (MPO3 2 2)
@@ -694,6 +783,69 @@ prop_transferStepMatchesMatrix =
   QC.forAll (QC.choose (0, 1)) $ \rK ->
     envCoeff @2 @2 (transferStep @2 bra ket env) rB rK
       QC.=== matrixTransferCoeff @2 @2 @2 bra ket env rB rK
+
+-- | Bulk transfer on @(bond ⊗ |s⟩)@ matches 'applySite'.
+prop_bulkTransferMatchesApplySite :: QC.Property
+prop_bulkTransferMatchesApplySite =
+  QC.forAll (genSite @2 @2 @2) $ \site ->
+  QC.forAll (genC @2) $ \bond ->
+  QC.forAll (QC.choose (0, 1)) $ \s ->
+    (bulkTransfer site $ (bond ⊗ basis @2 s)) QC.=== applySite site bond s
+
+-- | Left transfer on a physical basis ket matches 'applySite'.
+prop_leftTransferMatchesApplySite :: QC.Property
+prop_leftTransferMatchesApplySite =
+  QC.forAll (genSite @1 @2 @2) $ \lSite ->
+  QC.forAll (QC.choose (0, 1)) $ \s ->
+    (leftTransfer lSite $ (one1 ⊗ basis @2 s)) QC.=== applySite lSite one1 s
+
+-- | @l ⊗^ id@ agrees with applying @l@ then tensoring with the physical leg.
+prop_lTensorIdMatchesManual :: QC.Property
+prop_lTensorIdMatchesManual =
+  QC.forAll (genSite @1 @2 @2) $ \lSite ->
+  QC.forAll (QC.choose (0, 1)) $ \s1 ->
+  QC.forAll (QC.choose (0, 1)) $ \s2 ->
+    let a = one1 ⊗ basis @2 s1
+        b = basis @2 s2
+        viaTensor = (leftTransfer lSite ⊗^ idC @2) $ (a ⊗ b)
+        manual = (leftTransfer lSite $ a) ⊗ b
+    in viaTensor =~= manual
+  where
+    (=~=) :: Eq a => a -> a -> QC.Property
+    x =~= y = QC.property (x == y)
+
+-- | Left + bulk transfer composition matches 'applySite' threading.
+prop_leftBulkTransferMatchesApplySite :: QC.Property
+prop_leftBulkTransferMatchesApplySite =
+  QC.forAll (genSite @1 @2 @2) $ \lSite ->
+  QC.forAll (genSite @2 @2 @2) $ \cSite ->
+  QC.forAll (QC.choose (0, 1)) $ \s1 ->
+  QC.forAll (QC.choose (0, 1)) $ \s2 ->
+    let lc = bulkTransfer cSite . (leftTransfer lSite ⊗^ idC @2)
+        inp = (one1 ⊗ basis @2 s1) ⊗ basis @2 s2
+        ref = applySite cSite (applySite lSite one1 s1) s2
+    in (lc $ inp) QC.=== ref
+
+-- | Full 'mpsChainMap' on physical basis kets matches the amplitude oracle.
+prop_mpsChainMapMatchesAmplitude :: QC.Property
+prop_mpsChainMapMatchesAmplitude =
+  QC.forAll genMPS222 $ \mps ->
+  QC.forAll (QC.choose (0, 1)) $ \s1 ->
+  QC.forAll (QC.choose (0, 1)) $ \s2 ->
+  QC.forAll (QC.choose (0, 1)) $ \s3 ->
+    let inp = ((one1 ⊗ basis @2 s1) ⊗ basis @2 s2) ⊗ basis @2 s3
+        ref =
+          withMPS3 mps $ \l c r ->
+            unwrap (applySite r (applySite c (applySite l one1 s1) s2) s3) VS.! 0
+    in unwrap (mpsChainMap mps $ inp) VS.! 0 QC.=== ref
+
+-- | Permuted 'mpsChainClose' flat agrees with the amplitude oracle.
+prop_mpsChainCloseFlatMatchesReference :: QC.Property
+prop_mpsChainCloseFlatMatchesReference =
+  QC.forAll genMPS222 $ \mps ->
+    flatApproxEq @8 1e-9
+      (unsafeFromArray (permuteFlatLegs13 @2 (toArray (mpsChainClose mps))))
+      (mpsToFlatReference mps)
 
 -- | 'conjugateSite' matches entry-wise coefficient conjugation.
 prop_conjSiteMatchesCoeff :: QC.Property

@@ -6,7 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE NoStarIsType #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 -- | Core types for typed-bond open-boundary MPS/MPO chains.
 --
@@ -30,6 +30,7 @@ module TensorNetwork.MPS.Fixed3.Internal
   , cdim
   , basis
   , one1
+  , OpWireNats
   ) where
 
 import Math.LinearMap.Category (type (+>), type (⊗))
@@ -37,11 +38,28 @@ import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C, Sized (fromList))
-import GHC.TypeLits (KnownNat, Nat, type (+), natVal)
+import GHC.TypeLits (KnownNat, Nat, type (+), type (*), natVal)
+import GHC.Exts (Constraint)
 import Data.Proxy (Proxy (..))
 import Data.Maybe (fromMaybe)
 import Data.Vector.Sized (Vector, toList)
 import qualified Data.Vector.Sized as VS
+
+-- | 'KnownNat' bundle for 'opWire' and its callers (@⊗^@ on static bonds).
+type OpWireNats p wl wr bl br =
+  ( KnownNat p, KnownNat wl, KnownNat wr, KnownNat bl, KnownNat br
+  , KnownNat (p * bl), KnownNat (bl * p), KnownNat (p * br), KnownNat (br * p)
+  , p * bl ~ bl * p, p * br ~ br * p
+  , KnownNat (wr * p), KnownNat (wl * p)
+  , KnownNat (wr * br), KnownNat (wr * bl), KnownNat (wl * br), KnownNat (wl * bl)
+  , KnownNat (wr * bl * p), KnownNat (wl * bl * p)
+  , KnownNat (wl * br * p), KnownNat (wr * br * p)
+  , KnownNat ((wr * bl) * p), KnownNat ((wl * bl) * p)
+  , KnownNat ((wl * br) * p), KnownNat ((wr * br) * p)
+  , KnownNat (wl * (bl * p)), KnownNat (wr * (bl * p))
+  , KnownNat (wl * (br * p)), KnownNat (wr * (br * p))
+  , KnownNat (wl * (p * bl)), KnownNat (wr * (p * bl))
+  , KnownNat (wl * (p * br)), KnownNat (wr * (p * br)) )
 
 -- | MPS site in transfer orientation: @incoming-bond ⊗ physical ↦
 -- outgoing-bond@.

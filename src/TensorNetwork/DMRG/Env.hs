@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
 -- | Open-boundary MPS/MPO environments and value-level env updates for
@@ -41,11 +42,12 @@ import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C)
-import GHC.TypeLits (KnownNat)
+import GHC.TypeLits (KnownNat, type (*))
 import TensorNetwork.Categorical (lunit, lunitInv)
-import TensorNetwork.Dagger (dagger)
+import TensorNetwork.Dagger (dagger, siteDagger)
 import TensorNetwork.MPS.Fixed3 (mpoTransferStep, opWire)
-import TensorNetwork.MPS.Fixed3.Internal (Site (..), OpSite (..), MPS (..), MPO (..))
+import TensorNetwork.MPS.Fixed3.Internal
+  ( Site (..), OpSite (..), MPS (..), MPO (..), OpWireNats )
 import TensorNetwork.DMRG.Chain
   ( chainLength, getSite, getOp, SomeSite (..), SomeOpSite (..) )
 
@@ -59,8 +61,11 @@ rightBoundary :: RightEnv 1 1 1
 rightBoundary = lunit @(C 1)
 
 extendLeft
-  :: ( KnownNat wl, KnownNat wr, KnownNat p
-     , KnownNat al, KnownNat ar, KnownNat bl, KnownNat br )
+  :: forall p wl wr al ar bl br.
+     ( OpWireNats p wl wr bl br
+     , KnownNat al, KnownNat ar
+     , KnownNat (al * p), KnownNat (wl * bl), KnownNat (p * ar)
+     , p * al ~ al * p )
   => LeftEnv wl al bl
   -> Site al p ar
   -> OpSite wl p wr
@@ -70,8 +75,8 @@ extendLeft env bra op ket = mpoTransferStep bra op ket env
 
 extendRight
   :: forall p wl wr al ar bl br.
-     ( KnownNat wl, KnownNat wr, KnownNat p
-     , KnownNat al, KnownNat ar, KnownNat bl, KnownNat br )
+     ( OpWireNats p wl wr bl br, KnownNat al, KnownNat ar
+     , KnownNat (p * al), KnownNat (ar * p), p * ar ~ ar * p )
   => Site ar p al
   -> OpSite wl p wr
   -> Site br p bl
@@ -82,7 +87,7 @@ extendRight (Site bra) (OpSite op) (Site ket) envR =
     -+$> (curryLinearMap -+$=> k)
   where
     k :: ((C wl ⊗ C br) ⊗ C p) +> (C ar ⊗ C p)
-    k = dagger bra . envR . opWire @p op ket
+    k = siteDagger bra . envR . opWire @p op ket
 
 data MoveRightEnv = MoveRightInterior | MoveRightBoundary
 data MoveLeftEnv = MoveLeftInterior | MoveLeftBoundary'
@@ -110,7 +115,7 @@ moveLeftEnv' i
 
 buildLeftEnvUpTo
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, OpWireNats p w w b b )
   => Int
   -> MPO p w l
   -> MPS p b l
@@ -125,7 +130,8 @@ buildLeftEnvUpTo j mpo mps
 
 bulkLeftEnvUpTo
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => Int
   -> MPO p w l
   -> MPS p b l
@@ -139,7 +145,8 @@ bulkLeftEnvUpTo j mpo mps
 
 extendLeftFirstSite
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => MPO p w l
   -> MPS p b l
   -> LeftEnv w b b
@@ -150,7 +157,8 @@ extendLeftFirstSite mpo mps =
 
 extendLeftBulkSite
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => MPO p w l
   -> MPS p b l
   -> LeftEnv w b b
@@ -163,7 +171,8 @@ extendLeftBulkSite mpo mps env k =
 
 buildRightEnvFromSite
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => Int
   -> MPO p w l
   -> MPS p b l
@@ -179,7 +188,8 @@ buildRightEnvFromSite start mpo mps = go start
 
 extendRightLastSite
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => MPO p w l
   -> MPS p b l
   -> Int
@@ -192,7 +202,8 @@ extendRightLastSite mpo mps k env =
 
 extendRightBulkSite
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => MPO p w l
   -> MPS p b l
   -> Int
@@ -204,7 +215,9 @@ extendRightBulkSite mpo mps k env =
     _ -> error ("extendRightBulkSite: expected bulk site/op at index " ++ show k)
 
 extendLeftMoveRight
-  :: ( KnownNat p, KnownNat w, KnownNat b )
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => Int
   -> LeftEnvAtCentre w b
   -> SomeSite p b
@@ -218,7 +231,9 @@ extendLeftMoveRight _ _ _ _ =
   error "extendLeftMoveRight: centre site/op shape mismatch"
 
 extendRightMoveLeft
-  :: ( KnownNat p, KnownNat w, KnownNat b )
+  :: forall p w b.
+     ( KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => SomeSite p b
   -> SomeOpSite p w
   -> RightEnvAtCentre w b
@@ -232,7 +247,8 @@ extendRightMoveLeft _ _ _ =
 
 updateEnvsMoveRight
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => Int
   -> MoveRightEnv
   -> MPO p w l
@@ -251,7 +267,8 @@ updateEnvsMoveRight i wit mpo mps (l,_r) cn op =
 
 updateEnvsMoveLeft
   :: forall p w b l
-   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b )
+   . ( KnownNat l, KnownNat p, KnownNat w, KnownNat b
+     , OpWireNats p w w b b )
   => Int
   -> MoveLeftEnv
   -> MPO p w l

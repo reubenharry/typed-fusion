@@ -360,50 +360,10 @@ solveAtSite ham@(MPO leftMPO centerMPO rightMPO) mps@(MPS leftMPS centerMPS righ
         minimal = snd $ minimumBy (comparing $ C.magnitude . fst) eigenvals
 
 move :: forall p b. (KnownNat p, KnownNat b, KnownNat (b * p), KnownNat (p * b), KnownNat (p * (b * p)), b <= p*b) => MPS p b -> MPS p b
-move (MPS leftMPS (LinearMap centerMPS) rightMPS) = MPS {
-    leftMPS = leftMPS,
-    rightMPS = precompoGeneral rightMPS foo,
-    centerMPS = LinearMap $ tr u
-} where
-    (u,s,v) = svdTallC ( tr centerMPS :: M  (p*b) b)
-    ch = LinearMap (diagR 0 (complex s) :: M b b) :: C b +> C b
-    -- foo = m2 . ch .  LinearMap  (tr v)
-    foo = ch .  LinearMap  (tr v) :: C b +> C b
-    -- foo = centerMPS
-
-
-svdTallC :: forall (m :: Nat) (n :: Nat). (KnownNat m, KnownNat n, n <= m) => M m n -> (M m n, R n, M n n)
-svdTallC (extract -> m) = (fromMaybe undefined $ create u, fromMaybe undefined $ create $ s, fromMaybe undefined $ create v)
-  where
-    (u,s,v) = H.thinSVD m
-
-
-
-
-
--- dagger :: (KnownNat n, KnownNat m) => (C n +> C m) -> (C m +> C n)
--- dagger :: Transposable   (TensorProduct (DualVector v1) w1)   (TensorProduct (DualVector v2) w2) => LinearMap s1 v1 w1 -> LinearMap s2 v2 w2
-dagger (LinearMap f) = LinearMap $ tr f 
+move = undefined
 
 mpsInnerProduct :: forall p b. (KnownNat p, KnownNat b, KnownNat (p * b)) => MPS p b -> MPS p b -> Field
-mpsInnerProduct (MPS leftMPS centerMPS rightMPS) (MPS leftMPS' centerMPS' rightMPS') = undefined where
-
-    dualLeftMPS' = adjointF leftMPS' :: C b +> C p
-    --    dualCenterMPS' = (tr $ getLinearMap centerMPS') :: M (p * b) b
-    -- dualCenterMPS' = (tr $ getLinearMap centerMPS') :: M (p * b) b
-    dualCenterMPS' = (adjointF centerMPS') :: (C b) +> (C b ⊗ C p)
-
-    baz = getLinearMap (undefined :: C b +> (C p ⊗ C b)) :: M  b (p * b)
-
-    bar = getLinearMap leftMPS :: M p b
-
-    j1 = leftMPS . dualLeftMPS'
-
-
-    -- j2 :: (C b ⊗ C p)
-    -- j2 = adjointF centerMPS' . adjointF j1
-
-    -- j3 
+mpsInnerProduct _ _ = undefined
     
 
 main :: IO ()

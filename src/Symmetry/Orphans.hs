@@ -30,7 +30,7 @@ module Symmetry.Orphans where
 
 
 import Control.Category.Constrained (id, (.))
-import Math.LinearMap.Category (LinearMap(..), type (⊗), (⊕), InnerSpace ((<.>)), (<.>^), (<$|), euclideanNorm, Norm (Norm), Tensor (Tensor), DualVector, DualSpaceWitness(..), TensorSpace(..), LinearSpace (..), VectorSpace (..), Scalar, AdditiveGroup (..), Semimanifold (..), PseudoAffine (..), type (+>), adjoint, LinearFunction, Bilinear, VSCCoercion (..))
+import Math.LinearMap.Category (LinearMap(..), type (⊗), (⊕), InnerSpace ((<.>)), (<.>^), (<$|), euclideanNorm, Norm (Norm), Tensor (Tensor), DualVector, DualSpaceWitness(..), TensorSpace(..), LinearSpace (..), VectorSpace (..), Scalar, AdditiveGroup (..), Semimanifold (..), PseudoAffine (..), type (+>), adjoint, LinearFunction, Bilinear, VSCCoercion (..), getLinearMap)
 import Math.OrphanInstances ()
 import Linear (V2 (V2), V3 (V3), E (..), V1 (V1))
 import Data.Functor.Rep (tabulate, index)
@@ -707,14 +707,14 @@ unrowC m = fromMaybe (error "unrowC: empty matrix") $ create vec' where
   vec' = vec ! 0 
 
 tensor :: forall n m n' m' . (KnownNat n, KnownNat m, KnownNat n', KnownNat m') => (C n -+> C m) -> (C n' -+> C m') -> ((C n ⊗ C n') -+> (C m ⊗ C m'))
-tensor f g = LinearFunction \(Tensor (v :: M n n')) -> 
-  let 
+tensor f g = LinearFunction \(Tensor (v :: M n' n)) ->
+  let
     foo = arr f :: (C n +> C m)
     foo' = (adjoint $ foo) :: (C m +> C n)
     bar = coerce v :: (C n +> C n')
     baz = arr g :: (C n' +> C m')
     comp = baz . bar . foo'
-    comp' = coerce comp :: (M m m')
+    comp' = getLinearMap comp :: M m' m
   in Tensor comp'
 
 

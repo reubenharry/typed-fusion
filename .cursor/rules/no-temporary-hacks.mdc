@@ -1,0 +1,26 @@
+---
+description: Stop and co-plan instead of shipping temporary hacks to get tests green
+alwaysApply: true
+---
+
+# No temporary hacks
+
+When the correct design for a change is unclear, **stop and co-plan with the user**. Do not paper over uncertainty with hacks just to compile or pass a gate.
+
+## Do not
+
+- Runtime dimension dispatch to pick between types that share the same dimension (e.g. `C 4` vs `C 2 ⊗ C 2`)
+- `INCOHERENT` / `unsafeCoerce` decode paths that hide unresolved instance overlap
+- `error` fallbacks or special-case tables that will obviously break on the next codomain size
+- Leaving contradictory serialization stories in place while bolting on fixes downstream
+
+## Do instead
+
+- Explain what is blocked and why
+- Propose 1–2 proper designs with trade-offs
+- If the codebase must compile meanwhile, use `undefined` (or leave the previous broken state) and say what is intentionally unfinished
+- Implement only after the approach is agreed
+
+## Compiling vs correct
+
+Passing a local MRE or property suite is not sufficient justification for a horrible hack. Prefer an honest stub over a lie that looks green.
