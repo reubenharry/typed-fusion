@@ -32,6 +32,8 @@ module TensorNetwork.Categorical
   , lunitAt
   , lunitInvAt
   , lunitScalarLeg
+  , lunitScalarLegInv
+  , lunitScalarLegInv
   , lunit
   , lunitInv
   , runit
@@ -162,6 +164,16 @@ lunitScalarLeg
      , TensorProduct (Complex Double) v ~ v )
   => (Complex Double ⊗ v) +> v
 lunitScalarLeg = arr (LinearFunction getTensorProduct)
+
+-- | Inverse of 'lunitScalarLeg' when @TensorProduct s v ~ v@ (@v +> s ⊗ v@).
+lunitScalarLegInv
+  :: forall v
+   . ( BoundaryUnit (Complex Double), Num' (Complex Double)
+     , LinearSpace v, TensorSpace v, TensorSpace (Complex Double ⊗ v)
+     , Scalar v ~ Complex Double
+     , TensorProduct (Complex Double) v ~ v )
+  => v +> (Complex Double ⊗ v)
+lunitScalarLegInv = arr (LinearFunction Tensor)
 
 -- | Left unitor at an abstract boundary unit: @(unit ⊗ v) +> v@.
 lunitAt

@@ -12,7 +12,7 @@
 -- | Three-site MPS with abstract @LinearSpace@ operands and heterogeneous
 -- boundary sites. Open boundaries use @Scalar bond@ as the unit object.
 --
--- 'siteDagger' remains stubbed.
+-- 'siteDagger' is categorical in 'TensorNetwork.Dagger' ('ApplicationTensorIso').
 module TensorNetwork.MPS.Fixed3General
   ( LeftSite (..)
   , BulkSite (..)
@@ -47,6 +47,8 @@ import Math.LinearMap.Coercion (uncurryLinearMap, (-+$=>))
 import Math.OrphanInstances ()
 import TensorNetwork.Categorical
   ( (⊗^), conjugateMap, BoundaryUnit (..), lunitScalarLeg )
+import TensorNetwork.Dagger
+  ( siteDagger, ApplicationTensorIso, ApplicationFlat, ConjugateFlat )
 
 type Field = Complex Double
 
@@ -110,20 +112,20 @@ type TransferCtx bond phys =
   , BoundaryUnit (Scalar bond)
   , TensorSpace (Scalar bond ⊗ phys)
   , TensorProduct (Scalar bond) phys ~ phys
+  , ApplicationTensorIso bond phys
+  , ApplicationTensorIso (Scalar bond) phys
+  , ConjugateFlat (ApplicationFlat bond phys) bond
+  , ConjugateFlat (ApplicationFlat bond phys) (Scalar bond)
+  , ConjugateFlat (ApplicationFlat (Scalar bond) phys) bond
+  , FiniteDimensional (ApplicationFlat bond phys)
+  , FiniteDimensional (ApplicationFlat (Scalar bond) phys)
+  , DualVector (ApplicationFlat bond phys) ~ ApplicationFlat bond phys
+  , DualVector (ApplicationFlat (Scalar bond) phys) ~ ApplicationFlat (Scalar bond) phys
+  , Scalar (ApplicationFlat bond phys) ~ Field
+  , Scalar (ApplicationFlat (Scalar bond) phys) ~ Field
   )
 
 type MPSCtx bond phys = TransferCtx bond phys
-
--- | Bra pullback for a site map in transfer orientation:
--- @((bl ⊗ phys) +> br) ↦ (br +> (bl ⊗ phys))@.
-siteDagger
-  :: forall bl br phys.
-     ( TensorSpace bl, TensorSpace phys, TensorSpace (bl ⊗ phys)
-     , LinearSpace (bl ⊗ phys), FiniteDimensional (bl ⊗ phys)
-     , HilbertSpace br, DualVector br ~ br
-     , Scalar bl ~ Field, Scalar phys ~ Field, Scalar br ~ Field )
-  => ((bl ⊗ phys) +> br) -> (br +> (bl ⊗ phys))
-siteDagger = undefined
 
 -- | Left site in transfer orientation: @(Scalar bond ⊗ phys) +> bond@.
 leftInTransfer
