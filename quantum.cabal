@@ -199,7 +199,8 @@ executable tensor-debug
         hmatrix,
         constrained-categories,
         vector-space,
-        vector
+        vector,
+        linear
     default-language: GHC2021
 
 executable chain-quick
@@ -273,9 +274,38 @@ executable inner-quick
         QuickCheck
     default-language: GHC2021
 
+executable apply-site-investigate
+    import:           warnings
+    main-is:          apply_site_investigate.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.0.0,
+        quantum
+    default-language: GHC2021
+
+executable site-dagger-minimal
+    import:           warnings
+    main-is:          site_dagger_minimal.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.0.0,
+        quantum,
+        QuickCheck
+    default-language: GHC2021
+
 executable general-inner-quick
     import:           warnings
     main-is:          general_inner_quick.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.0.0,
+        quantum,
+        QuickCheck
+    default-language: GHC2021
+
+executable general-inner-debug
+    import:           warnings
+    main-is:          general_inner_debug.hs
     hs-source-dirs:   scripts
     build-depends:
         base ^>=4.19.0.0,

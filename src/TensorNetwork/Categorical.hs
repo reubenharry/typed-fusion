@@ -33,7 +33,6 @@ module TensorNetwork.Categorical
   , lunitInvAt
   , lunitScalarLeg
   , lunitScalarLegInv
-  , lunitScalarLegInv
   , lunit
   , lunitInv
   , runit
@@ -52,7 +51,7 @@ import Control.Arrow.Constrained (arr, ($))
 import Math.LinearMap.Category
   ( type (+>), type (⊗), Tensor (..), (⊗)
   , TensorSpace (..), TensorProduct, LinearSpace (..), LSpace
-  , FiniteDimensional (..), Num' (..)
+  , Num' (..)
   , getAntilinearFunction, LinearMap (..)
   , LinearFunction, pattern LinearFunction, (-+$>), Dimensional
   , tensorOfMaps, applyDualVector, HilbertSpace, DualVector )
@@ -76,13 +75,12 @@ import Math.OrphanInstances ()
 -- | Scalar field shorthand for this module.
 type ℂ = Complex Double
 
--- | Monoidal product of linear maps via basis recomposition:
+-- | Monoidal product of linear maps ('tensorOfMaps'):
 --
 --   @(f ⊗^ g) $ (x ⊗ y) = (f $ x) ⊗ (g $ y)@
 (⊗^)
   :: forall u v u' v'
    . ( LSpace u, LSpace u', LSpace v, LSpace v'
-     , FiniteDimensional u, FiniteDimensional u'
      , TensorSpace v, TensorSpace v'
      , TensorSpace (u ⊗ u'), TensorSpace (v ⊗ v')
      , Num' (Scalar v), Fractional (Scalar v), Eq (Scalar v)

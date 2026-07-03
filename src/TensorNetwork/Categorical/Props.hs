@@ -58,6 +58,8 @@ module TensorNetwork.Categorical.Props
   , prop_flatBasisMatchesTensor
   , prop_flatSiteApplyMatchesApplySite
   , runCategoricalProps
+  , runSiteDaggerMinimal
+  , runApplySiteInvestigate
   ) where
 
 import Prelude hiding (($), (.), id)
@@ -74,9 +76,11 @@ import Math.VectorSpace.DimensionAware
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
-import Numeric.LinearAlgebra.Static (C, Sized (fromList, unwrap, create, konst), extract)
+import Numeric.LinearAlgebra.Static (C, Sized (fromList, unwrap, create, konst), extract, M)
+import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import Data.Maybe (fromJust)
-import GHC.TypeLits (KnownNat, type (*))
+import GHC.TypeLits (KnownNat, type (*), natVal)
+import Data.Proxy (Proxy (..))
 import Data.Complex (Complex ((:+)), conjugate)
 import Data.VectorSpace (VectorSpace ((*^)), sumV)
 import Control.Monad (replicateM)
@@ -85,8 +89,10 @@ import qualified Test.QuickCheck as QC
 
 import TensorNetwork.Categorical
   ( (⊗^), swapMap, lassocMap, rassocMap
-  , lunit, lunitInv, runit, runitInv, conjugateMap )
-import TensorNetwork.Dagger (dagger, siteDagger, siteDaggerVec, siteTensorIso, siteTensorIsoInv, siteTensorIsoFlat)
+  , lunit, lunitInv, runit, runitInv, conjugateMap, splitBond, fuseBond )
+import TensorNetwork.Dagger
+  ( dagger, siteDagger, siteDaggerVec, siteTensorIso, siteTensorIsoInv
+  , siteTensorIsoFlat, transposeMap, conjugateCoefficients )
 import TensorNetwork.MPS.LinmapStorage
   ( linMapFromColumnImages, siteLinFromRows )
 import TensorNetwork.MPS.Fixed3.Internal (Site (..), cdim, basis, one1)
@@ -664,6 +670,141 @@ prop_daggerSiteMatchesCoeff =
               [ conjugate (siteCoeff @2 @2 @2 (Site f) l s r)
                   *^ (basis @2 l ⊗ basis @2 s)
               | l <- [0 .. 1], s <- [0 .. 1] ]
+
+-- | Minimal @2×2×2@ diagnostic for categorical vs oracle 'siteDagger'.
+runSiteDaggerMinimal :: IO ()
+runSiteDaggerMinimal = do
+  let hand =
+        siteLinFromRows @2 @2 @2
+          [ fromList [0, 0], fromList [0, 0], fromList [0, 1], fromList [0, 0] ]
+  diagSiteDagger @2 @2 @2 hand "hand"
+  QC.Blind f <- QC.generate (QC.Blind <$> genSiteMap @2 @2 @2)
+  diagSiteDagger @2 @2 @2 f "random"
+
+-- | Compare tensor-domain @($)@ vs flat @applyLinear@ on the same stored site map.
+runApplySiteInvestigate :: IO ()
+runApplySiteInvestigate = do
+  putStrLn "=== siteLinFromRows (M br × (bl·p) column storage) ==="
+  investigateSite @2 @2 @2 linFromRowsSite
+  putStrLn "\n=== siteLinearMap (M bl × (p·br) bond-major storage) ==="
+  investigateSite @2 @2 @2 (siteLinearMap bondMajor)
+  putStrLn "\n=== prop_flatSiteApplyMatchesApplySite on genSiteMap ==="
+  QC.quickCheckResult prop_flatSiteApplyMatchesApplySite >>= print
+  putStrLn "=== random genSiteMap site (one draw) ==="
+  QC.Blind f <- QC.generate (QC.Blind <$> genSiteMap @2 @2 @2)
+  investigateSite @2 @2 @2 f
+  where
+    linFromRowsSite =
+      siteLinFromRows @2 @2 @2
+        [ fromList [1, 0], fromList [0, 1], fromList [1, 1], fromList [2, 0] ]
+    bondMajor =
+      fromJust
+        (create
+           (HM.fromLists
+              [ [ 1, 0, 0, 1 ]
+              , [ 1, 1, 1, 0 ]
+              ]))
+
+investigateSite
+  :: forall bl p br
+   . (KnownNat bl, KnownNat p, KnownNat br, KnownNat (bl * p), KnownNat (p * br), p * bl ~ bl * p)
+  => (C bl ⊗ C p) +> C br
+  -> IO ()
+investigateSite f = do
+  let bl = fromIntegral (natVal (Proxy @bl))
+      p = fromIntegral (natVal (Proxy @p))
+      fFlat = f . splitBond @bl @p @(C bl) @(C p) @(C (bl * p))
+  mapM_
+    (\(l, s) -> do
+      let k = l * p + s
+          viaTensor = vec (f $ (basis @bl l ⊗ basis @p s))
+          viaFlat = vec (fFlat $ basis @(bl * p) k)
+          viaApplySite = vec (applySite (Site f) (basis @bl l) s)
+      putStrLn $
+        "  (l,s)=(" ++ show l ++ "," ++ show s ++ ")"
+          ++ " tensor=" ++ show viaTensor
+          ++ " flat=" ++ show viaFlat
+          ++ " applySite=" ++ show viaApplySite
+          ++ " | tensor==flat:" ++ show (viaTensor == viaFlat)
+          ++ " tensor==applySite:" ++ show (viaTensor == viaApplySite))
+    [(l, s) | l <- [0 .. bl - 1], s <- [0 .. p - 1]]
+  where
+    vec v = VS.toList (toArray v)
+
+diagSiteDagger
+  :: forall bl p br
+   . (KnownNat bl, KnownNat p, KnownNat br, KnownNat (bl * p), KnownNat (p * br), p * bl ~ bl * p)
+  => (C bl ⊗ C p) +> C br -> String -> IO ()
+diagSiteDagger f label = do
+  let w = basis @br 0
+      oracle = siteDaggerVec f w
+      categorical = siteDagger f $ w
+      fFlat = f . splitBond @bl @p @(C bl) @(C p) @(C (bl * p))
+      unsplit = splitBond @bl @p @(C bl) @(C p) @(C (bl * p))
+      steppedFull = unsplit . transposeMap (conjugateCoefficients @(bl * p) @br fFlat)
+      steppedT = unsplit . transposeMap fFlat
+      steppedDagger = unsplit . dagger fFlat
+      steppedConjMap = unsplit . transposeMap (conjugateMap fFlat)
+      flatOracle = siteTensorIsoFlat @bl @p oracle
+      flatCat = dagger fFlat $ w
+      r0 = 0
+      flatFromCoeffs =
+        fromList
+          [ conjugate (unwrap (fFlat $ basis @(bl * p) k) VS.! r0)
+          | k <- [0 .. fromIntegral (natVal (Proxy @(bl * p))) - 1]
+          ]
+      viaSplit = splitBond @bl @p @(C bl) @(C p) @(C (bl * p)) $ flatCat
+      viaFuseAdj = transposeMap (fuseBond @bl @p) $ flatCat
+      viaRowSum =
+        sumV
+          [ (unwrap flatFromCoeffs VS.! k)
+              *^ (splitBond @bl @p @(C bl) @(C p) @(C (bl * p)) $ basis @(bl * p) k)
+          | k <- [0 .. fromIntegral (natVal (Proxy @(bl * p))) - 1]
+          ]
+      coeffPairsMatch =
+        and
+          [ conjugate (unwrap (f $ (basis @bl l ⊗ basis @p s)) VS.! r0)
+              == conjugate (unwrap (fFlat $ basis @(bl * p) (l * fromIntegral (natVal (Proxy @p)) + s)) VS.! r0)
+          | l <- [0 .. fromIntegral (natVal (Proxy @bl)) - 1]
+          , s <- [0 .. fromIntegral (natVal (Proxy @p)) - 1]
+          ]
+      applyPairsMatch =
+        and
+          [ VS.toList (toArray (applySite (Site f) (basis @bl l) s))
+              == VS.toList (toArray (f . siteTensorIsoInv @bl @p $ basis @(bl * p) (l * fromIntegral (natVal (Proxy @p)) + s)))
+          | l <- [0 .. fromIntegral (natVal (Proxy @bl)) - 1]
+          , s <- [0 .. fromIntegral (natVal (Proxy @p)) - 1]
+          ]
+  putStrLn $ label ++ " siteDagger == oracle: " ++ show (categorical == oracle)
+  putStrLn $ "  oracle:  " ++ show (VS.toList (toArray oracle))
+  putStrLn $ "  cat:     " ++ show (VS.toList (toArray categorical))
+  putStrLn $ label ++ " flat: dagger(f∘split) w == isoFlat oracle: "
+    ++ show (flatCat == flatOracle)
+  putStrLn $ label ++ " flat: coeff oracle == isoFlat oracle: "
+    ++ show (flatFromCoeffs == flatOracle)
+  putStrLn $ label ++ " flat: dagger == coeff oracle: "
+    ++ show (flatCat == flatFromCoeffs)
+  putStrLn $ label ++ " unflatten: splitBond flat == oracle: "
+    ++ show (viaSplit == oracle)
+  putStrLn $ label ++ " unflatten: transposeMap fuseBond flat == oracle: "
+    ++ show (viaFuseAdj == oracle)
+  putStrLn $ label ++ " unflatten: Σ_k c_k splitBond(e_k) == oracle: "
+    ++ show (viaRowSum == oracle)
+  putStrLn $ label ++ " coeff tensor vs flat basis agree: "
+    ++ show coeffPairsMatch
+  putStrLn $ label ++ " applySite vs f∘isoInv agree: "
+    ++ show applyPairsMatch
+  putStrLn $ "  flatOracle: " ++ show (VS.toList (toArray flatOracle))
+  putStrLn $ "  flatCat:    " ++ show (VS.toList (toArray flatCat))
+  putStrLn $ "  flatCoeffs: " ++ show (VS.toList (toArray flatFromCoeffs))
+  putStrLn $ label ++ " split∘transpose∘conjCoeff∘(f∘split): "
+    ++ show ((steppedFull $ w) == oracle)
+  putStrLn $ label ++ " split∘dagger∘(f∘split): "
+    ++ show ((steppedDagger $ w) == oracle)
+  putStrLn $ label ++ " split∘transpose∘conjMap∘(f∘split): "
+    ++ show ((steppedConjMap $ w) == oracle)
+  putStrLn $ label ++ " transpose-only (no conj): "
+    ++ show ((steppedT $ w) == oracle)
 
 -- | Run all properties (for GHCi / the test executable).
 runCategoricalProps :: IO ()

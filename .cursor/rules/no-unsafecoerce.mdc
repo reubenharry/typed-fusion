@@ -1,0 +1,19 @@
+---
+description: Never use unsafeCoerce without explicit user approval
+alwaysApply: true
+---
+
+# No unsafeCoerce without asking
+
+Do **not** add `unsafeCoerce` (from `Unsafe.Coerce`) unless the user explicitly approves it for that specific site.
+
+## When types do not compile
+
+1. Prefer the same approach as the existing `R` path in `Numeric.LinearAlgebra.Static.Orphans` (typed `L`/`M`, `extract`, `withKnownNat`, `dimensionality` case splits).
+2. Use `Data.Coerce.coerce` only when you can cite a same-representation proof (newtype, `Coercion`, documented type equality).
+3. Add a typed helper with `KnownNat`/`StaticDimension` constraints instead of casting.
+4. If still blocked, **stop and ask the user** — do not reach for `unsafeCoerce`.
+
+## Existing code
+
+Pre-existing `unsafeCoerce` may remain until removed deliberately; do not add new uses while auditing.

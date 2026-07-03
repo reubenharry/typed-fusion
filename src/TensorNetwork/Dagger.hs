@@ -29,6 +29,7 @@
 module TensorNetwork.Dagger
   ( dagger
   , transposeMap
+  , transposeMapSelfDual
   , hilbertFromDual
   , ApplicationTensorIso (..)
   , ApplicationFlat
@@ -36,6 +37,7 @@ module TensorNetwork.Dagger
   , SiteDaggerCtx
   , siteDagger
   , siteDaggerVec
+  , conjugateCoefficients
   , siteTensorIso
   , siteTensorIsoInv
   , siteTensorIsoFlat
@@ -56,11 +58,10 @@ import Math.LinearMap.Category
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
-import Numeric.LinearAlgebra.Static (C, Sized (fromList, unwrap, create), M, extract)
+import Numeric.LinearAlgebra.Static (C, Sized (fromList, unwrap, create), extract)
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Data.Maybe (fromJust)
 import Data.Kind (Type)
-import Unsafe.Coerce (unsafeCoerce)
 import GHC.TypeLits (KnownNat, natVal, type (*))
 import Data.Proxy (Proxy (..))
 import Data.Complex (Complex, conjugate)
@@ -78,7 +79,21 @@ hilbertFromDual
   :: forall v. (TensorSpace v, FiniteDimensional v) => DualVector v -+> v
 hilbertFromDual = uncanonicallyFromDual
 
--- | Plain (unconjugated) transpose of @f : v +> w@, for a self-dual codomain.
+-- | Transpose on self-dual spaces (@DualVector v ~ v@, @DualVector w ~ w@) via
+-- categorical 'adjoint'.
+transposeMapSelfDual
+  :: forall v w.
+     ( LinearSpace v, LinearSpace w
+     , DualVector v ~ v, DualVector w ~ w
+     , Scalar v ~ ℂ, Scalar w ~ ℂ )
+  => (v +> w) -> (w +> v)
+transposeMapSelfDual f = case dualSpaceWitness @v of
+  DualSpaceWitness -> (adjoint @v @w) -+$> f
+
+-- | Transpose of @f : v +> w@. When @DualVector v ~ v@, use
+-- 'transposeMapSelfDual'. Otherwise the domain needs a primal/dual identification
+-- (in linearmap this comes from 'FiniteDimensional' via 'uncanonicallyFromDual';
+-- not a constraint on abstract MPS operands — resolved from instances at @C n@).
 transposeMap
   :: forall v w.
      ( LinearSpace v, FiniteDimensional v
@@ -117,7 +132,6 @@ type SiteDaggerCtx bl br phys =
   , TensorSpace bl, TensorSpace phys, TensorSpace (bl ⊗ phys)
   , TensorSpace (ApplicationFlat bl phys)
   , LinearSpace (bl ⊗ phys), LinearSpace (ApplicationFlat bl phys)
-  , FiniteDimensional (bl ⊗ phys), FiniteDimensional (ApplicationFlat bl phys)
   , HilbertSpace br
   , DualVector br ~ br, DualVector (ApplicationFlat bl phys) ~ ApplicationFlat bl phys
   , Scalar bl ~ ℂ, Scalar phys ~ ℂ, Scalar br ~ ℂ
@@ -130,7 +144,7 @@ conjugateCoefficients
      (KnownNat dom, KnownNat cod)
   => (C dom +> C cod) -> (C dom +> C cod)
 conjugateCoefficients (LinearMap m) =
-  LinearMap (fromJust (create (HM.cmap conjugate (extract (unsafeCoerce m :: M cod dom)))))
+  LinearMap (fromJust (create (HM.cmap conjugate (extract m))))
 
 -- | MPS site bra pullback in transfer orientation:
 -- @((bl ⊗ phys) +> br) ↦ (br +> (bl ⊗ phys))@.
@@ -143,7 +157,8 @@ siteDagger
   => ((bl ⊗ phys) +> br) -> (br +> (bl ⊗ phys))
 siteDagger f =
   applicationTensorIsoInv @bl @phys
-    . transposeMap (conjugateFlatMap @(ApplicationFlat bl phys) @br (f . applicationTensorIsoInv @bl @phys))
+    . transposeMapSelfDual
+        (conjugateFlatMap @(ApplicationFlat bl phys) @br (f . applicationTensorIsoInv @bl @phys))
 
 -- | Flatten @C bl ⊗ C p@ to @C (bl·p)@ (co-lex: index @l·p + s@).
 siteTensorIsoFlat
@@ -151,7 +166,7 @@ siteTensorIsoFlat
      (KnownNat bl, KnownNat p, KnownNat (p * bl), p * bl ~ bl * p)
   => (C bl ⊗ C p) -> C (bl * p)
 siteTensorIsoFlat (Tensor t) =
-  let mat = extract (unsafeCoerce t :: M p bl)
+  let mat = extract t
       blI = fromIntegral $ natVal (Proxy @bl)
       pI  = fromIntegral $ natVal (Proxy @p)
   in unsafeFromArray @(C (bl * p)) $

@@ -1,2 +1,6 @@
+import TensorNetwork.MPS.Fixed3General (diagnoseExampleMPSInnerC22, exampleMPSInnerC22)
+
 main :: IO ()
-main = putStrLn "general-inner-quick: props removed until mpsToPhysical is categorical"
+main = do
+  diagnoseExampleMPSInnerC22
+  putStrLn $ "⟨ψ|ψ⟩ = " ++ show exampleMPSInnerC22
