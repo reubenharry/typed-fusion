@@ -118,8 +118,8 @@ testTransposeMinimalR = do
       ref = getLinearFunction transposeTensor xy
   print mult
   print (show $ getTensorProduct bang)
-  -- print (show $ getTensorProduct ref)
-  -- putStrLn $ "arr == getLF (show): " ++ show (show (getTensorProduct bang) == show (getTensorProduct ref))
+  print (show $ getTensorProduct ref)
+  putStrLn $ "arr == getLF (show): " ++ show (show (getTensorProduct bang) == show (getTensorProduct ref))
 
 testTransposeMinimalV :: IO ()
 testTransposeMinimalV = do

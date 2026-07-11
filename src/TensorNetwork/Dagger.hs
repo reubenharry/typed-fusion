@@ -54,7 +54,7 @@ import Math.LinearMap.Category
   , Scalar, TensorSpace, LinearSpace, DualVector, HilbertSpace
   , DualSpaceWitness (..), dualSpaceWitness
   , FiniteDimensional, uncanonicallyFromDual, Num'
-  , TensorProduct, getTensorProduct )
+  , TensorProduct, getTensorProduct, LSpace )
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
@@ -97,8 +97,7 @@ transposeMapSelfDual f = case dualSpaceWitness @v of
 transposeMap
   :: forall v w.
      ( LinearSpace v, FiniteDimensional v
-     , LinearSpace w, DualVector w ~ w
-     , Scalar v ~ ℂ, Scalar w ~ ℂ )
+     , LinearSpace w, DualVector w ~ w, Scalar v ~ Scalar w)
   => (v +> w) -> (w +> v)
 transposeMap f = case dualSpaceWitness @v of
   DualSpaceWitness ->
@@ -108,8 +107,7 @@ transposeMap f = case dualSpaceWitness @v of
 dagger
   :: forall v w.
      ( LinearSpace v, FiniteDimensional v
-     , LinearSpace w, DualVector w ~ w
-     , Scalar v ~ ℂ, Scalar w ~ ℂ )
+     , LinearSpace w, DualVector w ~ w, Scalar v ~ Scalar w)
   => (v +> w) -> (w +> v)
 dagger f = transposeMap (conjugateMap f)
 
@@ -152,13 +150,15 @@ conjugateCoefficients (LinearMap m) =
 -- Flatten to self-dual 'ApplicationFlat', apply transpose with coefficient
 -- conjugation (bra pullback, not 'vectorConjugate' on Hom), unflatten.
 siteDagger
-  :: forall bl br phys.
-     SiteDaggerCtx bl br phys
-  => ((bl ⊗ phys) +> br) -> (br +> (bl ⊗ phys))
-siteDagger f =
-  applicationTensorIsoInv @bl @phys
-    . transposeMapSelfDual
-        (conjugateFlatMap @(ApplicationFlat bl phys) @br (f . applicationTensorIsoInv @bl @phys))
+  :: forall bl br phys. 
+  -- (DualVector br ~ br, DualVector phys ~ phys, DualVector bl ~ bl, Scalar bl ~ Scalar phys, Scalar bl ~ Scalar br, Scalar (Scalar bl) ~ Scalar bl, LSpace bl, LSpace phys, LSpace br)
+  -- (LinearSpace bl, LinearSpace phys, LinearSpace br, LinearSpace (DualVector br), br ~ DualVector (DualVector br), Scalar bl ~ Scalar phys, Scalar bl ~ Scalar br, Scalar (Scalar bl) ~ Scalar bl, LSpace bl, LSpace phys, LSpace br, Scalar (DualVector br) ~ Scalar br, Scalar (DualVector phys) ~ Scalar br, TensorSpace (DualVector phys))
+   () => ((bl ⊗ phys) +> br) -> (br +> (bl ⊗ phys))
+siteDagger f = undefined where 
+  -- foo = (adjoint $ f) :: DualVector br +> DualVector (bl ⊗ phys)
+  -- applicationTensorIsoInv @bl @phys
+  --   . transposeMapSelfDual
+  --       (conjugateFlatMap @(ApplicationFlat bl phys) @br (f . applicationTensorIsoInv @bl @phys))
 
 -- | Flatten @C bl ⊗ C p@ to @C (bl·p)@ (co-lex: index @l·p + s@).
 siteTensorIsoFlat

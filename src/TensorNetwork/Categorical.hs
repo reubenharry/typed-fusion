@@ -71,6 +71,7 @@ import Data.Complex (Complex ((:+)))
 import Unsafe.Coerce (unsafeCoerce)
 import Data.VectorSpace (Scalar, VectorSpace ((*^)))
 import Math.OrphanInstances ()
+import Data.Coerce (coerce)
 
 -- | Scalar field shorthand for this module.
 type ℂ = Complex Double
@@ -83,12 +84,10 @@ type ℂ = Complex Double
    . ( LSpace u, LSpace u', LSpace v, LSpace v'
      , TensorSpace v, TensorSpace v'
      , TensorSpace (u ⊗ u'), TensorSpace (v ⊗ v')
-     , Num' (Scalar v), Fractional (Scalar v), Eq (Scalar v)
-     , Scalar u ~ ℂ, Scalar u' ~ ℂ, Scalar v ~ ℂ, Scalar v' ~ ℂ
      , Scalar u ~ Scalar u', Scalar u ~ Scalar v, Scalar v ~ Scalar v'
-     , Scalar (DualVector u) ~ ℂ, Scalar (DualVector u') ~ ℂ
-     , Scalar (DualVector u) ~ Scalar v'
-     , Scalar (DualVector u') ~ Scalar v )
+    --  , Scalar (DualVector u) ~ Scalar v'
+    --  , Scalar (DualVector u') ~ Scalar v )
+   )
   => (u +> v) -> (u' +> v') -> ((u ⊗ u') +> (v ⊗ v'))
 f ⊗^ g = (tensorOfMaps -+$> f) -+$> g
 infixr 7 ⊗^
@@ -103,10 +102,9 @@ swapMap = arr transposeTensor
 -- | The associator @α : (u ⊗ (v ⊗ w)) +> ((u ⊗ v) ⊗ w)@ ('lassocTensor' as a
 -- morphism).
 lassocMap
-  :: ( LinearSpace u, LinearSpace v, LinearSpace w
-     , Scalar u ~ ℂ, Scalar v ~ ℂ, Scalar w ~ ℂ )
+  :: ( LSpace u, LSpace v, LSpace w, Scalar u ~ Scalar v, Scalar v ~ Scalar w)
   => (u ⊗ (v ⊗ w)) +> ((u ⊗ v) ⊗ w)
-lassocMap = arr (LinearFunction (lassocTensor -+$=>))
+lassocMap = arr $ LinearFunction coerce -- arr (LinearFunction (lassocTensor -+$=>))
 
 -- | Inverse associator @α⁻¹ : ((u ⊗ v) ⊗ w) +> (u ⊗ (v ⊗ w))@.
 rassocMap
@@ -156,12 +154,9 @@ instance BoundaryUnit (Complex Double) where
 -- @TensorProduct s v ~ v@ (so @s ⊗ v@ is stored as @Tensor v@).
 lunitScalarLeg
   :: forall v
-   . ( BoundaryUnit (Complex Double), Num' (Complex Double)
-     , LinearSpace v, TensorSpace v, TensorSpace (Complex Double ⊗ v)
-     , Scalar v ~ Complex Double
-     , TensorProduct (Complex Double) v ~ v )
-  => (Complex Double ⊗ v) +> v
-lunitScalarLeg = arr (LinearFunction getTensorProduct)
+   . ( LSpace v, LSpace (Scalar v), Scalar (Scalar v) ~ Scalar v )
+  => (Scalar v ⊗ v) +> v
+lunitScalarLeg = arr (fromFlatTensor . transposeTensor) --  arr (LinearFunction getTensorProduct)
 
 -- | Inverse of 'lunitScalarLeg' when @TensorProduct s v ~ v@ (@v +> s ⊗ v@).
 lunitScalarLegInv
@@ -256,6 +251,6 @@ splitBond = arr (LinearFunction (unsafeFromArray . asArray))
 -- (memory @conjugation-conventions@).
 conjugateMap
   :: ( LinearSpace v, TensorSpace w
-     , Scalar v ~ ℂ, Scalar w ~ ℂ )
+     , Scalar v ~ Scalar w )
   => (v +> w) -> (v +> w)
 conjugateMap = getAntilinearFunction vectorConjugate
