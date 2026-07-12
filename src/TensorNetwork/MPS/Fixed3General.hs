@@ -31,6 +31,10 @@ module TensorNetwork.MPS.Fixed3General
   -- , SiteCtx
   , exampleMPSC22
   , exampleMPSInnerC22
+  , normFast
+  , normSlow
+  , genMPSC22
+  , prop_normFastMatchesSlow
   -- , exampleMPSInnerDemo
   -- , diagnoseExampleMPSInnerC22
   ) where
@@ -39,15 +43,17 @@ import Prelude hiding (id, ($), (.))
 import qualified Control.Category.Constrained as Cat
 import Control.Category.Constrained ((.))
 import Control.Arrow.Constrained (($), arr)
-import Data.Complex (Complex)
+import Data.Complex (Complex ((:+)), magnitude)
+import Control.Monad (replicateM)
+import qualified Test.QuickCheck as QC
 import Data.Kind (Type)
 import Data.VectorSpace (Scalar, InnerSpace ((<.>)))
 import Control.Exception (SomeException, try, evaluate)
 import Math.LinearMap.Category
   ( type (+>), type (⊗), TensorProduct, Tensor (..), (⊗)
-  , TensorSpace (..), LinearSpace, HilbertSpace, DualVector
+  , TensorSpace (..), LinearSpace (applyLinear, composeLinear), HilbertSpace, DualVector
   , trace, (-+$>), LinearMap (LinearMap), getLinearMap
-  , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun )
+  , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun, SemilinearFunction (SemilinearFunction) )
 import Numeric.LinearAlgebra.Static (M, extract, Sized (konst))
 import Unsafe.Coerce (unsafeCoerce)
 import Math.LinearMap.Category.Instances ()
@@ -67,6 +73,10 @@ import TensorNetwork.Dagger ( ApplicationTensorIso, ApplicationFlat, ConjugateFl
   , transposeMapSelfDual )
 import Data.Coerce (coerce)
 import qualified Debug.Trace as Debug
+import Math.LinearMap.Asserted (SemilinearFunction)
+import Math.LinearMap.Asserted (flipBilin)
+import Test.QuickCheck.Random (mkQCGen)
+import Test.QuickCheck.Gen (Gen(..))
 
 data FullNorm v = FullNorm {raise :: v -+> DualVector v, lower :: DualVector v -+> v}
 
@@ -92,22 +102,19 @@ tNorm nv nw = FullNorm {
     }
 
 -- | Left boundary: physical leg only (@phys +> bond@; no incoming bond).
-newtype LeftSite (bond :: Type) (phys :: Type) = LeftSite
-  { leftLin :: phys +> bond }
+type LeftSite (bond :: Type) (phys :: Type) = phys +> bond 
 
 -- | Bulk site in transfer orientation: @(bond ⊗ phys) +> bond@.
-newtype BulkSite (bond :: Type) (phys :: Type) = BulkSite
-  { bulkLin :: (bond ⊗ phys) +> bond }
+type BulkSite (bond :: Type) (phys :: Type) = (bond ⊗ phys) +> bond 
 
 -- | Right boundary: no outgoing bond (@bond +> phys@).
-newtype RightSite (bond :: Type) (phys :: Type) = RightSite
-  { rightLin :: bond +> phys }
+type RightSite (bond :: Type) (phys :: Type) = bond +> phys 
 
 -- | Open-boundary three-site MPS (@left + bulk + right@).
 data MPS (bond :: Type) (phys :: Type) = MPS
-  { mpsLeft :: LeftSite bond phys
-  , mpsBulk :: BulkSite bond phys
-  , mpsRight :: RightSite bond phys
+  { mpsLeft :: phys +> bond 
+  , mpsBulk :: (bond ⊗ phys) +> bond
+  , mpsRight :: bond +> phys
   }
 
 
@@ -130,23 +137,22 @@ type PhysicalTensor phys = phys ⊗ (phys ⊗ phys)
 
 -- -- | Categorical map from an open-boundary MPS to its physical state
 -- -- @|ψ(s₁,s₂,s₃)⟩@ as @phys ⊗ (phys ⊗ phys)@.
--- toPhysicalMPS
---   :: forall bond phys. PhysicalCtx bond phys
---   => MPS bond phys -> PhysicalTensor phys
--- toPhysicalMPS mps =
---   ( rassocMap
---       . ((lunitAt @(Scalar bond) @phys ⊗^ (id :: phys +> phys)) ⊗^ (id :: phys +> phys))
---       . transposeMapSelfDual (mpsChainMap mps) )
---     $ unitVector @(Scalar bond)
+toPhysicalMPS
+  :: forall bond phys. (MPSConstraints bond phys) => FullNorm phys -> MPS bond phys -> PhysicalTensor phys
+toPhysicalMPS (FullNorm _ lw) mps = (fmapTensor -+$> coerceHelper2) $ coerce (arr (composeLinear -+$> mpsRight mps ) . curriedMPS .  mpsLeft mps . arr lw) where 
+  coerceHelper = lfun coerce :: (DualVector phys ⊗ bond) -+> ( phys +> bond)
+  curriedMPS = arr coerceHelper . coerce (mpsBulk mps)
+  coerceHelper2 = LinearFunction coerce . (flipBilin composeLinear -+$> arr lw) :: (phys +> phys) -+> ( phys ⊗ phys)
 
-type MPSConstraints bond phys = (HilbertSpace phys, HilbertSpace bond, Scalar phys ~ Scalar bond,  Scalar (Scalar bond) ~ Scalar bond, LinearSpace (Scalar bond), Scalar (DualVector (Scalar bond)) ~ Scalar bond, DualVector (DualVector (Scalar bond)) ~ Scalar bond, LinearSpace (DualVector (Scalar bond)), DualVector (Scalar bond) ~ Scalar bond)
+
+type MPSConstraints bond phys = (LSpace phys, LSpace bond, InnerSpace phys, Scalar bond ~ Complex Double, Scalar (DualVector bond) ~ Complex Double, Scalar (DualVector phys) ~ Complex Double,  Scalar phys ~ Complex Double, DualVector (DualVector bond) ~ bond, DualVector (DualVector phys) ~ phys, LinearSpace (DualVector bond), LinearSpace (DualVector phys), InnerSpace bond)
 
 -- | Left site in transfer orientation: @(Scalar bond ⊗ phys) +> bond@.
 leftInTransfer
   :: forall bond phys. 
   MPSConstraints bond phys => 
   LeftSite bond phys -> (Scalar bond ⊗ phys) +> bond
-leftInTransfer (LeftSite f) = f . lunitScalarLeg @phys
+leftInTransfer f = f . lunitScalarLeg @phys
 
 -- | Right site in transfer orientation: @(bond ⊗ phys) +> Scalar bond@.
 -- rightInTransfer
@@ -164,18 +170,9 @@ leftInTransfer (LeftSite f) = f . lunitScalarLeg @phys
 --   --           LinearFunction $ \phys ->
 --   --             unscalarizeUnit @Field $ (phys <.> (r $ bond))
 
-conjugateLeftSite :: MPSConstraints bond phys => LeftSite bond phys -> LeftSite bond phys
-conjugateLeftSite (LeftSite f) = LeftSite (conjugateMap f)
-
-conjugateBulkSite :: MPSConstraints bond phys => BulkSite bond phys -> BulkSite bond phys
-conjugateBulkSite (BulkSite f) = BulkSite (conjugateMap f)
-
-conjugateRightSite :: MPSConstraints bond phys => RightSite bond phys -> RightSite bond phys
-conjugateRightSite (RightSite f) = RightSite (conjugateMap f)
-
 mpsConjugate :: MPSConstraints bond phys => MPS bond phys -> MPS bond phys
 mpsConjugate (MPS l c r) =
-  MPS (conjugateLeftSite l) (conjugateBulkSite c) (conjugateRightSite r)
+  MPS (conjugateMap l) (conjugateMap c) (conjugateMap r)
 
 transferLeftSite
   :: forall bond phys. MPSConstraints bond phys => 
@@ -183,7 +180,7 @@ transferLeftSite
   LeftSite bond phys
   -> LeftSite bond phys
   -> (bond +> bond)
-transferLeftSite nb np (LeftSite bra) (LeftSite ket) = ket . (dagger nb np bra :: bond +> phys)
+transferLeftSite nb np bra ket = ket . (dagger nb np bra :: bond +> phys)
 
 transferBulkSite
   :: forall bond phys. MPSConstraints bond phys => 
@@ -192,7 +189,7 @@ transferBulkSite
   -> BulkSite bond phys
   -> (bond +> bond)
   -> (bond +> bond)
-transferBulkSite nb np (BulkSite bra) (BulkSite ket) env = ket . (env ⊗^ Cat.id) .  siteDagger nb np nb bra
+transferBulkSite nb np bra ket env = ket . (env ⊗^ Cat.id) .  siteDagger nb np nb bra
 
 transferRightSite
   :: forall bond phys. 
@@ -202,7 +199,7 @@ transferRightSite
   -> RightSite bond phys
   -> (bond +> bond)
   -> Scalar bond
-transferRightSite nb np (RightSite bra) (RightSite ket) env = trace $ (env . dagger np nb  ket . bra)
+transferRightSite nb np bra ket env = trace $ (env . dagger np nb  ket . bra)
 
 foldTransferInner
   :: forall bond phys. 
@@ -221,10 +218,7 @@ mpsInner
   FullNorm bond -> FullNorm phys -> MPS bond phys -> MPS bond phys -> Scalar bond
 mpsInner nb np psi = foldTransferInner @bond @phys nb np (mpsConjugate psi)
 
-instance Show (LeftSite bond phys) where show _ = "LeftSite"
-instance Show (BulkSite bond phys) where show _ = "BulkSite"
-instance Show (RightSite bond phys) where show _ = "RightSite"
-instance Show (MPS bond phys) where show _ = "MPS"
+instance (vb ~ C 2, vp ~ C 2) => Show (MPS vb vp) where show (MPS l b r) = "MPS: Left site is: " ++ show (getLinearMap l) ++ " \nBulk site is: " ++ show (getLinearMap b) ++ " \nRight site is: " ++ show (getLinearMap r)
 
 --------------------------------------------------------------------------------
 -- Concrete @C 2@ example ('TransferCtx' only — no 'PhysicalCtx')
@@ -241,59 +235,9 @@ idC2 = linMapFromColumnImages @2 @2 [basis @2 0, basis @2 1]
 exampleMPSC22 :: MPS (C 2) (C 2)
 exampleMPSC22 = 
   MPS
-    (LeftSite { leftLin = idC2 })
-    (BulkSite $ LinearMap (konst 1))
-    (RightSite idC2)
-  -- where
-  --   bulkTransfer :: (C 2 ⊗ C 2) +> C 2
-  --   bulkTransfer = siteLinFromRows @2 @2 @2 bulkRows
-
-  --   bulkRows :: [C 2]
-  --   bulkRows = replicate 4 (fromList [0, 0])
-
-
--- step1 = transferLeftSite (FullNorm id id) (FullNorm id id) (mpsLeft exampleMPSC22) (mpsLeft exampleMPSC22) Cat.id
--- step2 = transferBulkSite' (FullNorm id id) (FullNorm id id) (mpsBulk exampleMPSC22) (mpsBulk exampleMPSC22) step1
-
-
--- transferBulkSite'
---   :: FullNorm (C 2) -> FullNorm (C 2) ->
---   BulkSite (C 2) (C 2)
---   -> BulkSite (C 2) (C 2)
---   -> ((C 2) +> (C 2))
---   -> ((C 2) +> (C 2))
--- transferBulkSite' nb np (BulkSite bra) (BulkSite ket) env = 
---   -- ket . (env ⊗^ Cat.id) .  (trace' "tbD" $ siteDagger nb np nb (trace' ("bra") $ bra))
---   ket . (env ⊗^ Cat.id) .  (trace'' $ siteDagger' nb np nb $ Debug.trace ("trace a " ++ show (getLinearMap bra)) bra)
---   -- env
-
-
--- -- dagger :: forall v w. (LSpace v, LSpace w, LSpace (DualVector v), LSpace (DualVector w), Scalar v ~ Scalar w, Scalar (DualVector v) ~ Scalar w, Scalar (DualVector w) ~ Scalar w, DualVector (DualVector w) ~ w) => FullNorm w -> FullNorm v ->  (v +> w) -> (w +> v)
--- dagger' :: FullNorm (C 2) -> FullNorm (C 2 ⊗ C 2) ->  ((C 2 ⊗ C 2) +> (C 2)) -> ((C 2) +> (C 2 ⊗ C 2))
--- dagger' nb nv  f = arr (LinearFunction (\x -> lower nv $ lm $ raise nb $ x) ) where
---   tensor = getAntilinearFunction vectorConjugate $ transposeTensor $ coerce f :: DualVector (DualVector (C 2)) ⊗ DualVector (C 2 ⊗ C 2)
---   lm = coerce tensor :: DualVector (C 2) +> DualVector (C 2 ⊗ C 2)
---   lm' = LinearFunction (\x -> LinearMap (konst 1)) :: DualVector (C 2) -+> DualVector (C 2 ⊗ C 2)
---   lm'' = arr lm' :: DualVector (C 2) +> DualVector (C 2 ⊗ C 2)
-    
---     -- arr lm :: DualVector (C 2) -+> DualVector (C 2 ⊗ C 2)
-
--- siteDagger' :: FullNorm (C 2) -> FullNorm (C 2) -> FullNorm (C 2) -> ((C 2) ⊗ (C 2)) +> (C 2)  -> (C 2 +> ((C 2) ⊗ (C 2)))
--- siteDagger' nw nv nu f = dagger' nw (tNorm nu nv) f
-
--- tNorm' :: FullNorm (C 2) -> FullNorm (C 2) -> FullNorm ((C 2) ⊗ (C 2))
--- tNorm' nb np = FullNorm {
---   raise = 
---     LinearFunction (\x -> let 
---       du = (arr (raise nb) ⊗^ arr (raise np)) :: ((C 2) ⊗ (C 2)) +> (DualVector (C 2) ⊗ DualVector (C 2))
---     in coerce $ (du $ x)), 
-  
---   lower = 
---     LinearFunction (\x -> let 
---     y = coerce x :: DualVector (C 2) ⊗ DualVector (C 2)
---     foo =  (arr (lower $ nb) ⊗^ arr (lower np)) :: (DualVector (C 2) ⊗ DualVector (C 2)) +> ((C 2) ⊗ (C 2))
---     in foo $ y) 
-    -- }
+    idC2
+    (LinearMap (konst 1))
+    idC2
 
 trace' str f = Debug.trace ("trace'" ++ show str) $ f
 trace'' f = Debug.trace ("trace''" ++ show (getLinearMap f)) $ f
@@ -303,6 +247,53 @@ trace'''' f = Debug.trace ("trace''" ++ show (getTensorProduct f)) $ f
 -- | ⟨ψ|ψ⟩ for 'exampleMPSC22' — exercises the full transfer fold at @C 2@.
 exampleMPSInnerC22 :: Complex Double
 exampleMPSInnerC22 = mpsInner (FullNorm id id ) (FullNorm id id ) exampleMPSC22 exampleMPSC22
+
+exampleMPSInnerFlat :: Complex Double 
+exampleMPSInnerFlat = foo <.> foo where
+  foo = toPhysicalMPS (FullNorm id id) exampleMPSC22
+
+normFast :: MPS (C 2) (C 2) -> Complex Double
+normFast mps = mpsInner (FullNorm id id) (FullNorm id id) mps mps
+
+normSlow :: MPS (C 2) (C 2) -> Complex Double
+normSlow mps = getAntilinearFunction vectorConjugate (toPhysicalMPS (FullNorm id id) mps) <.> toPhysicalMPS (FullNorm id id) mps
+
+smallComplex :: QC.Gen (Complex Double)
+smallComplex = do
+  re <- QC.elements [-2 .. 2]
+  im <- QC.elements [-2 .. 2]
+  pure (re :+ im)
+
+genC2 :: QC.Gen (C 2)
+genC2 = fromList <$> replicateM 2 smallComplex
+
+genEndoC2 :: QC.Gen (C 2 +> C 2)
+genEndoC2 = linMapFromColumnImages @2 @2 <$> replicateM 2 genC2
+
+genBulkSiteC2 :: QC.Gen ((C 2 ⊗ C 2) +> C 2)
+genBulkSiteC2 = pure $ LinearMap (konst 1)
+
+genMPSC22 :: QC.Gen (MPS (C 2) (C 2))
+genMPSC22 = MPS <$> genEndoC2 <*> genBulkSiteC2 <*> genEndoC2
+
+complexApproxEq :: Double -> Complex Double -> Complex Double -> Bool
+complexApproxEq tol z w =
+  magnitude (z - w) <= tol * (1 + magnitude z + magnitude w)
+
+prop_normFastMatchesSlow :: QC.Property
+prop_normFastMatchesSlow =
+  QC.forAll genMPSC22 $ \mps ->
+    complexApproxEq 1e-9 (normFast mps) (normSlow mps)
+
+ex :: IO ()
+ex = do
+  -- generate with a fixed seed 42
+  -- let x = unGen genMPSC22 (mkQCGen 42) 0
+  x <- QC.generate genMPSC22 
+  print x
+  print (normFast x)
+  print (normSlow x)
+  pure ()
 
 exampleDaggerC2 :: C 2 +> C 2
 exampleDaggerC2 = dagger (FullNorm id id) (FullNorm id id) idC2
@@ -370,3 +361,56 @@ exampleFoo = f where
 --     printResult :: Show a => String -> Either SomeException a -> IO ()
 --     printResult name (Left e) = putStrLn $ "FAIL " ++ name ++ ": " ++ show e
 --     printResult name (Right v) = putStrLn $ "OK   " ++ name ++ ": " ++ show v
+
+
+
+  -- where
+  --   bulkTransfer :: (C 2 ⊗ C 2) +> C 2
+  --   bulkTransfer = siteLinFromRows @2 @2 @2 bulkRows
+
+  --   bulkRows :: [C 2]
+  --   bulkRows = replicate 4 (fromList [0, 0])
+
+
+-- step1 = transferLeftSite (FullNorm id id) (FullNorm id id) (mpsLeft exampleMPSC22) (mpsLeft exampleMPSC22) Cat.id
+-- step2 = transferBulkSite' (FullNorm id id) (FullNorm id id) (mpsBulk exampleMPSC22) (mpsBulk exampleMPSC22) step1
+
+
+-- transferBulkSite'
+--   :: FullNorm (C 2) -> FullNorm (C 2) ->
+--   BulkSite (C 2) (C 2)
+--   -> BulkSite (C 2) (C 2)
+--   -> ((C 2) +> (C 2))
+--   -> ((C 2) +> (C 2))
+-- transferBulkSite' nb np (BulkSite bra) (BulkSite ket) env = 
+--   -- ket . (env ⊗^ Cat.id) .  (trace' "tbD" $ siteDagger nb np nb (trace' ("bra") $ bra))
+--   ket . (env ⊗^ Cat.id) .  (trace'' $ siteDagger' nb np nb $ Debug.trace ("trace a " ++ show (getLinearMap bra)) bra)
+--   -- env
+
+
+-- -- dagger :: forall v w. (LSpace v, LSpace w, LSpace (DualVector v), LSpace (DualVector w), Scalar v ~ Scalar w, Scalar (DualVector v) ~ Scalar w, Scalar (DualVector w) ~ Scalar w, DualVector (DualVector w) ~ w) => FullNorm w -> FullNorm v ->  (v +> w) -> (w +> v)
+-- dagger' :: FullNorm (C 2) -> FullNorm (C 2 ⊗ C 2) ->  ((C 2 ⊗ C 2) +> (C 2)) -> ((C 2) +> (C 2 ⊗ C 2))
+-- dagger' nb nv  f = arr (LinearFunction (\x -> lower nv $ lm $ raise nb $ x) ) where
+--   tensor = getAntilinearFunction vectorConjugate $ transposeTensor $ coerce f :: DualVector (DualVector (C 2)) ⊗ DualVector (C 2 ⊗ C 2)
+--   lm = coerce tensor :: DualVector (C 2) +> DualVector (C 2 ⊗ C 2)
+--   lm' = LinearFunction (\x -> LinearMap (konst 1)) :: DualVector (C 2) -+> DualVector (C 2 ⊗ C 2)
+--   lm'' = arr lm' :: DualVector (C 2) +> DualVector (C 2 ⊗ C 2)
+    
+--     -- arr lm :: DualVector (C 2) -+> DualVector (C 2 ⊗ C 2)
+
+-- siteDagger' :: FullNorm (C 2) -> FullNorm (C 2) -> FullNorm (C 2) -> ((C 2) ⊗ (C 2)) +> (C 2)  -> (C 2 +> ((C 2) ⊗ (C 2)))
+-- siteDagger' nw nv nu f = dagger' nw (tNorm nu nv) f
+
+-- tNorm' :: FullNorm (C 2) -> FullNorm (C 2) -> FullNorm ((C 2) ⊗ (C 2))
+-- tNorm' nb np = FullNorm {
+--   raise = 
+--     LinearFunction (\x -> let 
+--       du = (arr (raise nb) ⊗^ arr (raise np)) :: ((C 2) ⊗ (C 2)) +> (DualVector (C 2) ⊗ DualVector (C 2))
+--     in coerce $ (du $ x)), 
+  
+--   lower = 
+--     LinearFunction (\x -> let 
+--     y = coerce x :: DualVector (C 2) ⊗ DualVector (C 2)
+--     foo =  (arr (lower $ nb) ⊗^ arr (lower np)) :: (DualVector (C 2) ⊗ DualVector (C 2)) +> ((C 2) ⊗ (C 2))
+--     in foo $ y) 
+    -- }

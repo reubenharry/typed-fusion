@@ -20,6 +20,7 @@ import TensorNetwork.Categorical.Props
   , prop_daggerCnMatchesConjTranspose
   , prop_daggerSiteMatchesCoeff
   )
+import TensorNetwork.MPS.Fixed3General (prop_normFastMatchesSlow)
 import TensorNetwork.MPS.Fixed3
   ( prop_applySiteMatchesCoeff
   , prop_applyOpSiteMatchesCoeff
@@ -192,6 +193,8 @@ main = do
   requireQC =<< QC.quickCheckResult prop_innerConjugateSymmetric
   putStrLn "MPS norm-squared is real and non-negative..."
   requireQC =<< QC.quickCheckResult prop_normNonNegative
+  putStrLn "Fixed3General normFast matches normSlow..."
+  requireQC =<< QC.quickCheckResult prop_normFastMatchesSlow
   putStrLn "MPO transfer step matches explicit matrix formula..."
   requireQC =<< QC.quickCheckResult prop_mpoTransferStepMatchesMatrix
   putStrLn "Categorical MPS-MPO-MPS inner matches basis reference..."
