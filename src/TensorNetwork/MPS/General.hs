@@ -10,6 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverloadedLists #-}
 {- HLINT ignore "Redundant $" -}
 
 -- | Three-site MPS with abstract @LinearSpace@ operands and heterogeneous
@@ -19,7 +20,7 @@
 --
 -- __Concrete @C n@ example:__ 'exampleMPSC22' and 'exampleMPSInnerC22' show that
 -- 'mpsInner' only needs 'TransferCtx' (not 'PhysicalCtx' / 'toPhysicalMPS').
-module TensorNetwork.MPS.Fixed3General where
+module TensorNetwork.MPS.General where
 
 import Prelude hiding (id, ($), (.))
 import qualified Control.Category.Constrained as Cat
@@ -32,7 +33,7 @@ import Data.Kind (Type)
 import Data.VectorSpace (InnerSpace ((<.>)))
 import Math.LinearMap.Category
   ( type (+>), type (⊗), TensorProduct, Tensor (..), (⊗)
-  , TensorSpace (..), LinearSpace (applyLinear, composeLinear), HilbertSpace, DualVector
+  , TensorSpace (..), LinearSpace (..), HilbertSpace, DualVector
   , trace, (-+$>), LinearMap (LinearMap), getLinearMap
   , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun, SemilinearFunction (SemilinearFunction), VectorSpace (..) )
 import Numeric.LinearAlgebra.Static (Sized (konst))
@@ -60,6 +61,9 @@ import Data.Maybe (fromMaybe)
 import Linear (V1(..))
 import Data.Foldable (Foldable(toList))
 import qualified Data.Vector as Vector
+import Data.VectorSpace.Free (FinSuppSeq(..))
+import Data.VectorSpace.Free.FiniteSupportedSequence
+import qualified Data.Vector.Unboxed as U
 
 -- currently broken because of sesquilinearity of complex metric
 data FullNorm v = FullNorm {lower :: v -+> DualVector v, raise :: DualVector v -+> v}
@@ -115,6 +119,12 @@ data MPS (bond :: Type) (phys :: Type) (n :: Nat) = MPS
   , mpsRight :: bond +> phys
   }
 
+data MPO (bond :: Type) (phys :: Type) (n :: Nat) = MPO
+  { mpoLeft :: phys +> (bond ⊗ phys)
+  , mpoBulk :: V n ((bond ⊗ phys) +> (bond ⊗ phys))
+  , mpoRight :: (bond ⊗ phys) +> phys
+  }
+
 type MPSConstraints bond phys = (LSpace phys, LSpace bond, InnerSpace phys, Scalar bond ~ Complex Double, Scalar (DualVector bond) ~ Complex Double, Scalar (DualVector phys) ~ Complex Double,  Scalar phys ~ Complex Double, DualVector (DualVector bond) ~ bond, DualVector (DualVector phys) ~ phys, LinearSpace (DualVector bond), LinearSpace (DualVector phys), InnerSpace bond)
 
 -- toPhysicalMPS :: forall bond phys (n :: Nat). (MPSConstraints bond phys, 1 <= n) => FullNorm phys -> MPS bond phys n -> OTimes 3 phys
@@ -123,7 +133,7 @@ type MPSConstraints bond phys = (LSpace phys, LSpace bond, InnerSpace phys, Scal
 --   .  mpsLeft mps
 --   . arr lw
 --   )
-toPhysicalMPS :: forall bond phys (n :: Nat). (MPSConstraints bond phys, 1 <= n) => FullNorm phys -> MPS bond phys n -> OTimes 3 phys
+toPhysicalMPS :: forall bond phys . (MPSConstraints bond phys) => FullNorm phys -> MPS bond phys 1 -> OTimes 3 phys
 toPhysicalMPS (FullNorm _ lw) mps = (fmapTensor -+$> toTensorWithNorm lw) $ coerce (
   arr (composeLinear -+$> mpsRight mps )
   . bulkToMap (mpsBulk mps ^. _1)
@@ -170,6 +180,12 @@ mpsInner nb np (MPS lB bB rB) (MPS lK bK rK) =
 
 instance (KnownNat n, KnownNat m, KnownNat (m*n), KnownNat (n*m), vb ~ C n, vp ~ C m, KnownNat q) => Show (MPS vb vp q) where show (MPS l b r) = "MPS: Left site is: " ++ show (getLinearMap l) ++ " \nBulk site is: " ++ show (getLinearMap <$>  b) ++ " \nRight site is: " ++ show (getLinearMap r)
 
+mpsMPOContraction
+  :: forall bond phys (n :: Nat).
+  MPSConstraints bond phys =>
+  FullNorm bond -> FullNorm phys -> MPO bond phys n -> MPS bond phys n -> MPO bond phys n
+mpsMPOContraction nb np (MPO lB bB rB) (MPS lK bK rK) = undefined
+
 --------------------------------------------------------------------------------
 -- Concrete @C 2@ example ('TransferCtx' only — no 'PhysicalCtx')
 --------------------------------------------------------------------------------
@@ -205,7 +221,7 @@ exampleMPSInnerFlat = foo <.> foo where
 normFast :: forall n m q . (KnownNat n, KnownNat m) => MPS (C n) (C m) q -> Complex Double
 normFast mps = mpsInner hermitianNorm hermitianNorm mps mps
 
-normSlow :: forall n m q . (KnownNat n, KnownNat m, 1 <= q) => MPS (C n) (C m) q -> Complex Double
+normSlow :: forall n m q . (KnownNat n, KnownNat m, 1 ~ q) => MPS (C n) (C m) q -> Complex Double
 normSlow mps =  toPhysicalMPS hermitianNorm mps <.> toPhysicalMPS hermitianNorm mps
 
 smallComplex :: QC.Gen (Complex Double)
@@ -272,6 +288,26 @@ exampleArr = bar $ baz where
 exampleDagger :: C 2 +> C 2
 exampleDagger = dagger (FullNorm (lfun (getAntilinearFunction vectorConjugate)) (lfun (getAntilinearFunction vectorConjugate))) (FullNorm (lfun (getAntilinearFunction vectorConjugate)) (lfun (getAntilinearFunction vectorConjugate))) iden where
   iden = (0 :+ 1) *^ Cat.id :: C 2 +> C 2
+
+mpsInfBond :: MPS (FinSuppSeq (Complex Double)) (C 2) 1
+mpsInfBond = MPS 
+  { mpsLeft = LinearMap [FinSuppSeq $ U.fromList [2,2]]
+  , mpsBulk = toV $ V1 $ LinearMap []
+  , mpsRight = LinearMap [2, 2,2,2]
+  }
+
+type InfBond = FinSuppSeq (Complex Double)
+
+lowerInf :: InfBond -+> DualVector InfBond
+lowerInf = lfun $ \x -> fromLinearForm $ (arr (LinearFunction (<.> x) ) :: InfBond +> Scalar InfBond )
+
+raiseInf :: DualVector InfBond -+> InfBond
+raiseInf = lfun $ \x -> [0]
+
+infNorm :: FullNorm (FinSuppSeq (Complex Double))
+infNorm = FullNorm (lowerInf) (raiseInf)
+
+normInf = mpsInner infNorm hermitianNorm mpsInfBond mpsInfBond
 
 -- exampleFoo ::  (C 2 ⊗ C 2) +> (C 2 )
 exampleFoo = f where
