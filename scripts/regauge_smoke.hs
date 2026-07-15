@@ -8,9 +8,9 @@ import Prelude hiding (id)
 import qualified Control.Category.Constrained as Cat
 import Test.QuickCheck.Gen (unGen)
 import Test.QuickCheck.Random (mkQCGen)
-import TensorNetwork.MPS.Fixed3 (genMPS222, mpsToFlat)
-import TensorNetwork.MPS.Fixed3.Internal (Site (..), withMPS3, mps3, siteLin)
-import TensorNetwork.DMRG.Fixed3
+import TensorNetwork.MPS.Fixed (genMPS222, mpsToFlat)
+import TensorNetwork.MPS.Fixed.Internal (Site (..), withMPS3, mps3, siteLin)
+import TensorNetwork.DMRG.Fixed
   ( normalizeLeft, regaugeDepartRight, rightGaugeMPS )
 import TensorNetwork.Categorical ((⊗^))
 import TensorNetwork.Dagger (transposeMap)

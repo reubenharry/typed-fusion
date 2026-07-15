@@ -10,9 +10,9 @@ import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (Sized (unwrap))
 import GHC.TypeLits ()
 import qualified Data.Vector.Storable as VS
-import TensorNetwork.MPS.FinSupp3.Internal (basisCvp, Physical3)
-import TensorNetwork.MPS.FinSupp3.Physical (productMPSAtIndices, mpsToFlat, physicalToFlat)
-import TensorNetwork.MPS.FinSupp3.Reference (amplitude, flatIndex3)
+import TensorNetwork.MPS.FinSupp.Internal (basisCvp, Physical3)
+import TensorNetwork.MPS.FinSupp.Physical (productMPSAtIndices, mpsToFlat, physicalToFlat)
+import TensorNetwork.MPS.FinSupp.Reference (amplitude, flatIndex3)
 
 flatIdx :: VS.Vector a -> Int
 flatIdx v = head [ i | i <- [0 .. VS.length v - 1], v VS.! i /= 0 ]

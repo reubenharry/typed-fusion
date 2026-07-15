@@ -20,29 +20,7 @@
 --   * 'swapMap', 'lassocMap', 'rassocMap' — braiding and associators as
 --     first-class @+>@ morphisms;
 --   * 'lunit' \/ 'runit' (and inverses) — the @C 1@ boundary unitors.
-module TensorNetwork.Categorical
-  ( -- * Monoidal product of maps
-    (⊗^)
-    -- * Wiring: braiding and associators
-  , swapMap
-  , lassocMap
-  , rassocMap
-    -- * Boundary unitors ('BoundaryUnit', typically @Scalar bond@)
-  , BoundaryUnit (..)
-  , lunitAt
-  , lunitInvAt
-  , lunitScalarLeg
-  , lunitScalarLegInv
-  , lunit
-  , lunitInv
-  , runit
-  , runitInv
-    -- * Bond fusion
-  , fuseBond
-  , splitBond
-    -- * Conjugation
-  , conjugateMap
-  ) where
+module TensorNetwork.Categorical where
 
 import Prelude hiding (($), (.))
 import qualified Prelude as Hask
@@ -122,128 +100,23 @@ oneC1 = konst 1
 scalarizeC1 :: LinearFunction ℂ (C 1) ℂ
 scalarizeC1 = applyDualVector -+$> oneC1
 
--- | Embed a scalar as a @C 1@ leg: @ℂ -+> C 1@.
-unscalarizeC1 :: LinearFunction ℂ ℂ (C 1)
-unscalarizeC1 = LinearFunction (*^ oneC1)
-
--- | A one-dimensional Hilbert space used as the monoidal unit at open MPS
--- boundaries. For static MPS this is typically @Scalar bond ~ ℂ@; @C 1@ is also
--- supported for typed bond legs.
-class
-  ( TensorSpace unit, LinearSpace unit
-  , HilbertSpace unit
-  , DualVector unit ~ unit, Scalar unit ~ ℂ
-  ) =>
-  BoundaryUnit unit
-  where
-    unitVector :: unit
-    scalarizeUnit :: LinearFunction ℂ unit ℂ
-    unscalarizeUnit :: LinearFunction ℂ ℂ unit
-
-instance BoundaryUnit (C 1) where
-  unitVector = oneC1
-  scalarizeUnit = scalarizeC1
-  unscalarizeUnit = unscalarizeC1
-
-instance BoundaryUnit (Complex Double) where
-  unitVector = 1 :+ 0
-  scalarizeUnit = LinearFunction Hask.id
-  unscalarizeUnit = LinearFunction Hask.id
-
--- | Left unitor when the boundary is the scalar field @s@ and
--- @TensorProduct s v ~ v@ (so @s ⊗ v@ is stored as @Tensor v@).
-lunitScalarLeg
-  :: forall v
-   . ( LSpace v, LSpace (Scalar v), Scalar (Scalar v) ~ Scalar v )
-  => (Scalar v ⊗ v) +> v
-lunitScalarLeg = arr (fromFlatTensor . transposeTensor) --  arr (LinearFunction getTensorProduct)
-
--- | Inverse of 'lunitScalarLeg' when @TensorProduct s v ~ v@ (@v +> s ⊗ v@).
-lunitScalarLegInv
-  :: forall v
-   . ( BoundaryUnit (Complex Double), Num' (Complex Double)
-     , LinearSpace v, TensorSpace v, TensorSpace (Complex Double ⊗ v)
-     , Scalar v ~ Complex Double
-     , TensorProduct (Complex Double) v ~ v )
-  => v +> (Complex Double ⊗ v)
-lunitScalarLegInv = arr (LinearFunction Tensor)
-
--- | Left unitor at an abstract boundary unit: @(unit ⊗ v) +> v@.
-lunitAt
-  :: forall unit v
-   . ( BoundaryUnit unit
-     , LinearSpace v, TensorSpace v, TensorSpace (unit ⊗ v)
-     , Scalar v ~ ℂ )
-  => (unit ⊗ v) +> v
-lunitAt = arr (fromFlatTensor . (fmapTensor -+$> scalarizeUnit @unit) . transposeTensor)
-
--- | Inverse left unitor: @v +> (unit ⊗ v)@.
-lunitInvAt
-  :: forall unit v
-   . ( BoundaryUnit unit
-     , LinearSpace v, TensorSpace v, TensorSpace (unit ⊗ v)
-     , Scalar v ~ ℂ )
-  => v +> (unit ⊗ v)
-lunitInvAt =
-  arr (transposeTensor . (fmapTensor -+$> unscalarizeUnit @unit) . toFlatTensor)
-
 -- | Left unitor at the @C 1@ boundary bond: @(C 1 ⊗ v) +> v@.
 lunit
   :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
   => (C 1 ⊗ v) +> v
-lunit = lunitAt @(C 1) @v
+lunit = undefined
 
 -- | Inverse left unitor: @v +> (C 1 ⊗ v)@.
 lunitInv
   :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
   => v +> (C 1 ⊗ v)
-lunitInv = lunitInvAt @(C 1) @v
+lunitInv = undefined
 
 -- | Right unitor: @(v ⊗ C 1) +> v@.
 runit
   :: forall v. (LinearSpace v, Scalar v ~ ℂ)
   => (v ⊗ C 1) +> v
 runit = arr (fromFlatTensor . (fmapTensor -+$> scalarizeC1))
-
--- | Inverse right unitor: @v +> (v ⊗ C 1)@.
-runitInv
-  :: forall v. (LinearSpace v, Scalar v ~ ℂ)
-  => v +> (v ⊗ C 1)
-runitInv = arr ((fmapTensor -+$> unscalarizeC1) . toFlatTensor)
-
--- | Fuse a tensor of bonds into a single typed bond, @(C a ⊗ C b) +> C (a·b)@.
---
--- This is the (strictifying) isomorphism between the typed tensor and its
--- flat bond space, realised through the backend's canonical array order
--- (co-lexicographic: fused index @j·a + i@ for @e_i ⊗ e_j@). It is the one
--- place where a basis order is chosen — by 'Dimensional', not by ad-hoc
--- matrix reshaping — and 'splitBond' is its exact inverse.
-fuseBond
-  :: forall a b. (KnownNat a, KnownNat b, KnownNat (a * b))
-  => (C a ⊗ C b) +> C (a * b)
-fuseBond = arr (LinearFunction (unsafeFromArray . asArray))
-  where
-    asArray :: (C a ⊗ C b) -> VS.Vector ℂ
-    asArray = toArray
-
--- -- | Inverse of 'fuseBond': @C (a·b) +> (C a ⊗ C b)@.
--- splitBond
---   :: forall a b. (KnownNat a, KnownNat b, KnownNat (a * b))
---   => C (a * b) +> (C a ⊗ C b)
--- splitBond = arr (LinearFunction (unsafeFromArray . asArray))
---   where
---     asArray :: C (a * b) -> VS.Vector ℂ
---     asArray = toArray
-
-
--- | Inverse of 'fuseBond': @C (a·b) +> (C a ⊗ C b)@.
-splitBond
-  :: forall a b v1 v2 w. (LinearSpace v1, LinearSpace v2, LinearSpace w, KnownNat a, KnownNat b, KnownNat (a * b), (a*b) `Dimensional` w, a `Dimensional` v1, b `Dimensional` v2, Scalar v1 ~ ℂ, Scalar v2 ~ ℂ, Scalar w ~ ℂ)
-  => w +> (v1 ⊗ v2)
-splitBond = arr (LinearFunction (unsafeFromArray . asArray))
-  where
-    asArray :: w -> VS.Vector ℂ
-    asArray = toArray
 
 -- | Entry-wise complex conjugation of a linear map, via 'vectorConjugate' on
 -- the map's own 'TensorSpace' structure (a @+>@ map is itself a vector).

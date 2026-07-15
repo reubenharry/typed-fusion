@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeApplications #-}
 import qualified Test.QuickCheck as QC
-import TensorNetwork.MPS.FinSupp3
+import TensorNetwork.MPS.FinSupp
 
 main :: IO ()
 main = do

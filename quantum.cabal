@@ -77,11 +77,11 @@ library
         TensorNetwork.Categorical.Props
         TensorNetwork.DMRG.Chain
         TensorNetwork.DMRG.Env
-        TensorNetwork.DMRG.Fixed3
-        TensorNetwork.DMRG.Fixed3SVD
-        TensorNetwork.MPS.Fixed3
+        TensorNetwork.DMRG.Fixed
+        TensorNetwork.DMRG.FixedSVD
+        TensorNetwork.MPS.Fixed
         TensorNetwork.MPS.General
-        TensorNetwork.MPS.FinSupp3
+        TensorNetwork.MPS.FinSupp.FinSupp
         TensorNetwork.DMRG.Concrete
         GroundState
         -- Off-roadmap experiments / scratch (kept building, see src/Experiments/)
@@ -95,22 +95,18 @@ library
         Experiments.Phi4
         Experiments.SVD
         Symmetry.FunctorU1Simple
-        DirectSum
+        Symmetry.DirectSum
 
     -- Modules included in this library but not exported.
     other-modules:
         TensorNetwork.MPS.LinmapStorage
-        TensorNetwork.MPS.Fixed3.Internal
-        TensorNetwork.MPS.Fixed3.Reference
-        TensorNetwork.MPS.FinSupp3.Internal
-        TensorNetwork.MPS.FinSupp3.Bond
-        TensorNetwork.MPS.FinSupp3.VectorSpace
-        TensorNetwork.MPS.FinSupp3.Physical
-        TensorNetwork.MPS.FinSupp3.Contraction
-        TensorNetwork.MPS.FinSupp3.Reference
-        TensorNetwork.MPS.FinSupp3.MPO
-        TensorNetwork.MPS.FinSupp3.InnerSpace
-        TensorNetwork.MPS.FinSupp3.Properties
+        TensorNetwork.MPS.FinSupp.Internal
+        TensorNetwork.MPS.FinSupp.Bond
+        TensorNetwork.MPS.FinSupp.VectorSpace
+        TensorNetwork.MPS.FinSupp.Physical
+        TensorNetwork.MPS.FinSupp.MPO
+        TensorNetwork.MPS.FinSupp.InnerSpace
+        TensorNetwork.MPS.FinSupp.Properties
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

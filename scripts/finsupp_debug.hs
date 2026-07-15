@@ -1,9 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
 import qualified Test.QuickCheck as QC
-import TensorNetwork.MPS.FinSupp3
-import TensorNetwork.MPS.FinSupp3.Reference (mpsToFlatReference)
-import TensorNetwork.MPS.FinSupp3.Physical (mpsToTensor, mpsFromPhysical)
+import TensorNetwork.MPS.FinSupp
+import TensorNetwork.MPS.FinSupp.Reference (mpsToFlatReference)
+import TensorNetwork.MPS.FinSupp.Physical (mpsToTensor, mpsFromPhysical)
 
 main :: IO ()
 main = do

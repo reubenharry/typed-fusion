@@ -1,4 +1,4 @@
-import TensorNetwork.MPS.Fixed3General (diagnoseExampleMPSInnerC22, exampleMPSInnerC22)
+import TensorNetwork.MPS.FixedGeneral (diagnoseExampleMPSInnerC22, exampleMPSInnerC22)
 
 main :: IO ()
 main = do

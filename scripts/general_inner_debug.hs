@@ -1,9 +1,9 @@
 {-# LANGUAGE TypeApplications #-}
 import Control.Exception (evaluate)
-import TensorNetwork.MPS.Fixed3General
+import TensorNetwork.MPS.FixedGeneral
   ( exampleMPSC22, mpsInner, withMPS3, BulkSite (..) )
 import TensorNetwork.Dagger (siteDagger)
-import TensorNetwork.MPS.Fixed3.Internal (basis)
+import TensorNetwork.MPS.Fixed.Internal (basis)
 
 main :: IO ()
 main = do

@@ -3,7 +3,7 @@
 
 import Test.QuickCheck (quickCheckResult)
 
-import TensorNetwork.DMRG.Fixed3
+import TensorNetwork.DMRG.Fixed
   ( prop_regaugeDepartRightPreservesMPS
   , prop_regaugeAfterRightGaugePreservesMPS
   , prop_rightGaugeMPSPreservesMPS

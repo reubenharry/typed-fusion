@@ -18,7 +18,7 @@
 
 -- | Direct sums of representation spaces, including growable @InfRep@ keyed
 -- by irrep label.
-module DirectSum
+module Symmetry.DirectSum
   ( Sector (..)
   , IrrepSlot (..)
   , InfRep (..)

@@ -9,7 +9,7 @@
 module Main where
 
 import Control.Monad.Identity (runIdentity)
-import TensorNetwork.DMRG.Fixed3
+import TensorNetwork.DMRG.Fixed
   ( DmrgResult (..)
   , denseGroundEnergyChain
   , dmrg

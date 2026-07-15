@@ -1,4 +1,4 @@
-import TensorNetwork.DMRG.Fixed3 (smokeDmrg)
+import TensorNetwork.DMRG.Fixed (smokeDmrg)
 
 main :: IO ()
 main = smokeDmrg

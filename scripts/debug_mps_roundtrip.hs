@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoStarIsType #-}
-import TensorNetwork.MPS.Fixed3
+import TensorNetwork.MPS.Fixed
 import Test.QuickCheck.Gen (unGen)
 import Test.QuickCheck.Random (mkQCGen)
 import Numeric.LinearAlgebra.Static (unwrap)

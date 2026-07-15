@@ -1,4 +1,4 @@
-import TensorNetwork.DMRG.Fixed3 (diagnoseDmrgGroundState)
+import TensorNetwork.DMRG.Fixed (diagnoseDmrgGroundState)
 
 main :: IO ()
 main = diagnoseDmrgGroundState

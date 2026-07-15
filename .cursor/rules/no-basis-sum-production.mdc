@@ -34,7 +34,7 @@ physicalCoefficient mps s1 s2 s3 =
 mpsInner psi phi = trace -+$> foldTransferInner (mpsConjugate psi) phi
 
 -- GOOD (Reference module only): explicit basis-sum oracle for QuickCheck
--- see TensorNetwork.MPS.Fixed3.Reference.mpsInnerReference
+-- see TensorNetwork.MPS.Fixed.Reference.mpsInnerReference
 ```
 
 ## Short form

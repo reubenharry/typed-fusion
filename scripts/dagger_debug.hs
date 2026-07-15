@@ -9,7 +9,7 @@ import Numeric.LinearAlgebra.Static (C)
 import qualified Data.Vector.Storable as VS
 import TensorNetwork.Dagger (siteDagger, siteDaggerVec)
 import TensorNetwork.Categorical.Props (genSiteMap)
-import TensorNetwork.MPS.Fixed3.Internal (basis)
+import TensorNetwork.MPS.Fixed.Internal (basis)
 import Test.QuickCheck (generate, Blind (..))
 
 main :: IO ()

@@ -1,6 +1,6 @@
 {-# LANGUAGE DataKinds #-}
-import TensorNetwork.MPS.Fixed3
-import TensorNetwork.DMRG.Fixed3
+import TensorNetwork.MPS.Fixed
+import TensorNetwork.DMRG.Fixed
 
 main :: IO ()
 main = diagnoseCentreOverlap

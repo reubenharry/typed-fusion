@@ -1,4 +1,4 @@
-import TensorNetwork.DMRG.Fixed3 (checkHeffOracle)
+import TensorNetwork.DMRG.Fixed (checkHeffOracle)
 
 main :: IO ()
 main = checkHeffOracle

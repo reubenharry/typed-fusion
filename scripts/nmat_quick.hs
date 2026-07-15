@@ -1,6 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 import Test.QuickCheck (quickCheckWith, stdArgs, maxSuccess)
-import TensorNetwork.DMRG.Fixed3
+import TensorNetwork.DMRG.Fixed
   ( prop_gMatIsIdentity
   , prop_nMatIsIdentityAtGaugedCentre
   , prop_nMatIsIdentityAfterSolveAndMove

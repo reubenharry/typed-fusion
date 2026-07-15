@@ -1,5 +1,5 @@
 {-# LANGUAGE DataKinds #-}
-import TensorNetwork.MPS.Fixed3General
+import TensorNetwork.MPS.FixedGeneral
 import Data.Complex (Complex)
 import Test.QuickCheck.Gen (unGen)
 import Test.QuickCheck.Random (mkQCGen)

@@ -20,8 +20,8 @@ import TensorNetwork.Categorical.Props
   , prop_daggerCnMatchesConjTranspose
   , prop_daggerSiteMatchesCoeff
   )
-import TensorNetwork.MPS.Fixed3General (prop_normFastMatchesSlow)
-import TensorNetwork.MPS.Fixed3
+import TensorNetwork.MPS.FixedGeneral (prop_normFastMatchesSlow)
+import TensorNetwork.MPS.Fixed
   ( prop_applySiteMatchesCoeff
   , prop_applyOpSiteMatchesCoeff
   , prop_conjSiteMatchesCoeff
@@ -42,7 +42,7 @@ import TensorNetwork.MPS.Fixed3
   , prop_canonicalMPSRoundTripP2
   , prop_canonicalMPSRoundTripP3
   )
-import TensorNetwork.MPS.FinSupp3
+import TensorNetwork.MPS.FinSupp
   ( prop_addThenFlattenVP2
   , prop_addThenFlattenVP3
   , prop_basisMPSMatchesPhysicalVP2
@@ -59,7 +59,7 @@ import TensorNetwork.MPS.FinSupp3
   , prop_composeMPOMatchesFlatVP2
   , prop_identityMPOVP2
   )
-import TensorNetwork.DMRG.Fixed3
+import TensorNetwork.DMRG.Fixed
   ( DmrgResult (..)
   , prop_effectiveHMatchesInner
   , prop_effectiveHMatchesMatrix
@@ -193,7 +193,7 @@ main = do
   requireQC =<< QC.quickCheckResult prop_innerConjugateSymmetric
   putStrLn "MPS norm-squared is real and non-negative..."
   requireQC =<< QC.quickCheckResult prop_normNonNegative
-  putStrLn "Fixed3General normFast matches normSlow..."
+  putStrLn "FixedGeneral normFast matches normSlow..."
   requireQC =<< QC.quickCheckResult prop_normFastMatchesSlow
   putStrLn "MPO transfer step matches explicit matrix formula..."
   requireQC =<< QC.quickCheckResult prop_mpoTransferStepMatchesMatrix
@@ -205,15 +205,15 @@ main = do
   requireQC =<< QC.quickCheckResult prop_mpoApplyMPSMatchesFlat
   putStrLn "Identity MPO matches MPS inner product..."
   requireQC =<< QC.quickCheckResult prop_identityMPOMatchesInner
-  putStrLn "Fixed3 SVD mpsFromFlat round-trips (p = 2)..."
+  putStrLn "Fixed SVD mpsFromFlat round-trips (p = 2)..."
   requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripP2
-  putStrLn "Fixed3 SVD mpsFromFlat on random flat C^8 (p = 2)..."
+  putStrLn "Fixed SVD mpsFromFlat on random flat C^8 (p = 2)..."
   requireQC =<< QC.quickCheckResult prop_mpsFromFlatOnRandomFlatP2
-  putStrLn "Fixed3 SVD mpsFromFlat round-trips (p = 3)..."
+  putStrLn "Fixed SVD mpsFromFlat round-trips (p = 3)..."
   requireQC =<< QC.quickCheckResult prop_mpsFromFlatRoundTripP3
-  putStrLn "Fixed3 SVD canonicalMPS round-trips (p = 2)..."
+  putStrLn "Fixed SVD canonicalMPS round-trips (p = 2)..."
   requireQC =<< QC.quickCheckResult prop_canonicalMPSRoundTripP2
-  putStrLn "Fixed3 SVD canonicalMPS round-trips (p = 3)..."
+  putStrLn "Fixed SVD canonicalMPS round-trips (p = 3)..."
   requireQC =<< QC.quickCheckResult prop_canonicalMPSRoundTripP3
   putStrLn "<y, Heff x> matches the full network contraction..."
   requireQC =<< QC.quickCheckResult prop_effectiveHMatchesInner

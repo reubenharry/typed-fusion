@@ -31,7 +31,7 @@ import TensorNetwork.Categorical.Props
   , prop_codomainIsStatic
   , prop_sliceVsExplicitDecode
   )
-import TensorNetwork.MPS.Fixed3
+import TensorNetwork.MPS.Fixed
   ( prop_transferStepMatchesMatrix
   , prop_innerMatchesReference
   , prop_innerConjugateSymmetric

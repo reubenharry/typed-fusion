@@ -1,5 +1,5 @@
 import GroundState (smokeRandomEffectiveHamiltonian)
-import TensorNetwork.DMRG.Fixed3 (smokeNetworkEffectiveHamiltonian)
+import TensorNetwork.DMRG.Fixed (smokeNetworkEffectiveHamiltonian)
 
 main :: IO ()
 main = do

@@ -7,7 +7,7 @@ import TensorNetwork.Categorical.Props
   , prop_tensorOfMapsBasisImages
   , prop_tensorOfMapsRecomposeRoundtrip
   )
-import TensorNetwork.MPS.Fixed3
+import TensorNetwork.MPS.Fixed
   ( prop_lTensorIdMatchesManual
   , prop_leftTransferMatchesApplySite
   , prop_bulkTransferMatchesApplySite

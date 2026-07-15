@@ -1,15 +1,15 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
 
-import TensorNetwork.DMRG.Fixed3
+import TensorNetwork.DMRG.Fixed
   ( regaugeDepartRight, rightGaugeMPS, toZipper, moveRight, solveCenterAt
   , theMPS, flatMaxDiff, tfimMPO, seededMPS222, energy
   , prop_regaugeAfterRightGaugePreservesMPS
   , prop_normalizeLeftAbsorb23, prop_normalizeLeftAbsorb12
   , normalizeLeft, absorbLeftBond
   )
-import TensorNetwork.MPS.Fixed3 (genMPS222, mpsToFlat)
-import TensorNetwork.MPS.Fixed3.Internal (mps3, withMPS3)
+import TensorNetwork.MPS.Fixed (genMPS222, mpsToFlat)
+import TensorNetwork.MPS.Fixed.Internal (mps3, withMPS3)
 import Test.QuickCheck (quickCheckResult)
 import Test.QuickCheck.Gen (unGen)
 import Test.QuickCheck.Random (mkQCGen)

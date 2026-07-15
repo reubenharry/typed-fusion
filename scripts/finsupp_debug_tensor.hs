@@ -1,6 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
-import TensorNetwork.MPS.FinSupp3
+import TensorNetwork.MPS.FinSupp
 
 main :: IO ()
 main = do

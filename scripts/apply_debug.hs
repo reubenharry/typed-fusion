@@ -14,7 +14,7 @@ import Data.VectorSpace (sumV, (*^))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 import qualified Numeric.LinearAlgebra as HMat
-import TensorNetwork.MPS.Fixed3.Internal (basis)
+import TensorNetwork.MPS.Fixed.Internal (basis)
 import Data.Complex (Complex((:+)))
 
 (=~=) :: Eq a => a -> a -> Bool

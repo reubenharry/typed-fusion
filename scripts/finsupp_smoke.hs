@@ -1,5 +1,5 @@
 import qualified Test.QuickCheck as QC
-import TensorNetwork.MPS.FinSupp3
+import TensorNetwork.MPS.FinSupp
 
 requireQC :: QC.Result -> IO ()
 requireQC (QC.Success{}) = pure ()

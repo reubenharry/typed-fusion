@@ -11,9 +11,7 @@
 -- entries; this orphan matches 'Numeric.LinearAlgebra.Static.COrphans' and
 -- the DMRG convention (bra conjugation via 'dagger' / 'vectorConjugate', not
 -- via a bilinear bond '<.>').
-module TensorNetwork.MPS.FinSupp3.InnerSpace
-  ( bondToC
-  ) where
+module TensorNetwork.MPS.FinSupp.InnerSpace where
 
 import Data.Complex (Complex, conjugate)
 import Data.Maybe (fromMaybe)
@@ -45,11 +43,3 @@ finsuppInner u v =
 instance InnerSpace Bond where
   FinSuppSeq u <.> FinSuppSeq v = finsuppInner u v
 
--- | Embed a bond vector into @C n@ (zero-padded); @n@ must cover active support.
-bondToC :: forall n. KnownNat n => Bond -> C n
-bondToC (FinSuppSeq v) =
-  fromMaybe (error "bondToC: dimension too small for bond support") $
-    create (LA.fromList (padTo dim (U.toList v)))
-  where
-    dim = fromIntegral (natVal (Proxy @n))
-    padTo k xs = xs ++ replicate (max 0 (k - length xs)) 0

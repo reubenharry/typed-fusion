@@ -6,30 +6,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE NoStarIsType #-}
 
-module TensorNetwork.MPS.FinSupp3.Bond
-  ( activeDimBond
-  , offsetBond
-  , offsetBondVec
-  , activeDimIntoBond
-  , offsetCodomainIntoBond
-  , isZeroBond
-  , activeDimCenterSite
-  , activeDimCenterOut
-  , activeDimRightSite
-  , padLinearMapDomain
-  , padCenterDomain
-  , padRightDomain
-  , bondDimMPS
-  , offsetBondInTensor
-  , addIntoBondMap
-  , fuseBondPair
-  , bondCoeff
-  , applyBondMap
-  , addBondPadded
-  , scaleBond
-  , applyBulkSiteBond
-  , applyBulkBondPhys
-  ) where
+module TensorNetwork.MPS.FinSupp.Bond where
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
@@ -39,10 +16,18 @@ import Math.LinearMap.Category
   ( type (+>), type (⊗), LinearMap (..), Tensor (..), AdditiveGroup (..), getLinearMap
   , VectorSpace ((*^)), Scalar, sumV )
 import GHC.TypeLits (KnownNat)
-import Numeric.LinearAlgebra.Static (C, Sized (extract))
+import Numeric.LinearAlgebra.Static (C, Sized (..))
 import qualified Data.Vector.Storable as VS
-import TensorNetwork.MPS.FinSupp3.Internal
-  ( Field, Bond, BulkSite (..), RightSite (..), LeftSite (..), MPS (..), vpDim )
+import Data.Complex (Complex)
+import TensorNetwork.MPS.General (BulkSite, MPS (..))
+import Linear.V (V)
+import GHC.TypeNats (natVal)
+import Data.Data (Proxy(..))
+import Data.Maybe (fromMaybe)
+import qualified Numeric.LinearAlgebra as LA
+
+type Field = Complex Double
+type Bond = FinSuppSeq Field
 
 bondCoeff :: Bond -> Int -> Field
 bondCoeff (FinSuppSeq v) i = if i < U.length v then v U.! i else 0
@@ -61,6 +46,16 @@ addBondPadded (FinSuppSeq a) (FinSuppSeq b) =
          (if i < U.length a then a U.! i else 0)
            + (if i < U.length b then b U.! i else 0)
 
+-- | Embed a bond vector into @C n@ (zero-padded); @n@ must cover active support.
+bondToC :: forall n. KnownNat n => Bond -> C n
+bondToC (FinSuppSeq v) =
+  fromMaybe (error "bondToC: dimension too small for bond support") $
+    create (LA.fromList (padTo dim (U.toList v)))
+  where
+    dim = fromIntegral (natVal (Proxy @n))
+    padTo k xs = xs ++ replicate (max 0 (k - length xs)) 0
+
+
 applyBondMap :: (VectorSpace w, Scalar w ~ Field) => Bond -> Bond +> w -> w
 applyBondMap b (LinearMap imgs) =
   let n = max (bondLength b) (length imgs)
@@ -73,21 +68,24 @@ applyBondMap b (LinearMap imgs) =
       | i < length imgs = imgs !! i
       | otherwise       = zeroV
 
-applyBulkSiteBond :: KnownNat p => BulkSite p -> Bond -> Int -> Bond
-applyBulkSiteBond (BulkSite (LinearMap imgs)) bond s =
-  foldr addBondPadded (FinSuppSeq U.empty) $
-    [ scaleBond (bondCoeff bond i) (rows V.! s)
-    | (i, Tensor rows) <- zip [0 ..] imgs
-    ]
+-- applyBulkSiteBond :: KnownNat p => V p (BulkSite Bond phys) -> Bond -> Int -> Bond
+-- applyBulkSiteBond ( (LinearMap imgs)) bond s =
+--   foldr addBondPadded (FinSuppSeq U.empty) $
+--     [ scaleBond (bondCoeff bond i) (rows V.! s)
+--     | (i, Tensor rows) <- zip [0 ..] imgs
+--     ]
+
+vpDim :: forall p. KnownNat p => Int
+vpDim = fromIntegral (natVal (Proxy @p))
 
 cvpCoeff :: KnownNat p => C p -> Int -> Field
 cvpCoeff v s = (VS.toList (extract v)) !! s
 
 -- | Apply a bulk site to a bond vector and full physical vector.
-applyBulkBondPhys :: forall p. KnownNat p => BulkSite p -> Bond -> C p -> Bond
+applyBulkBondPhys :: forall p phys. KnownNat p => V p (BulkSite Bond phys) -> Bond -> C p -> Bond
 applyBulkBondPhys site bond phys =
   sumV
-    [ cvpCoeff phys s *^ applyBulkSiteBond site bond s
+    [ cvpCoeff phys s *^ undefined site bond s
     | s <- [0 .. vpDim @p - 1]
     ]
 
@@ -158,14 +156,14 @@ padRightDomain
 padRightDomain chi (LinearMap imgs) =
   LinearMap (padLinearMapDomain chi imgs)
 
-bondDimMPS :: forall vp. KnownNat vp => MPS vp -> Int
-bondDimMPS (MPS (LeftSite l) (BulkSite c) (RightSite r)) =
-  maximum
-    [ activeDimIntoBond (getLinearMap l)
-    , activeDimCenterSite (getLinearMap c)
-    , activeDimCenterOut (getLinearMap c)
-    , activeDimRightSite (getLinearMap r)
-    ]
+bondDimMPS :: forall vp phys. KnownNat vp => MPS Bond phys vp -> Int
+bondDimMPS (MPS ( l) ( c) ( r)) = undefined
+    -- maximum
+    --   [ activeDimIntoBond (getLinearMap l)
+    --   -- , activeDimCenterSite (getLinearMap c)
+    --   -- , activeDimCenterOut (getLinearMap c)
+    --   -- , activeDimRightSite (getLinearMap r)
+    --   ]
 
 offsetBondInTensor
   :: Int -> (C vp ⊗ Bond) -> (C vp ⊗ Bond)
