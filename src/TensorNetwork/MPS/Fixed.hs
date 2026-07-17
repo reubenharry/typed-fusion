@@ -33,7 +33,7 @@ module TensorNetwork.MPS.Fixed where
 
 import Prelude hiding (id, ($), (.))
 import qualified Control.Category.Constrained as Cat
-import Control.Category.Constrained (id)
+import Control.Category.Constrained (id, (.))
 import Control.Arrow.Constrained (($))
 import Math.LinearMap.Category
   ( type (+>), type (⊗), Tensor (..)
@@ -87,6 +87,8 @@ import Linear (V1(..))
 import Random.Arbitrary
 import TensorNetwork.MPS.General
 
+genMPSC :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (MPS (C n) (C m) q)
+genMPSC = MPS <$> genEndo <*> genBulkSiteC2 <*> genEndo
 
 --------------------------------------------------------------------------------
 -- Concrete @C 2@ example ('TransferCtx' only — no 'PhysicalCtx')
@@ -126,6 +128,8 @@ normFast mps = mpsInner hermitianNorm hermitianNorm mps mps
 normSlow :: forall n m q . (KnownNat n, KnownNat m, 1 ~ q) => MPS (C n) (C m) q -> Complex Double
 normSlow mps =  toPhysicalMPS hermitianNorm mps <.> toPhysicalMPS hermitianNorm mps
 
+
+
 -- smallComplex :: QC.Gen (Complex Double)
 -- smallComplex = do
 --   re <- QC.elements [-2 .. 2]
@@ -138,8 +142,6 @@ normSlow mps =  toPhysicalMPS hermitianNorm mps <.> toPhysicalMPS hermitianNorm 
 -- genBulkSiteC2 :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (V q ((C n ⊗ C m) +> C n))
 -- genBulkSiteC2 = pure $ V $ Vector.replicate (fromIntegral (natVal (Proxy @q))) (LinearMap (konst 1))
 
-genMPSC :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (MPS (C n) (C m) q)
-genMPSC = MPS <$> genEndo <*> genBulkSiteC2 <*> genEndo
 
 -- complexApproxEq :: Double -> Complex Double -> Complex Double -> Bool
 -- complexApproxEq tol z w =
@@ -195,6 +197,47 @@ exampleFoo = f where
   tensor = getAntilinearFunction vectorConjugate $ transposeTensor $ coerce f :: DualVector (DualVector (C 2)) ⊗ DualVector (C 2 ⊗ C 2)
   lm = coerce tensor :: DualVector (C 2) +> DualVector (C 2 ⊗ C 2)
 
+exampleMPO :: MPO (C 2) (C 2) 1
+exampleMPO = MPO (LinearMap $ konst 1) (toV $ V1 $ LinearMap $ konst 1) (LinearMap $ konst 1)
+
+exampleMPOFlat :: LinearMap (Complex Double) (C 8) (C 8)
+exampleMPOFlat = physical3ToFlat . toPhysicalMPO exampleMPO . physical3FromFlat
+
+
+slowSandwich :: Complex Double
+slowSandwich = toPhysicalMPS (hermitianNorm) exampleMPSC22 <.> (toPhysicalMPO exampleMPO $ toPhysicalMPS (hermitianNorm) exampleMPSC22)
+
+fastSandwich :: Complex Double
+fastSandwich = mpsMPOInner (hermitianNorm) (hermitianNorm) exampleMPSC22 exampleMPO exampleMPSC22
+
+-- | Exact MPO×MPS product (bond stays @C 2 ⊗ C 2@).
+exampleApplyExact :: MPS (C 2 ⊗ C 2) (C 2) 1
+exampleApplyExact = mpoApplyExact exampleMPO exampleMPSC22
+
+-- | Same product after fusing the Kronecker bond to @C 4@.
+exampleApplyFused :: MPS (C 4) (C 2) 1
+exampleApplyFused = fuseMPSBond exampleApplyExact
+
+-- | Truncated product back on the original bond @C 2@.
+exampleApplyMPS :: MPS (C 2) (C 2) 1
+exampleApplyMPS = mpoApplyMPS exampleMPO exampleMPSC22
+
+-- | Dense oracle: flatten MPO applied to flattened MPS.
+slowApplyFlat :: C 8
+slowApplyFlat =
+  physical3ToFlat
+    $ toPhysicalMPO exampleMPO
+    $ toPhysicalMPS hermitianNorm exampleMPSC22
+
+-- | Truncated apply, then flatten (matches 'slowApplyFlat' when rank ≤ χ).
+fastApplyFlat :: C 8
+fastApplyFlat =
+  physical3ToFlat $ toPhysicalMPS hermitianNorm exampleApplyMPS
+
+-- | Exact product on the fused @C 4@ bond, flattened — oracle for 'mpoApplyExact'.
+exactApplyFlat :: C 8
+exactApplyFlat =
+  physical3ToFlat $ toPhysicalMPS hermitianNorm exampleApplyFused
 
 -- -- | Thin SVD with bond truncation/padding to a typed width @b@.
 -- --

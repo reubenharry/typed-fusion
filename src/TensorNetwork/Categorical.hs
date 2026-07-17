@@ -19,8 +19,21 @@
 --     @f ⊗^ g : (u ⊗ u') +> (v ⊗ v')@;
 --   * 'swapMap', 'lassocMap', 'rassocMap' — braiding and associators as
 --     first-class @+>@ morphisms;
---   * 'lunit' \/ 'runit' (and inverses) — the @C 1@ boundary unitors.
-module TensorNetwork.Categorical where
+--   * 'lunit' \/ 'runit' (and inverses) — the @C 1@ boundary unitors;
+--   * 'fuseBond' \/ 'splitBond' — the Kronecker isomorphism
+--     @C a ⊗ C b ≅ C (a·b)@ via matching 'toArray' layouts.
+module TensorNetwork.Categorical
+  ( (⊗^)
+  , swapMap
+  , lassocMap
+  , rassocMap
+  , lunit
+  , lunitInv
+  , runit
+  , fuseBond
+  , splitBond
+  , conjugateMap
+  ) where
 
 import Prelude hiding (($), (.))
 import qualified Prelude as Hask
@@ -117,6 +130,25 @@ runit
   :: forall v. (LinearSpace v, Scalar v ~ ℂ)
   => (v ⊗ C 1) +> v
 runit = arr (fromFlatTensor . (fmapTensor -+$> scalarizeC1))
+
+-- | Kronecker fusion @C a ⊗ C b → C (a·b)@, via matching 'toArray' layouts
+-- (same representation as the static @C (a·b)@ buffer — not 'unsafeCoerce').
+fuseBond
+  :: forall a b. (KnownNat a, KnownNat b, KnownNat (a * b))
+  => (C a ⊗ C b) +> C (a * b)
+fuseBond = arr (LinearFunction (unsafeFromArray . asArray))
+  where
+    asArray :: (C a ⊗ C b) -> VS.Vector ℂ
+    asArray = toArray
+
+-- | Inverse of 'fuseBond': @C (a·b) → C a ⊗ C b@.
+splitBond
+  :: forall a b. (KnownNat a, KnownNat b, KnownNat (a * b))
+  => C (a * b) +> (C a ⊗ C b)
+splitBond = arr (LinearFunction (unsafeFromArray . asArray))
+  where
+    asArray :: C (a * b) -> VS.Vector ℂ
+    asArray = toArray
 
 -- | Entry-wise complex conjugation of a linear map, via 'vectorConjugate' on
 -- the map's own 'TensorSpace' structure (a @+>@ map is itself a vector).

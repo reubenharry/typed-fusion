@@ -36,17 +36,19 @@ import Math.LinearMap.Category
   , TensorSpace (..), LinearSpace (..), HilbertSpace, DualVector
   , trace, (-+$>), LinearMap (LinearMap), getLinearMap
   , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun, SemilinearFunction (SemilinearFunction), VectorSpace (..), Num' )
-import Numeric.LinearAlgebra.Static (Sized (konst))
+import Numeric.LinearAlgebra.Static
+  ( Sized (konst, create, extract, fromList)
+  , C, M, R, Domain (diagR), complex, mul
+  )
 import Math.LinearMap.Category.Instances ()
 import Math.OrphanInstances ()
 import Control.Category.Constrained (id)
 import GHC.TypeLits (KnownNat, type (*), type (<=), type (-), type (+))
 import Numeric.LinearAlgebra.Static.COrphans ()
-import Numeric.LinearAlgebra.Static (C, Sized (fromList))
 import Math.LinearMap.Category.Backend.HMatrix ()
 import TensorNetwork.MPS.LinmapStorage
 import TensorNetwork.Categorical
-  ( (⊗^)
+  ( (⊗^), swapMap, lassocMap, rassocMap, fuseBond, splitBond
    )
 import Data.Coerce (coerce)
 import qualified Debug.Trace as Debug
@@ -60,6 +62,7 @@ import Data.Maybe (fromMaybe)
 import Linear (V1(..))
 import Data.Foldable (Foldable(toList))
 import qualified Data.Vector as Vector
+import qualified Numeric.LinearAlgebra as HM
 import Data.VectorSpace.Free (FinSuppSeq(..))
 import Data.VectorSpace.Free.FiniteSupportedSequence
 import qualified Data.Vector.Unboxed as U
@@ -137,6 +140,77 @@ toPhysicalMPS (FullNorm _ lw) mps = (fmapTensor -+$> toTensorWithNorm lw)
   . arr lw
   )
 
+-- | ((w ⊗ p') ⊗ p) → ((w ⊗ p) ⊗ p'): swap the two physical legs past each
+-- other while leaving the bond fixed (used between left/bulk and bulk/right).
+rearrangeBondPhys
+  :: forall bond phys. MPSConstraints bond phys =>
+  ((bond ⊗ phys) ⊗ phys) +> ((bond ⊗ phys) ⊗ phys)
+rearrangeBondPhys =
+  lassocMap
+    . (Cat.id ⊗^ swapMap)
+    . rassocMap
+
+-- | ((w ⊗ p₂') ⊗ p₁') ⊗ p₃ → (w ⊗ p₃) ⊗ (p₁' ⊗ p₂')
+prepMPORight
+  :: forall bond phys. MPSConstraints bond phys =>
+  (((bond ⊗ phys) ⊗ phys) ⊗ phys) +> ((bond ⊗ phys) ⊗ (phys ⊗ phys))
+prepMPORight =
+  (Cat.id ⊗^ swapMap)
+    . lassocMap
+    . (Cat.id ⊗^ swapMap)
+    . rassocMap
+    . (rassocMap ⊗^ Cat.id)
+
+-- | p₃' ⊗ (p₁' ⊗ p₂') → p₁' ⊗ (p₂' ⊗ p₃')
+reorderPhysical3
+  :: forall phys.
+  (LSpace phys, Scalar phys ~ Complex Double) =>
+  (phys ⊗ (phys ⊗ phys)) +> (phys ⊗ (phys ⊗ phys))
+reorderPhysical3 =
+  (Cat.id ⊗^ swapMap)
+    . rassocMap
+    . (swapMap ⊗^ Cat.id)
+    . lassocMap
+
+-- | Flatten a three-site MPO to a physical endomorphism on @OTimes 3 phys@.
+-- Pure morphism wiring (no Riesz / basis sums): left, then bulk, then right,
+-- with associators/swaps to expose the bond–physical pair at each step.
+toPhysicalMPO
+  :: forall bond phys. MPSConstraints bond phys =>
+  MPO bond phys 1 -> OTimes 3 phys +> OTimes 3 phys
+toPhysicalMPO (MPO l bulk r) =
+  reorderPhysical3
+    . (r ⊗^ Cat.id)
+    . prepMPORight
+    . ((b ⊗^ Cat.id) ⊗^ Cat.id)
+    . (rearrangeBondPhys ⊗^ Cat.id)
+    . lassocMap
+    . (l ⊗^ Cat.id)
+  where
+    b = bulk ^. _1
+
+-- | @OTimes 3 (C p) → C (p³)@: associate left, then fuse pairwise via 'fuseBond'.
+--
+--   @C p ⊗ (C p ⊗ C p)  ≅  (C p ⊗ C p) ⊗ C p  ≅  C (p·p) ⊗ C p  ≅  C ((p·p)·p)@
+physical3ToFlat
+  :: forall p.
+  (KnownNat p, KnownNat (p * p), KnownNat (p * p * p)) =>
+  OTimes 3 (C p) +> C (p * p * p)
+physical3ToFlat =
+  fuseBond @(p * p) @p
+    . (fuseBond @p @p ⊗^ Cat.id)
+    . lassocMap
+
+-- | Inverse of 'physical3ToFlat': @C (p³) → OTimes 3 (C p)@.
+physical3FromFlat
+  :: forall p.
+  (KnownNat p, KnownNat (p * p), KnownNat (p * p * p)) =>
+  C (p * p * p) +> OTimes 3 (C p)
+physical3FromFlat =
+  rassocMap
+    . (splitBond @p @p ⊗^ Cat.id)
+    . splitBond @(p * p) @p
+
 postCompose :: (Scalar  v ~ Scalar w, LinearSpace w, LinearSpace v, Num' (Scalar w)) => (v +> w) -> (w +> v) +> (w +> w)
 postCompose f = arr (composeLinear -+$> f)
 
@@ -177,13 +251,227 @@ mpsInner nb np (MPS lB bB rB) (MPS lK bK rK) =
     transfers = uncurry (transferBulkSite nb np) <$> zip (toList bB) (toList bK)
     transferBulk = foldr (.) Cat.id transfers
 
-instance (KnownNat n, KnownNat m, KnownNat (m*n), KnownNat (n*m), vb ~ C n, vp ~ C m, KnownNat q) => Show (MPS vb vp q) where show (MPS l b r) = "MPS: Left site is: " ++ show (getLinearMap l) ++ " \nBulk site is: " ++ show (getLinearMap <$>  b) ++ " \nRight site is: " ++ show (getLinearMap r)
+-- | Left-to-right ⟨ψ|H|φ⟩ environment: bra bond ↦ MPO bond ⊗ ket bond.
 
-mpsMPOContraction
+-- | MPO-column wiring (Fixed 'opWire'): route the physical leg on the right of
+-- a @(mpoBond ⊗ ketBond) ⊗ phys@ through the MPO site then the ket site.
+--
+--   @((w ⊗ k) ⊗ p)  +>  (w ⊗ k)@
+opWire
+  :: forall bond phys.
+  MPSConstraints bond phys =>
+  ((bond ⊗ phys) +> (bond ⊗ phys))
+  -> ((bond ⊗ phys) +> bond)
+  -> (((bond ⊗ bond) ⊗ phys) +> (bond ⊗ bond))
+opWire op ket =
+  (Cat.id ⊗^ ket)
+    . (Cat.id ⊗^ swapMap)
+    . rassocMap
+    . (op ⊗^ Cat.id)
+    . lassocMap
+    . (Cat.id ⊗^ swapMap)
+    . rassocMap
+
+-- | Left boundary ⟨bra|op|ket⟩ transfer: no incoming environment.
+transferMPOLeftSite
+  :: forall bond phys. MPSConstraints bond phys =>
+  FullNorm bond -> FullNorm phys ->
+  LeftSite bond phys
+  -> (phys +> (bond ⊗ phys))
+  -> LeftSite bond phys
+  -> (bond +> (bond ⊗ bond))
+transferMPOLeftSite nb np bra op ket =
+  (Cat.id ⊗^ ket) . op . dagger nb np bra
+
+-- | Bulk ⟨bra|op|ket⟩ transfer update.
+transferMPOBulkSite
+  :: forall bond phys. MPSConstraints bond phys =>
+  FullNorm bond -> FullNorm phys ->
+  BulkSite bond phys
+  -> ((bond ⊗ phys) +> (bond ⊗ phys))
+  -> BulkSite bond phys
+  -> (bond +> (bond ⊗ bond))
+  -> (bond +> (bond ⊗ bond))
+transferMPOBulkSite nb np bra op ket env =
+  opWire op ket . (env ⊗^ Cat.id) . siteDagger nb np nb bra
+
+-- | Right boundary close: dagger the bra, apply op after the ket physical
+-- leg, then trace.
+transferMPORightSite
+  :: forall bond phys. MPSConstraints bond phys =>
+  FullNorm bond -> FullNorm phys ->
+  RightSite bond phys
+  -> ((bond ⊗ phys) +> phys)
+  -> RightSite bond phys
+  -> (bond +> (bond ⊗ bond))
+  -> Scalar bond
+transferMPORightSite nb np bra op ket env =
+  trace $ dagger np nb bra . op . (Cat.id ⊗^ ket) . env
+
+-- | ⟨ψ|H|φ⟩ via left-to-right MPO–MPS transfer, same fold style as 'mpsInner'.
+mpsMPOInner
   :: forall bond phys (n :: Nat).
   MPSConstraints bond phys =>
-  FullNorm bond -> FullNorm phys -> MPO bond phys n -> MPS bond phys n -> MPO bond phys n
-mpsMPOContraction nb np (MPO lB bB rB) (MPS lK bK rK) = undefined
+  FullNorm bond -> FullNorm phys ->
+  MPS bond phys n -> MPO bond phys n -> MPS bond phys n -> Scalar bond
+mpsMPOInner nb np (MPS lB bB rB) (MPO lO bO rO) (MPS lK bK rK) =
+  transferMPORightSite nb np rB rO rK $
+    transferBulk $
+      transferMPOLeftSite nb np lB lO lK
+  where
+    transfers =
+      (\(bra, op, ket) -> transferMPOBulkSite nb np bra op ket)
+        <$> zip3 (toList bB) (toList bO) (toList bK)
+    transferBulk = foldr (.) Cat.id transfers
+
+--------------------------------------------------------------------------------
+-- MPO × MPS (exact product bond, then SVD truncate to fixed χ)
+--------------------------------------------------------------------------------
+
+-- | Apply an MPO to an MPS sitewise. The product bond stays in tensor form
+-- @bond ⊗ bond@ (no truncation).
+mpoApplyExact
+  :: forall bond phys (n :: Nat).
+  MPSConstraints bond phys =>
+  MPO bond phys n -> MPS bond phys n -> MPS (bond ⊗ bond) phys n
+mpoApplyExact (MPO lO bO rO) (MPS lK bK rK) =
+  MPS
+    ((Cat.id ⊗^ lK) . lO)
+    (V . Vector.fromList $ zipWith opWire (toList bO) (toList bK))
+    (rO . (Cat.id ⊗^ rK))
+
+-- | Fuse a Kronecker product bond @C a ⊗ C b@ into @C (a·b)@ on every site.
+fuseMPSBond
+  :: forall a b p (n :: Nat).
+  ( KnownNat a, KnownNat b, KnownNat p, KnownNat (a * b)
+  , KnownNat ((a * b) * p), KnownNat (p * (a * b))
+  , MPSConstraints (C a ⊗ C b) (C p)
+  , MPSConstraints (C (a * b)) (C p)
+  ) =>
+  MPS (C a ⊗ C b) (C p) n -> MPS (C (a * b)) (C p) n
+fuseMPSBond (MPS l bulk r) =
+  MPS
+    (fuseBond @a @b . l)
+    ((\s -> fuseBond @a @b . s . (splitBond @a @b ⊗^ Cat.id)) <$> bulk)
+    (r . splitBond @a @b)
+
+createOrFail :: Sized t s d => d t -> s
+createOrFail = fromMaybe (error "createOrFail: size mismatch") . create
+
+-- | Pad or truncate matrix columns to width @n@.
+fitColsHM :: Int -> HM.Matrix (Complex Double) -> HM.Matrix (Complex Double)
+fitColsHM n m
+  | HM.cols m >= n = HM.subMatrix (0, 0) (HM.rows m, n) m
+  | otherwise      = m HM.||| HM.konst 0 (HM.rows m, n - HM.cols m)
+
+-- | Pad or truncate matrix rows to height @n@.
+fitRowsHM :: Int -> HM.Matrix (Complex Double) -> HM.Matrix (Complex Double)
+fitRowsHM n m
+  | HM.rows m >= n = HM.subMatrix (0, 0) (n, HM.cols m) m
+  | otherwise      = HM.konst 0 (n - HM.rows m, HM.cols m) HM.=== m
+
+fitSingularBondFromHM :: forall b. KnownNat b => HM.Vector Double -> R b
+fitSingularBondFromHM s =
+  createOrFail $
+    let b = fromIntegral (natVal (Proxy @b))
+        xs = HM.toList s
+    in HM.fromList $
+         if length xs >= b then take b xs else xs ++ replicate (b - length xs) 0
+
+-- | Thin SVD with bond truncation/padding to a typed width @b@.
+--
+-- Returns @U@ (@M m b@), singular values (@R b@), and @Vᵀ@ (@M b n@) with
+-- @M ≈ U · diag s · Vᵀ@. Dynamic 'extract' only at the LAPACK boundary.
+svdCut
+  :: forall m n b. (KnownNat m, KnownNat n, KnownNat b)
+  => M m n -> (M m b, R b, M b n)
+svdCut mat =
+  let b = fromIntegral (natVal (Proxy @b))
+      (u, s, v) = HM.thinSVD (extract mat)
+  in ( createOrFail (fitColsHM b u)
+     , fitSingularBondFromHM @b s
+     , createOrFail (fitRowsHM b (HM.tr v))
+     )
+
+-- | Factor @C dom +> C cod@ as @(C dom +> C χ) ; (C χ +> C cod)@, keeping the
+-- leading @χ@ singular values (pad with zeros if rank is smaller).
+svdSplit
+  :: forall dom cod χ.
+  (KnownNat dom, KnownNat cod, KnownNat χ) =>
+  C dom +> C cod -> (C dom +> C χ, C χ +> C cod)
+svdSplit (LinearMap lm) =
+  let (u, s, vt) = svdCut @cod @dom @χ lm
+  in ( LinearMap (mul (diagR 0 (complex s)) vt)
+     , LinearMap u
+     )
+
+-- | Flatten @(bond ⊗ physical)@ for a left-looking SVD cut.
+siteForLeftSVD
+  :: forall bl p br.
+  ( KnownNat bl, KnownNat p, KnownNat br
+  , KnownNat (p * bl), KnownNat (bl * p)
+  , p * bl ~ bl * p
+  ) =>
+  (C bl ⊗ C p) +> C br -> C (bl * p) +> C br
+siteForLeftSVD f = f . swapMap . splitBond @p @bl
+
+-- | Inverse of 'siteForLeftSVD'.
+siteFromLeftSVD
+  :: forall bl p br.
+  ( KnownNat bl, KnownNat p, KnownNat br
+  , KnownNat (p * bl), KnownNat (bl * p)
+  , p * bl ~ bl * p
+  ) =>
+  C (bl * p) +> C br -> (C bl ⊗ C p) +> C br
+siteFromLeftSVD g = g . fuseBond @p @bl . swapMap
+
+-- | Left-to-right TT-SVD: truncate every internal bond from @C big@ to @C χ@.
+compressMPS
+  :: forall big χ p (n :: Nat).
+  ( KnownNat big, KnownNat χ, KnownNat p
+  , KnownNat (big * p), KnownNat (p * big)
+  , KnownNat (χ * p), KnownNat (p * χ)
+  , χ * p ~ p * χ
+  ) =>
+  MPS (C big) (C p) n -> MPS (C χ) (C p) n
+compressMPS (MPS l bulk r) =
+  let (l', g0) = svdSplit @p @big @χ l
+      (bulk', gFinal) = go g0 (toList bulk)
+  in MPS l' (V (Vector.fromList bulk')) (r . gFinal)
+  where
+    go
+      :: C χ +> C big
+      -> [(C big ⊗ C p) +> C big]
+      -> ([(C χ ⊗ C p) +> C χ], C χ +> C big)
+    go g [] = ([], g)
+    go g (s : ss) =
+      let absorbed = s . (g ⊗^ Cat.id)
+          flat = siteForLeftSVD @χ @p @big absorbed
+          (u, g') = svdSplit @(χ * p) @big @χ flat
+          s' = siteFromLeftSVD @χ @p @χ u
+          (rest, gFinal) = go g' ss
+      in (s' : rest, gFinal)
+
+-- | Apply an MPO to an MPS and SVD-truncate the product bond @n·n@ back to @n@.
+--
+-- Exact site product lives at @C n ⊗ C n@; 'fuseMPSBond' then 'compressMPS'
+-- recover a same-type @MPS (C n) (C p)@.
+mpoApplyMPS
+  :: forall n p (q :: Nat).
+  ( KnownNat n, KnownNat p, KnownNat (n * n)
+  , KnownNat (n * p), KnownNat (p * n)
+  , KnownNat ((n * n) * p), KnownNat (p * (n * n))
+  , KnownNat (n * (n * p)), KnownNat ((n * p) * n)
+  , n * p ~ p * n
+  , MPSConstraints (C n) (C p)
+  , MPSConstraints (C n ⊗ C n) (C p)
+  , MPSConstraints (C (n * n)) (C p)
+  ) =>
+  MPO (C n) (C p) q -> MPS (C n) (C p) q -> MPS (C n) (C p) q
+mpoApplyMPS op psi =
+  compressMPS @(n * n) @n @p (fuseMPSBond (mpoApplyExact op psi))
+
+instance (KnownNat n, KnownNat m, KnownNat (m*n), KnownNat (n*m), vb ~ C n, vp ~ C m, KnownNat q) => Show (MPS vb vp q) where show (MPS l b r) = "MPS: Left site is: " ++ show (getLinearMap l) ++ " \nBulk site is: " ++ show (getLinearMap <$>  b) ++ " \nRight site is: " ++ show (getLinearMap r)
 
 
 -- | Print the concrete inner product (for REPL / smoke scripts).
