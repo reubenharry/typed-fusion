@@ -2,44 +2,56 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE PatternSynonyms #-}
 
-module TensorNetwork.MPS.FinSupp.FinSupp where
+module TensorNetwork.MPS.FinSupp.FinSupp
+  ( -- * Re-exports
+    module TensorNetwork.MPS.FinSupp.MPO
+  , Bond
+  , InfBond
+  , mpsInfBond
+  , infNorm
+  , normInf
+  ) where
+
 import TensorNetwork.MPS.General
-import Data.VectorSpace.Free
+import TensorNetwork.MPS.FinSupp.MPO
+import TensorNetwork.MPS.FinSupp.Bond (Bond)
+import TensorNetwork.MPS.FinSupp.InnerSpace ()
 import Data.Complex
+import Data.VectorSpace (InnerSpace ((<.>)), Scalar)
 import Math.LinearMap.Category
 import Math.LinearMap.Asserted
-import Data.VectorSpace.Free (FinSuppSeq(..))
-import Data.VectorSpace.Free.FiniteSupportedSequence
-import Linear.V1 (V1(..))
-
-
-import Math.LinearMap.Category (type (-+>))
-import Numeric.LinearAlgebra.Static hiding ((<.>))
+import Data.VectorSpace.Free.FiniteSupportedSequence (FinSuppSeq (..))
+import Linear.V1 (V1 (..))
+import Linear.V (toV)
 import qualified Data.Vector.Unboxed as U
-import Linear.V
-import Control.Arrow.Constrained (EnhancedCat(arr))
+import Numeric.LinearAlgebra.Static hiding ((<.>))
+import qualified Prelude as Prelude
 import Prelude hiding (id, ($), (.))
-import qualified Control.Category.Constrained as Cat
 import Control.Category.Constrained ((.))
 import Control.Arrow.Constrained (($), arr)
+import Math.LinearMap.Category (type (-+>), pattern LinearFunction, lfun)
 
-mpsInfBond :: MPS (FinSuppSeq (Complex Double)) (C 2) 1
-mpsInfBond = MPS 
-  { mpsLeft = LinearMap [FinSuppSeq $ U.fromList [2,2]]
-  , mpsBulk = toV $ V1 $ LinearMap []
-  , mpsRight = LinearMap [2, 2,2,2]
+mpsInfBond :: MPS Bond (C 2) 1
+mpsInfBond = MPS
+  { mpsLeft = LinearMap [FinSuppSeq Prelude.$ U.fromList [2, 2]]
+  , mpsBulk = toV Prelude.$ V1 Prelude.$ LinearMap []
+  , mpsRight = LinearMap [2, 2, 2, 2]
   }
 
-type InfBond = FinSuppSeq (Complex Double)
+type InfBond = Bond
 
 lowerInf :: InfBond -+> DualVector InfBond
-lowerInf = lfun $ \x -> fromLinearForm $ (arr (LinearFunction (<.> x) ) :: InfBond +> Scalar InfBond )
+lowerInf = lfun Prelude.$ \x -> fromLinearForm $ (arr (LinearFunction (<.> x)) :: InfBond +> Scalar InfBond)
 
 raiseInf :: DualVector InfBond -+> InfBond
-raiseInf = lfun $ \x -> [0]
+raiseInf = lfun Prelude.$ \_ -> [0]
 
-infNorm :: FullNorm (FinSuppSeq (Complex Double))
-infNorm = FullNorm (lowerInf) (raiseInf)
+infNorm :: FullNorm Bond
+infNorm = FullNorm lowerInf raiseInf
 
+normInf :: Complex Double
 normInf = mpsInner infNorm hermitianNorm mpsInfBond mpsInfBond

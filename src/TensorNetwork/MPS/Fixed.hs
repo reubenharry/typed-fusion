@@ -84,11 +84,15 @@ import qualified Debug.Trace as Debug
 import GHC.TypeLits (Nat)
 import Linear.V (Finite (..))
 import Linear (V1(..))
+import Control.Lens ((^.), _1)
 import Random.Arbitrary
 import TensorNetwork.MPS.General
 
 genMPSC :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (MPS (C n) (C m) q)
 genMPSC = MPS <$> genEndo <*> genBulkSiteC2 <*> genEndo
+
+genMPOC :: QC.Gen (MPO (C 2) (C 2) 1)
+genMPOC = pure exampleMPO
 
 --------------------------------------------------------------------------------
 -- Concrete @C 2@ example ('TransferCtx' only — no 'PhysicalCtx')
@@ -210,9 +214,48 @@ slowSandwich = toPhysicalMPS (hermitianNorm) exampleMPSC22 <.> (toPhysicalMPO ex
 fastSandwich :: Complex Double
 fastSandwich = mpsMPOInner (hermitianNorm) (hermitianNorm) exampleMPSC22 exampleMPO exampleMPSC22
 
+exampleBulkSiteC22 :: (C 2 ⊗ C 2) +> C 2
+exampleBulkSiteC22 = mpsBulk exampleMPSC22 ^. _1
+
+-- | ⟨ψ|H|ψ⟩ via bulk 'effectiveHBulk3' (diagonal of the bilinear check).
+exampleHeffSandwich :: Complex Double
+exampleHeffSandwich =
+  effectiveHBulkInner
+    hermitianNorm hermitianNorm exampleMPSC22 exampleMPO
+    exampleBulkSiteC22 exampleBulkSiteC22
+
+prop_effectiveHBulkMatchesInner :: QC.Property
+prop_effectiveHBulkMatchesInner =
+  QC.forAll (genMPSC @2 @2 @1) $ \mpsEnv ->
+  QC.forAll (genMPSC @2 @2 @1) $ \mpsKet ->
+    let mpo = exampleMPO
+        braCentre = mpsBulk mpsEnv ^. _1
+        ketCentre = mpsBulk mpsKet ^. _1
+        lhs =
+          effectiveHBulkInner
+            hermitianNorm hermitianNorm mpsEnv mpo braCentre ketCentre
+        rhs =
+          mpsMPOInner hermitianNorm hermitianNorm
+            (mpsWithBulkSite braCentre mpsEnv)
+            mpo
+            (mpsWithBulkSite ketCentre mpsEnv)
+    in lhs == rhs
+
+prop_effectiveHBulkDiagonalMatchesMPOInner :: QC.Property
+prop_effectiveHBulkDiagonalMatchesMPOInner =
+  QC.forAll (genMPSC @2 @2 @1) $ \mps ->
+    let mpo = exampleMPO
+        centre = mpsBulk mps ^. _1
+    in effectiveHBulkInner hermitianNorm hermitianNorm mps mpo centre centre
+         == mpsMPOInner hermitianNorm hermitianNorm mps mpo mps
+
 -- | Exact MPO×MPS product (bond stays @C 2 ⊗ C 2@).
 exampleApplyExact :: MPS (C 2 ⊗ C 2) (C 2) 1
 exampleApplyExact = mpoApplyExact exampleMPO exampleMPSC22
+
+-- | Exact MPO∘MPO product (bond stays @C 2 ⊗ C 2@).
+exampleComposeExact :: MPO (C 2 ⊗ C 2) (C 2) 1
+exampleComposeExact = mpoComposeExact exampleMPO exampleMPO
 
 -- | Same product after fusing the Kronecker bond to @C 4@.
 exampleApplyFused :: MPS (C 4) (C 2) 1

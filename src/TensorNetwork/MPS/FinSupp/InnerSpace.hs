@@ -40,6 +40,6 @@ finsuppInner u v =
               vi = if i < lv then v U.! i else 0
           in go (i + 1) (acc + conjugate ui * vi)
 
-instance InnerSpace Bond where
+instance {-# OVERLAPPING #-} InnerSpace Bond where
   FinSuppSeq u <.> FinSuppSeq v = finsuppInner u v
 

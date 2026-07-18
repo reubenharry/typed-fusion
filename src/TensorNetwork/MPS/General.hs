@@ -35,7 +35,7 @@ import Math.LinearMap.Category
   ( type (+>), type (⊗), TensorProduct, Tensor (..), (⊗)
   , TensorSpace (..), LinearSpace (..), HilbertSpace, DualVector
   , trace, (-+$>), LinearMap (LinearMap), getLinearMap
-  , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun, SemilinearFunction (SemilinearFunction), VectorSpace (..), Num' )
+  , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun, SemilinearFunction (SemilinearFunction), VectorSpace (..), Num' , FiniteDimensional)
 import Numeric.LinearAlgebra.Static
   ( Sized (konst, create, extract, fromList)
   , C, M, R, Domain (diagR), complex, mul
@@ -56,10 +56,9 @@ import Math.LinearMap.Asserted (flipBilin)
 import GHC.TypeNats (natVal)
 import Data.Data (Proxy(..))
 import GHC.TypeLits (Nat)
-import Linear.V (V (..), Finite (..))
-import Control.Lens ((^.), Ixed (ix), (^?), _1, _2)
+import Linear.V (V (..))
+import Control.Lens ((&), (.~), (^.), Ixed (ix), (^?), _1, _2)
 import Data.Maybe (fromMaybe)
-import Linear (V1(..))
 import Data.Foldable (Foldable(toList))
 import qualified Data.Vector as Vector
 import qualified Numeric.LinearAlgebra as HM
@@ -182,12 +181,11 @@ toPhysicalMPO (MPO l bulk r) =
   reorderPhysical3
     . (r ⊗^ Cat.id)
     . prepMPORight
-    . ((b ⊗^ Cat.id) ⊗^ Cat.id)
+    . ((bulk ^. _1 ⊗^ Cat.id) ⊗^ Cat.id)
     . (rearrangeBondPhys ⊗^ Cat.id)
     . lassocMap
     . (l ⊗^ Cat.id)
-  where
-    b = bulk ^. _1
+
 
 -- | @OTimes 3 (C p) → C (p³)@: associate left, then fuse pairwise via 'fuseBond'.
 --
@@ -272,6 +270,28 @@ opWire op ket =
     . (Cat.id ⊗^ swapMap)
     . rassocMap
 
+-- | MPO–MPO bulk wiring: contract the intermediate physical between @op1@
+-- (outer) and @op2@ (inner); product bond stays @w₁ ⊗ w₂@.
+--
+--   @((w₁ ⊗ w₂) ⊗ p_in)  +>  ((w₁ ⊗ w₂) ⊗ p_out)@
+--
+-- Order matches @toPhysicalMPO op1 . toPhysicalMPO op2@ (apply @op2@ first).
+composeOpWire
+  :: forall bond phys.
+  MPSConstraints bond phys =>
+  ((bond ⊗ phys) +> (bond ⊗ phys))
+  -> ((bond ⊗ phys) +> (bond ⊗ phys))
+  -> (((bond ⊗ bond) ⊗ phys) +> ((bond ⊗ bond) ⊗ phys))
+composeOpWire op1 op2 =
+  lassocMap
+    . (Cat.id ⊗^ swapMap)
+    . rassocMap
+    . (op1 ⊗^ Cat.id)
+    . lassocMap
+    . (Cat.id ⊗^ swapMap)
+    . (Cat.id ⊗^ op2)
+    . rassocMap
+
 -- | Left boundary ⟨bra|op|ket⟩ transfer: no incoming environment.
 transferMPOLeftSite
   :: forall bond phys. MPSConstraints bond phys =>
@@ -325,6 +345,95 @@ mpsMPOInner nb np (MPS lB bB rB) (MPO lO bO rO) (MPS lK bK rK) =
     transferBulk = foldr (.) Cat.id transfers
 
 --------------------------------------------------------------------------------
+-- Effective Hamiltonian (morphism apply; no basis enumeration)
+--------------------------------------------------------------------------------
+
+-- | Left MPO environment: @bond +> (bond ⊗ bond)@.
+type LeftMPOEnv bond = bond +> (bond ⊗ bond)
+
+-- | Right MPO environment: @(bond ⊗ bond) +> bond@.
+type RightMPOEnv bond = (bond ⊗ bond) +> bond
+
+-- | Left environment through the left boundary site.
+leftMPOEnv
+  :: forall bond phys. MPSConstraints bond phys =>
+  FullNorm bond -> FullNorm phys ->
+  LeftSite bond phys -> (phys +> (bond ⊗ phys)) -> LeftSite bond phys ->
+  LeftMPOEnv bond
+leftMPOEnv = transferMPOLeftSite
+
+-- | Right environment through the right boundary site (no trace).
+rightMPOEnv
+  :: forall bond phys. MPSConstraints bond phys =>
+  FullNorm bond -> FullNorm phys ->
+  RightSite bond phys -> ((bond ⊗ phys) +> phys) -> RightSite bond phys ->
+  RightMPOEnv bond
+rightMPOEnv nb np bra op ket =
+  dagger np nb bra . op . (Cat.id ⊗^ ket)
+
+-- | Bulk-centre apply: @Heff x = R ∘ opWire op x ∘ (L ⊗^ id_phys)@.
+effectiveHBulk
+  :: forall bond phys. MPSConstraints bond phys =>
+  LeftMPOEnv bond ->
+  ((bond ⊗ phys) +> (bond ⊗ phys)) ->
+  RightMPOEnv bond ->
+  BulkSite bond phys ->
+  BulkSite bond phys
+effectiveHBulk leftEnv op rightEnv centreKet =
+  rightEnv . opWire op centreKet . (leftEnv ⊗^ Cat.id)
+
+-- | Left-centre apply: @Heff x = R ∘ (id ⊗^ x) ∘ op@.
+effectiveHLeft
+  :: forall bond phys. MPSConstraints bond phys =>
+  (phys +> (bond ⊗ phys)) ->
+  RightMPOEnv bond ->
+  LeftSite bond phys ->
+  LeftSite bond phys
+effectiveHLeft op rightEnv centreKet =
+  rightEnv . (Cat.id ⊗^ centreKet) . op
+
+-- | Right-centre apply: @Heff x = op ∘ (id ⊗^ x) ∘ L@.
+effectiveHRight
+  :: forall bond phys. MPSConstraints bond phys =>
+  LeftMPOEnv bond ->
+  ((bond ⊗ phys) +> phys) ->
+  RightSite bond phys ->
+  RightSite bond phys
+effectiveHRight leftEnv op centreKet =
+  op . (Cat.id ⊗^ centreKet) . leftEnv
+
+-- | Replace the bulk site of a three-site (@n = 1@ bulk) MPS.
+mpsWithBulkSite
+  :: BulkSite bond phys -> MPS bond phys 1 -> MPS bond phys 1
+mpsWithBulkSite site mps =
+  mps { mpsBulk = mpsBulk mps & _1 .~ site }
+
+-- | Environments and bulk @Heff@ on a three-site (@bulk length 1@) chain.
+effectiveHBulk3
+  :: forall bond phys.
+  MPSConstraints bond phys =>
+  FullNorm bond -> FullNorm phys ->
+  MPS bond phys 1 -> MPO bond phys 1 ->
+  BulkSite bond phys -> BulkSite bond phys
+effectiveHBulk3 nb np mps mpo = effectiveHBulk
+    (leftMPOEnv nb np (mpsLeft mps) (mpoLeft mpo) (mpsLeft mps))
+    (mpoBulk mpo ^. _1)
+    (rightMPOEnv nb np (mpsRight mps) (mpoRight mpo) (mpsRight mps))
+
+-- | Hilbert–Schmidt pairing at the bulk centre (canonical gauge only).
+effectiveHBulkInner
+  :: forall bond phys.
+  ( MPSConstraints bond phys
+  , FiniteDimensional (BulkSite bond phys)
+  , InnerSpace (BulkSite bond phys)
+  ) =>
+  FullNorm bond -> FullNorm phys ->
+  MPS bond phys 1 -> MPO bond phys 1 ->
+  BulkSite bond phys -> BulkSite bond phys -> Scalar bond
+effectiveHBulkInner nb np mps mpo braCentre ketCentre =
+  braCentre <.> effectiveHBulk3 nb np mps mpo ketCentre
+
+--------------------------------------------------------------------------------
 -- MPO × MPS (exact product bond, then SVD truncate to fixed χ)
 --------------------------------------------------------------------------------
 
@@ -339,6 +448,19 @@ mpoApplyExact (MPO lO bO rO) (MPS lK bK rK) =
     ((Cat.id ⊗^ lK) . lO)
     (V . Vector.fromList $ zipWith opWire (toList bO) (toList bK))
     (rO . (Cat.id ⊗^ rK))
+
+-- | Compose two MPOs sitewise (@h₁ ∘ h₂@ = apply @h₂@ then @h₁@). Product bond
+-- stays @bond ⊗ bond@ (no truncation). Physical content matches
+-- @toPhysicalMPO h1 . toPhysicalMPO h2@.
+mpoComposeExact
+  :: forall bond phys (n :: Nat).
+  MPSConstraints bond phys =>
+  MPO bond phys n -> MPO bond phys n -> MPO (bond ⊗ bond) phys n
+mpoComposeExact (MPO l1 b1 r1) (MPO l2 b2 r2) =
+  MPO
+    (lassocMap . (Cat.id ⊗^ swapMap) . rassocMap . (l1 ⊗^ Cat.id) . swapMap . l2)
+    (V . Vector.fromList $ zipWith composeOpWire (toList b1) (toList b2))
+    (r1 . (Cat.id ⊗^ r2) . rassocMap)
 
 -- | Fuse a Kronecker product bond @C a ⊗ C b@ into @C (a·b)@ on every site.
 fuseMPSBond
@@ -404,6 +526,44 @@ svdSplit (LinearMap lm) =
   in ( LinearMap (mul (diagR 0 (complex s)) vt)
      , LinearMap u
      )
+
+-- | Polar-decompose a left boundary site @A = m ∘ iso@ with @iso = U·V†@ an
+-- isometry (@iso† ∘ iso = id@ on @C p@, requires @χ ≥ p@) and @m = U·Σ·U†@.
+-- Returned as @(m, iso)@. LAPACK boundary only (like 'svdSplit').
+polarLeftSite
+  :: forall p χ. (KnownNat p, KnownNat χ)
+  => C p +> C χ -> (C χ +> C χ, C p +> C χ)
+polarLeftSite (LinearMap a) =
+  let (u, s, vt) = svdCut @χ @p @p a
+  in ( LinearMap (u `mul` diagR 0 (complex s) `mul` HM.tr u)
+     , LinearMap (u `mul` vt)
+     )
+
+-- | Polar-decompose a right boundary site @B = iso ∘ m@ with @iso = U·V†@ a
+-- coisometry (@iso ∘ iso† = id@ on @C p@, requires @χ ≥ p@) and @m = V·Σ·V†@.
+-- Returned as @(iso, m)@.
+polarRightSite
+  :: forall χ p. (KnownNat χ, KnownNat p)
+  => C χ +> C p -> (C χ +> C p, C χ +> C χ)
+polarRightSite (LinearMap b) =
+  let (u, s, vt) = svdCut @p @χ @p b
+  in ( LinearMap (u `mul` vt)
+     , LinearMap (HM.tr vt `mul` diagR 0 (complex s) `mul` vt)
+     )
+
+-- | Mixed-canonical gauge about the bulk centre of a three-site MPS: the left
+-- boundary becomes an isometry, the right boundary a coisometry, and both
+-- polar factors are absorbed into the centre. The represented physical tensor
+-- is unchanged ('toPhysicalMPS' invariant).
+mixedCanonicalCentre3
+  :: forall χ p.
+  (KnownNat χ, KnownNat p, MPSConstraints (C χ) (C p)) =>
+  MPS (C χ) (C p) 1 -> MPS (C χ) (C p) 1
+mixedCanonicalCentre3 (MPS l bulk r) =
+  let (mL, lIso) = polarLeftSite l
+      (rIso, mR) = polarRightSite r
+      centre = mR . (bulk ^. _1) . (mL ⊗^ Cat.id)
+  in MPS lIso (bulk & _1 .~ centre) rIso
 
 -- | Flatten @(bond ⊗ physical)@ for a left-looking SVD cut.
 siteForLeftSVD

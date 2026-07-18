@@ -94,6 +94,11 @@ genEndo = linMapFromColumnImages @n @m <$> replicateM (fromIntegral (natVal (Pro
 genBulkSiteC2 :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (V q ((C n ⊗ C m) +> C n))
 genBulkSiteC2 = pure $ V $ Vector.replicate (fromIntegral (natVal (Proxy @q))) (LinearMap (konst 1))
 
+genLinMapC :: forall dom cod . (KnownNat dom, KnownNat cod) => QC.Gen (C dom +> C cod)
+genLinMapC =
+  linMapFromColumnImages @dom @cod
+    <$> replicateM (fromIntegral (natVal (Proxy @dom))) (QC.arbitrary @(C cod))
+
 -- instance QC.Arbitrary (LinearMap (Complex Double)(C n) (C m))where 
 
 instance (KnownNat p, KnownNat b) => QC.Arbitrary (MPS p b) where

@@ -19,8 +19,8 @@ import GHC.TypeLits (KnownNat)
 import Numeric.LinearAlgebra.Static (C, Sized (..))
 import qualified Data.Vector.Storable as VS
 import Data.Complex (Complex)
-import TensorNetwork.MPS.General (BulkSite, MPS (..))
-import Linear.V (V)
+import TensorNetwork.MPS.General (BulkSite)
+import qualified Linear.V as LV
 import GHC.TypeNats (natVal)
 import Data.Data (Proxy(..))
 import Data.Maybe (fromMaybe)
@@ -82,7 +82,7 @@ cvpCoeff :: KnownNat p => C p -> Int -> Field
 cvpCoeff v s = (VS.toList (extract v)) !! s
 
 -- | Apply a bulk site to a bond vector and full physical vector.
-applyBulkBondPhys :: forall p phys. KnownNat p => V p (BulkSite Bond phys) -> Bond -> C p -> Bond
+applyBulkBondPhys :: forall p phys. KnownNat p => LV.V p (BulkSite Bond phys) -> Bond -> C p -> Bond
 applyBulkBondPhys site bond phys =
   sumV
     [ cvpCoeff phys s *^ undefined site bond s
@@ -155,15 +155,6 @@ padRightDomain
   :: forall vp. KnownNat vp => Int -> Bond +> C vp -> Bond +> C vp
 padRightDomain chi (LinearMap imgs) =
   LinearMap (padLinearMapDomain chi imgs)
-
-bondDimMPS :: forall vp phys. KnownNat vp => MPS Bond phys vp -> Int
-bondDimMPS (MPS ( l) ( c) ( r)) = undefined
-    -- maximum
-    --   [ activeDimIntoBond (getLinearMap l)
-    --   -- , activeDimCenterSite (getLinearMap c)
-    --   -- , activeDimCenterOut (getLinearMap c)
-    --   -- , activeDimRightSite (getLinearMap r)
-    --   ]
 
 offsetBondInTensor
   :: Int -> (C vp ⊗ Bond) -> (C vp ⊗ Bond)
