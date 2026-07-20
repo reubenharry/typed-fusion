@@ -32,7 +32,7 @@ import Math.LinearMap.Coercion (curryLinearMap, (-+$=>))
 import Data.Foldable (toList)
 import GHC.TypeLits (KnownNat, Nat)
 import TensorNetwork.MPS.General
-  ( FullNorm, MPS (..), MPO (..)
+  ( FullNorm, MPS (..), MPO (..), EndoMPO
   , LeftMPOEnv, RightMPOEnv, BulkSite
   , leftMPOEnv, rightMPOEnv
   , transferMPOBulkSite, opWire, siteDagger
@@ -44,7 +44,7 @@ import TensorNetwork.DMRG.Chain (bulkCount)
 leftEnvAfterLeft
   :: MPSConstraints bond phys =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys n -> MPO bond phys n -> LeftMPOEnv bond
+  MPS bond phys n -> EndoMPO bond phys n -> LeftMPOEnv bond
 leftEnvAfterLeft nb np mps mpo =
   leftMPOEnv nb np (mpsLeft mps) (mpoLeft mpo) (mpsLeft mps)
 
@@ -53,7 +53,7 @@ leftEnvBeforeBulk
   :: forall bond phys (n :: Nat).
   (MPSConstraints bond phys, KnownNat n) =>
   FullNorm bond -> FullNorm phys ->
-  Int -> MPS bond phys n -> MPO bond phys n -> LeftMPOEnv bond
+  Int -> MPS bond phys n -> EndoMPO bond phys n -> LeftMPOEnv bond
 leftEnvBeforeBulk nb np j mps mpo =
   foldl step (leftEnvAfterLeft nb np mps mpo) [0 .. j - 1]
   where
@@ -66,14 +66,14 @@ leftEnvBeforeRight
   :: forall bond phys (n :: Nat).
   (MPSConstraints bond phys, KnownNat n) =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys n -> MPO bond phys n -> LeftMPOEnv bond
+  MPS bond phys n -> EndoMPO bond phys n -> LeftMPOEnv bond
 leftEnvBeforeRight nb np mps mpo =
   leftEnvBeforeBulk nb np (bulkCount @n) mps mpo
 
 rightEnvAfterRight
   :: MPSConstraints bond phys =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys n -> MPO bond phys n -> RightMPOEnv bond
+  MPS bond phys n -> EndoMPO bond phys n -> RightMPOEnv bond
 rightEnvAfterRight nb np mps mpo =
   rightMPOEnv nb np (mpsRight mps) (mpoRight mpo) (mpsRight mps)
 
@@ -101,7 +101,7 @@ rightEnvAfterBulk
   :: forall bond phys (n :: Nat).
   (MPSConstraints bond phys, KnownNat n) =>
   FullNorm bond -> FullNorm phys ->
-  Int -> MPS bond phys n -> MPO bond phys n -> RightMPOEnv bond
+  Int -> MPS bond phys n -> EndoMPO bond phys n -> RightMPOEnv bond
 rightEnvAfterBulk nb np j mps mpo =
   foldr step (rightEnvAfterRight nb np mps mpo) [j + 1 .. bulkCount @n - 1]
   where
@@ -115,6 +115,6 @@ rightEnvAfterLeft
   :: forall bond phys (n :: Nat).
   (MPSConstraints bond phys, KnownNat n) =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys n -> MPO bond phys n -> RightMPOEnv bond
+  MPS bond phys n -> EndoMPO bond phys n -> RightMPOEnv bond
 rightEnvAfterLeft nb np =
   rightEnvAfterBulk nb np (-1)

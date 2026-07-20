@@ -9,14 +9,15 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | FinSupp MPO apply / compose: exact @Bond ⊗ Bond@ product (via
 -- 'TensorNetwork.MPS.General'), then Kronecker-fuse back to growable 'Bond'.
 --
--- Also the tensor-network category @'TN'@ whose morphisms are MPOs and whose
--- @'Function'@ instance is MPO–MPS application.
+-- The growable bond closes under composition, giving a direct
+-- @Category (MPO Bond n)@ instance.
 module TensorNetwork.MPS.FinSupp.MPO
   ( Bond
   , fuseBondLin
@@ -28,26 +29,24 @@ module TensorNetwork.MPS.FinSupp.MPO
   , identityMPO
   , mpoApply
   , composeMPO
-  , TN (..)
   ) where
 
 import Prelude hiding (id, ($), (.))
 import qualified Control.Category.Constrained as Cat
 import Control.Category.Constrained (Category (..), id, (.))
-import Control.Arrow.Constrained (EnhancedCat (..), ($), arr)
+import Control.Arrow.Constrained (($), arr)
 import Data.Complex (Complex)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
-import Data.Foldable (toList)
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Unboxed as U
 import qualified Numeric.LinearAlgebra as LA
 import GHC.TypeLits (KnownNat, Nat, natVal)
 import Linear.V (V (..))
 import Math.LinearMap.Category
-  ( type (+>), type (⊗), Tensor (..), LinearMap (..)
+  ( type (+>), type (⊗), Tensor (..)
   , pattern LinearFunction
-  , TensorSpace (..), (-+$>)
+  , (-+$>)
   , tensorProduct, AdditiveGroup (zeroV)
   )
 import Math.LinearMap.Category.Instances ()
@@ -61,7 +60,7 @@ import TensorNetwork.MPS.General
   , mpoApplyExact, mpoComposeExact
   )
 import TensorNetwork.MPS.FinSupp.Bond
-  ( Bond, Field, bondCoeff, activeDimBond )
+  ( Bond, bondCoeff, activeDimBond )
 import TensorNetwork.MPS.FinSupp.InnerSpace ()
 
 --------------------------------------------------------------------------------
@@ -98,13 +97,12 @@ splitBondLin :: Int -> Int -> Bond +> (Bond ⊗ Bond)
 splitBondLin chiA chiB = arr (LinearFunction (splitBondTensor chiA chiB))
 
 fuseMPSBondFS
-  :: forall p (n :: Nat).
-  ( KnownNat p
-  , MPSConstraints Bond (C p)
-  , MPSConstraints (Bond ⊗ Bond) (C p)
+  :: forall phys (n :: Nat).
+  ( MPSConstraints Bond phys
+  , MPSConstraints (Bond ⊗ Bond) phys
   ) =>
   Int -> Int ->
-  MPS (Bond ⊗ Bond) (C p) n -> MPS Bond (C p) n
+  MPS (Bond ⊗ Bond) phys n -> MPS Bond phys n
 fuseMPSBondFS chiA chiB (MPS l bulk r) =
   let f = fuseBondLin chiA chiB
       s = splitBondLin chiA chiB
@@ -114,20 +112,22 @@ fuseMPSBondFS chiA chiB (MPS l bulk r) =
        (r . s)
 
 fuseMPOBondFS
-  :: forall p (n :: Nat).
-  ( KnownNat p
-  , MPSConstraints Bond (C p)
-  , MPSConstraints (Bond ⊗ Bond) (C p)
+  :: forall physIn physOut (n :: Nat).
+  ( MPSConstraints Bond physIn
+  , MPSConstraints Bond physOut
+  , MPSConstraints (Bond ⊗ Bond) physIn
+  , MPSConstraints (Bond ⊗ Bond) physOut
   ) =>
   Int -> Int ->
-  MPO (Bond ⊗ Bond) (C p) n -> MPO Bond (C p) n
-fuseMPOBondFS chiA chiB (MPO l bulk r) =
+  MPO (Bond ⊗ Bond) n physIn physOut -> MPO Bond n physIn physOut
+fuseMPOBondFS chiA chiB (MPO l bulk r _) =
   let f = fuseBondLin chiA chiB
       s = splitBondLin chiA chiB
   in MPO
        ((f ⊗^ Cat.id) . l)
        ((\site -> (f ⊗^ Cat.id) . site . (s ⊗^ Cat.id)) <$> bulk)
        (r . (s ⊗^ Cat.id))
+       (chiA * chiB)
 
 --------------------------------------------------------------------------------
 -- Active bond widths (left-site support; meta only)
@@ -143,20 +143,15 @@ physBasis =
   | i <- [0 .. vpDim @p - 1]
   ]
 
-tensorBondWidth :: Bond ⊗ w -> Int
-tensorBondWidth (Tensor rows) = length rows
-
 -- | Active virtual bond width of an MPS (from left-site support).
 bondDimMPS :: forall p (n :: Nat). KnownNat p => MPS Bond (C p) n -> Int
 bondDimMPS (MPS l _ _) =
   max 1 $
     maximum (0 : fmap activeDimBond (fmap (l $) (physBasis @p)))
 
--- | Active virtual bond width of an MPO (from left-site support).
-bondDimMPO :: forall p (n :: Nat). KnownNat p => MPO Bond (C p) n -> Int
-bondDimMPO (MPO l _ _) =
-  max 1 $
-    maximum (0 : fmap (tensorBondWidth . (l $)) (physBasis @p))
+-- | Runtime virtual-bond width carried explicitly by an MPO.
+bondDimMPO :: MPO Bond n physIn physOut -> Int
+bondDimMPO = max 1 . mpoBondDimHint
 
 --------------------------------------------------------------------------------
 -- Identity, apply, compose
@@ -167,74 +162,66 @@ unitBond = FinSuppSeq (U.singleton 1)
 
 -- | Contract the unit bond factor: @(e₀ ⊗ p) ↦ p@.
 identityRight
-  :: forall p. (KnownNat p, AdditiveGroup (C p)) => (Bond ⊗ C p) +> C p
+  :: forall phys. MPSConstraints Bond phys => (Bond ⊗ phys) +> phys
 identityRight = arr $ LinearFunction $ \(Tensor rows) ->
   case rows of
     (p : _) -> p
     []      -> zeroV
 
--- | Bond-dimension-1 identity MPO on physical @C p@.
+-- | Bond-dimension-1 identity MPO on any category object.
 identityMPO
-  :: forall p (q :: Nat).
-  ( KnownNat p, KnownNat q
-  , MPSConstraints Bond (C p)
+  :: forall phys (q :: Nat).
+  ( KnownNat q
+  , MPSConstraints Bond phys
   ) =>
-  MPO Bond (C p) q
+  MPO Bond q phys phys
 identityMPO =
   MPO
     (arr (tensorProduct -+$> unitBond))
     (V . Vector.replicate qDim $ Cat.id)
     identityRight
+    1
   where
     qDim = fromIntegral (natVal (Proxy @q))
 
 -- | Apply an MPO to an MPS, fusing the product bond back to 'Bond'.
 mpoApply
-  :: forall p (q :: Nat).
+  :: forall p r (q :: Nat).
   ( KnownNat p
   , MPSConstraints Bond (C p)
+  , MPSConstraints Bond (C r)
   , MPSConstraints (Bond ⊗ Bond) (C p)
+  , MPSConstraints (Bond ⊗ Bond) (C r)
   ) =>
-  MPO Bond (C p) q -> MPS Bond (C p) q -> MPS Bond (C p) q
+  MPO Bond q (C p) (C r) -> MPS Bond (C p) q -> MPS Bond (C r) q
 mpoApply op psi =
   fuseMPSBondFS (bondDimMPO op) (bondDimMPS psi) (mpoApplyExact op psi)
 
 -- | Operator product @h₁ ∘ h₂@ (apply @h₂@ then @h₁@), fused back to 'Bond'.
 composeMPO
-  :: forall p (q :: Nat).
-  ( KnownNat p
-  , MPSConstraints Bond (C p)
-  , MPSConstraints (Bond ⊗ Bond) (C p)
+  :: forall a b c (q :: Nat).
+  ( MPSConstraints Bond a
+  , MPSConstraints Bond b
+  , MPSConstraints Bond c
+  , MPSConstraints (Bond ⊗ Bond) a
+  , MPSConstraints (Bond ⊗ Bond) b
+  , MPSConstraints (Bond ⊗ Bond) c
   ) =>
-  MPO Bond (C p) q -> MPO Bond (C p) q -> MPO Bond (C p) q
+  MPO Bond q b c -> MPO Bond q a b -> MPO Bond q a c
 composeMPO h1 h2 =
   fuseMPOBondFS (bondDimMPO h1) (bondDimMPO h2) (mpoComposeExact h1 h2)
 
 --------------------------------------------------------------------------------
--- Category of MPOs acting on FinSupp MPS
+-- Category of FinSupp MPOs
 --------------------------------------------------------------------------------
 
--- | Morphisms are MPOs; the (only) object is @MPS Bond (C p) q@.
-data TN (p :: Nat) (q :: Nat) a b where
-  TN :: MPO Bond (C p) q -> TN p q (MPS Bond (C p) q) (MPS Bond (C p) q)
-
 instance
-  ( KnownNat p, KnownNat q
-  , MPSConstraints Bond (C p)
-  , MPSConstraints (Bond ⊗ Bond) (C p)
-  ) =>
-  Category (TN p q)
+  KnownNat q =>
+  Category (MPO Bond q)
   where
-  type Object (TN p q) a = (a ~ MPS Bond (C p) q)
-  id = TN identityMPO
-  TN h1 . TN h2 = TN (composeMPO h1 h2)
-
--- | @'Function'@ instance: @h $ ψ = mpoApply h ψ@.
-instance
-  ( KnownNat p, KnownNat q
-  , MPSConstraints Bond (C p)
-  , MPSConstraints (Bond ⊗ Bond) (C p)
-  ) =>
-  EnhancedCat (->) (TN p q)
-  where
-  arr (TN h) = mpoApply h
+  type Object (MPO Bond q) a =
+    ( MPSConstraints Bond a
+    , MPSConstraints (Bond ⊗ Bond) a
+    )
+  id = identityMPO
+  (.) = composeMPO

@@ -91,7 +91,7 @@ import TensorNetwork.MPS.General
 genMPSC :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (MPS (C n) (C m) q)
 genMPSC = MPS <$> genEndo <*> genBulkSiteC2 <*> genEndo
 
-genMPOC :: QC.Gen (MPO (C 2) (C 2) 1)
+genMPOC :: QC.Gen (EndoMPO (C 2) (C 2) 1)
 genMPOC = pure exampleMPO
 
 --------------------------------------------------------------------------------
@@ -201,8 +201,8 @@ exampleFoo = f where
   tensor = getAntilinearFunction vectorConjugate $ transposeTensor $ coerce f :: DualVector (DualVector (C 2)) ⊗ DualVector (C 2 ⊗ C 2)
   lm = coerce tensor :: DualVector (C 2) +> DualVector (C 2 ⊗ C 2)
 
-exampleMPO :: MPO (C 2) (C 2) 1
-exampleMPO = MPO (LinearMap $ konst 1) (toV $ V1 $ LinearMap $ konst 1) (LinearMap $ konst 1)
+exampleMPO :: EndoMPO (C 2) (C 2) 1
+exampleMPO = MPO (LinearMap $ konst 1) (toV $ V1 $ LinearMap $ konst 1) (LinearMap $ konst 1) 2
 
 exampleMPOFlat :: LinearMap (Complex Double) (C 8) (C 8)
 exampleMPOFlat = physical3ToFlat . toPhysicalMPO exampleMPO . physical3FromFlat
@@ -254,7 +254,7 @@ exampleApplyExact :: MPS (C 2 ⊗ C 2) (C 2) 1
 exampleApplyExact = mpoApplyExact exampleMPO exampleMPSC22
 
 -- | Exact MPO∘MPO product (bond stays @C 2 ⊗ C 2@).
-exampleComposeExact :: MPO (C 2 ⊗ C 2) (C 2) 1
+exampleComposeExact :: EndoMPO (C 2 ⊗ C 2) (C 2) 1
 exampleComposeExact = mpoComposeExact exampleMPO exampleMPO
 
 -- | Same product after fusing the Kronecker bond to @C 4@.

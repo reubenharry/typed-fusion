@@ -59,7 +59,7 @@ import GroundState (groundState)
 import TensorNetwork.Categorical ((⊗^))
 import TensorNetwork.MPS.LinmapStorage (linMapFromColumnImages, siteLinFromRows)
 import TensorNetwork.MPS.General
-  ( FullNorm (..), MPS (..), MPO (..)
+  ( FullNorm (..), MPS (..), MPO (..), EndoMPO
   , LeftSite, BulkSite, RightSite
   , MPSConstraints, hermitianNorm
   , mpsInner, mpsMPOInner
@@ -80,7 +80,7 @@ energy
   :: forall bond phys (q :: Nat).
   MPSConstraints bond phys =>
   FullNorm bond -> FullNorm phys ->
-  MPO bond phys q -> MPS bond phys q -> Double
+  EndoMPO bond phys q -> MPS bond phys q -> Double
 energy nb np mpo psi =
   realPart (mpsMPOInner nb np psi mpo psi / mpsInner nb np psi psi)
 
@@ -92,7 +92,7 @@ heffLeft
   :: forall bond phys (q :: Nat).
   (MPSConstraints bond phys, KnownNat q) =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys q -> MPO bond phys q ->
+  MPS bond phys q -> EndoMPO bond phys q ->
   LeftSite bond phys +> LeftSite bond phys
 heffLeft nb np mps mpo =
   let r = rightEnvAfterLeft nb np mps mpo
@@ -102,7 +102,7 @@ heffBulk
   :: forall bond phys (q :: Nat).
   (MPSConstraints bond phys, KnownNat q) =>
   FullNorm bond -> FullNorm phys ->
-  Int -> MPS bond phys q -> MPO bond phys q ->
+  Int -> MPS bond phys q -> EndoMPO bond phys q ->
   BulkSite bond phys +> BulkSite bond phys
 heffBulk nb np j mps mpo =
   let l = leftEnvBeforeBulk nb np j mps mpo
@@ -114,7 +114,7 @@ heffRight
   :: forall bond phys (q :: Nat).
   (MPSConstraints bond phys, KnownNat q) =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys q -> MPO bond phys q ->
+  MPS bond phys q -> EndoMPO bond phys q ->
   RightSite bond phys +> RightSite bond phys
 heffRight nb np mps mpo =
   let l = leftEnvBeforeRight nb np mps mpo
@@ -140,7 +140,7 @@ solveLeft
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
   FullNorm (C χ) -> FullNorm (C p) ->
-  MPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
+  EndoMPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 solveLeft nb np mpo mps =
   let (e, s) = groundState (heffLeft nb np mps mpo)
   in (e, setLeft s mps)
@@ -149,7 +149,7 @@ solveBulk
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
   FullNorm (C χ) -> FullNorm (C p) ->
-  Int -> MPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
+  Int -> EndoMPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 solveBulk nb np j mpo mps =
   let (e, s) = groundState (heffBulk nb np j mps mpo)
   in (e, mps { mpsBulk = setBulk @q j s (mpsBulk mps) })
@@ -158,7 +158,7 @@ solveRight
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
   FullNorm (C χ) -> FullNorm (C p) ->
-  MPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
+  EndoMPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 solveRight nb np mpo mps =
   let (e, s) = groundState (heffRight nb np mps mpo)
   in (e, setRight s mps)
@@ -170,7 +170,7 @@ solveAllSites
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
   FullNorm (C χ) -> FullNorm (C p) ->
-  MPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
+  EndoMPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 solveAllSites nb np mpo mps0 =
   let mBulk =
         foldl
@@ -187,7 +187,7 @@ solveAllSites nb np mpo mps0 =
 sweep
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
-  MPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
+  EndoMPO (C χ) (C p) q -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 sweep mpo mps =
   let nb = hermitianNorm
       np = hermitianNorm
@@ -204,7 +204,7 @@ dmrg
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
   Int -> Double ->
-  MPO (C χ) (C p) q -> MPS (C χ) (C p) q -> DmrgResult χ p q
+  EndoMPO (C χ) (C p) q -> MPS (C χ) (C p) q -> DmrgResult χ p q
 dmrg maxSweeps tol mpo = go maxSweeps [] Nothing
   where
     nb = hermitianNorm
@@ -295,13 +295,14 @@ tfimRightOp _j h =
 -- | Transverse-field Ising MPO; MPS/MPO bond both @C 3@.
 tfimMPO
   :: forall (q :: Nat). KnownNat q =>
-  Double -> Double -> MPO (C 3) (C 2) q
+  Double -> Double -> EndoMPO (C 3) (C 2) q
 tfimMPO j h =
   MPO
     { mpoLeft = tfimLeftOp j h
     , mpoBulk =
         V $ Vector.replicate (fromIntegral (natVal (Proxy @q))) (tfimBulkOp j h)
     , mpoRight = tfimRightOp j h
+    , mpoBondDimHint = 3
     }
 
 -- | Uniform seed MPS (all-ones maps), bond @C 3@, physical @C 2@.

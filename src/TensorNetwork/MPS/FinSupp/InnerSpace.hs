@@ -3,6 +3,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Sesquilinear 'InnerSpace' for complex 'FinSuppSeq' bonds.
@@ -11,18 +13,25 @@
 -- entries; this orphan matches 'Numeric.LinearAlgebra.Static.COrphans' and
 -- the DMRG convention (bra conjugation via 'dagger' / 'vectorConjugate', not
 -- via a bilinear bond '<.>').
+--
+-- Also provides 'InnerTensorSpace' so @Bond ⊗ Bond@ can appear as the exact
+-- product bond under MPO composition.
 module TensorNetwork.MPS.FinSupp.InnerSpace where
 
+import Prelude hiding (($))
+import Control.Arrow.Constrained (($))
 import Data.Complex (Complex, conjugate)
-import Data.Maybe (fromMaybe)
-import Data.Proxy (Proxy (..))
-import Data.VectorSpace (InnerSpace ((<.>)))
+import Data.List (foldl')
+import Data.VectorSpace (InnerSpace ((<.>)), AdditiveGroup (..))
 import Data.VectorSpace.Free.FiniteSupportedSequence (FinSuppSeq (..))
-import GHC.TypeLits (KnownNat, natVal)
-import Numeric.LinearAlgebra.Static (C, Sized (create))
+import Math.LinearMap.Category
+  ( type (⊗), Tensor (..), InnerTensorSpace (..)
+  , (-+$>), pattern LinearFunction, bilinearFunction
+  )
+import Math.LinearMap.Category.Instances ()
+import Math.OrphanInstances ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import qualified Data.Vector.Unboxed as U
-import qualified Numeric.LinearAlgebra as LA
 
 type Field = Complex Double
 type Bond = FinSuppSeq Field
@@ -43,3 +52,11 @@ finsuppInner u v =
 instance {-# OVERLAPPING #-} InnerSpace Bond where
   FinSuppSeq u <.> FinSuppSeq v = finsuppInner u v
 
+-- | Frobenius-style lift over the list packing of @Bond ⊗ w@.
+instance InnerTensorSpace Bond where
+  liftTensorInner = LinearFunction $ \ip ->
+    bilinearFunction $ \(Tensor ws) (Tensor xs) ->
+      foldl'
+        (^+^)
+        zeroV
+        (zipWith (\w x -> (ip -+$> w) -+$> x) ws xs)

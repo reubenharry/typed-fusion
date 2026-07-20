@@ -88,11 +88,20 @@ data MPS (bond :: Type) (phys :: Type) (n :: Nat) = MPS
   , mpsRight :: bond +> phys
   }
 
-data MPO (bond :: Type) (phys :: Type) (n :: Nat) = MPO
-  { mpoLeft :: phys +> (bond ⊗ phys)
-  , mpoBulk :: V n ((bond ⊗ phys) +> (bond ⊗ phys))
-  , mpoRight :: (bond ⊗ phys) +> phys
+-- | Matrix-product operator with possibly distinct physical legs.
+--
+-- Transfer orientation: domain phys = result\/bra (@physOut@), codomain phys =
+-- ket (@physIn@). Parameter order puts Category object slots last so
+-- @MPO bond n :: Type -> Type -> Type@.
+data MPO (bond :: Type) (n :: Nat) (physIn :: Type) (physOut :: Type) = MPO
+  { mpoLeft :: physOut +> (bond ⊗ physIn)
+  , mpoBulk :: V n ((bond ⊗ physOut) +> (bond ⊗ physIn))
+  , mpoRight :: (bond ⊗ physIn) +> physOut
+  , mpoBondDimHint :: Int
   }
+
+-- | Homogeneous (endomorphism) MPO.
+type EndoMPO bond phys n = MPO bond n phys phys
 
 type MPSConstraints bond phys = (LSpace phys, LSpace bond, InnerSpace phys, Scalar bond ~ Complex Double, Scalar (DualVector bond) ~ Complex Double, Scalar (DualVector phys) ~ Complex Double,  Scalar phys ~ Complex Double, DualVector (DualVector bond) ~ bond, DualVector (DualVector phys) ~ phys, LinearSpace (DualVector bond), LinearSpace (DualVector phys), InnerSpace bond)
 
@@ -171,13 +180,12 @@ reorderPhysical3 =
     . (swapMap ⊗^ Cat.id)
     . lassocMap
 
--- | Flatten a three-site MPO to a physical endomorphism on @OTimes 3 phys@.
--- Pure morphism wiring (no Riesz / basis sums): left, then bulk, then right,
--- with associators/swaps to expose the bond–physical pair at each step.
+-- | Flatten a three-site endomorphism MPO to a physical map on @OTimes 3 phys@.
+-- Pure morphism wiring (no Riesz / basis sums).
 toPhysicalMPO
   :: forall bond phys. MPSConstraints bond phys =>
-  MPO bond phys 1 -> OTimes 3 phys +> OTimes 3 phys
-toPhysicalMPO (MPO l bulk r) =
+  EndoMPO bond phys 1 -> OTimes 3 phys +> OTimes 3 phys
+toPhysicalMPO (MPO l bulk r _) =
   reorderPhysical3
     . (r ⊗^ Cat.id)
     . prepMPORight
@@ -251,16 +259,16 @@ mpsInner nb np (MPS lB bB rB) (MPS lK bK rK) =
 
 -- | Left-to-right ⟨ψ|H|φ⟩ environment: bra bond ↦ MPO bond ⊗ ket bond.
 
--- | MPO-column wiring (Fixed 'opWire'): route the physical leg on the right of
--- a @(mpoBond ⊗ ketBond) ⊗ phys@ through the MPO site then the ket site.
+-- | MPO-column wiring: route the physical leg on the right of
+-- a @(mpoBond ⊗ ketBond) ⊗ physOut@ through the MPO site then the ket site.
 --
---   @((w ⊗ k) ⊗ p)  +>  (w ⊗ k)@
+--   @((w ⊗ k) ⊗ physOut)  +>  (w ⊗ k)@
 opWire
-  :: forall bond phys.
-  MPSConstraints bond phys =>
-  ((bond ⊗ phys) +> (bond ⊗ phys))
-  -> ((bond ⊗ phys) +> bond)
-  -> (((bond ⊗ bond) ⊗ phys) +> (bond ⊗ bond))
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  ((bond ⊗ physOut) +> (bond ⊗ physIn))
+  -> ((bond ⊗ physIn) +> bond)
+  -> (((bond ⊗ bond) ⊗ physOut) +> (bond ⊗ bond))
 opWire op ket =
   (Cat.id ⊗^ ket)
     . (Cat.id ⊗^ swapMap)
@@ -270,77 +278,78 @@ opWire op ket =
     . (Cat.id ⊗^ swapMap)
     . rassocMap
 
--- | MPO–MPO bulk wiring: contract the intermediate physical between @op1@
--- (outer) and @op2@ (inner); product bond stays @w₁ ⊗ w₂@.
+-- | MPO–MPO bulk wiring: @op1@ (outer, @b → c@) then @op2@ (inner, @a → b@);
+-- product bond stays @w₁ ⊗ w₂@.
 --
---   @((w₁ ⊗ w₂) ⊗ p_in)  +>  ((w₁ ⊗ w₂) ⊗ p_out)@
---
--- Order matches @toPhysicalMPO op1 . toPhysicalMPO op2@ (apply @op2@ first).
+--   @((w₁ ⊗ w₂) ⊗ c)  +>  ((w₁ ⊗ w₂) ⊗ a)@
 composeOpWire
-  :: forall bond phys.
-  MPSConstraints bond phys =>
-  ((bond ⊗ phys) +> (bond ⊗ phys))
-  -> ((bond ⊗ phys) +> (bond ⊗ phys))
-  -> (((bond ⊗ bond) ⊗ phys) +> ((bond ⊗ bond) ⊗ phys))
+  :: forall bond a b c.
+  (MPSConstraints bond a, MPSConstraints bond b, MPSConstraints bond c) =>
+  ((bond ⊗ c) +> (bond ⊗ b))
+  -> ((bond ⊗ b) +> (bond ⊗ a))
+  -> (((bond ⊗ bond) ⊗ c) +> ((bond ⊗ bond) ⊗ a))
 composeOpWire op1 op2 =
   lassocMap
+    . (Cat.id ⊗^ op2)
     . (Cat.id ⊗^ swapMap)
     . rassocMap
     . (op1 ⊗^ Cat.id)
     . lassocMap
     . (Cat.id ⊗^ swapMap)
-    . (Cat.id ⊗^ op2)
     . rassocMap
 
 -- | Left boundary ⟨bra|op|ket⟩ transfer: no incoming environment.
 transferMPOLeftSite
-  :: forall bond phys. MPSConstraints bond phys =>
-  FullNorm bond -> FullNorm phys ->
-  LeftSite bond phys
-  -> (phys +> (bond ⊗ phys))
-  -> LeftSite bond phys
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  FullNorm bond -> FullNorm physOut ->
+  LeftSite bond physOut
+  -> (physOut +> (bond ⊗ physIn))
+  -> LeftSite bond physIn
   -> (bond +> (bond ⊗ bond))
-transferMPOLeftSite nb np bra op ket =
-  (Cat.id ⊗^ ket) . op . dagger nb np bra
+transferMPOLeftSite nb npOut bra op ket =
+  (Cat.id ⊗^ ket) . op . dagger nb npOut bra
 
 -- | Bulk ⟨bra|op|ket⟩ transfer update.
 transferMPOBulkSite
-  :: forall bond phys. MPSConstraints bond phys =>
-  FullNorm bond -> FullNorm phys ->
-  BulkSite bond phys
-  -> ((bond ⊗ phys) +> (bond ⊗ phys))
-  -> BulkSite bond phys
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  FullNorm bond -> FullNorm physOut ->
+  BulkSite bond physOut
+  -> ((bond ⊗ physOut) +> (bond ⊗ physIn))
+  -> BulkSite bond physIn
   -> (bond +> (bond ⊗ bond))
   -> (bond +> (bond ⊗ bond))
-transferMPOBulkSite nb np bra op ket env =
-  opWire op ket . (env ⊗^ Cat.id) . siteDagger nb np nb bra
+transferMPOBulkSite nb npOut bra op ket env =
+  opWire op ket . (env ⊗^ Cat.id) . siteDagger nb npOut nb bra
 
 -- | Right boundary close: dagger the bra, apply op after the ket physical
 -- leg, then trace.
 transferMPORightSite
-  :: forall bond phys. MPSConstraints bond phys =>
-  FullNorm bond -> FullNorm phys ->
-  RightSite bond phys
-  -> ((bond ⊗ phys) +> phys)
-  -> RightSite bond phys
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  FullNorm bond -> FullNorm physOut ->
+  RightSite bond physOut
+  -> ((bond ⊗ physIn) +> physOut)
+  -> RightSite bond physIn
   -> (bond +> (bond ⊗ bond))
   -> Scalar bond
-transferMPORightSite nb np bra op ket env =
-  trace $ dagger np nb bra . op . (Cat.id ⊗^ ket) . env
+transferMPORightSite nb npOut bra op ket env =
+  trace $ dagger npOut nb bra . op . (Cat.id ⊗^ ket) . env
 
--- | ⟨ψ|H|φ⟩ via left-to-right MPO–MPS transfer, same fold style as 'mpsInner'.
+-- | ⟨ψ|H|φ⟩ via left-to-right MPO–MPS transfer: bra on @physOut@, ket on @physIn@.
 mpsMPOInner
-  :: forall bond phys (n :: Nat).
-  MPSConstraints bond phys =>
-  FullNorm bond -> FullNorm phys ->
-  MPS bond phys n -> MPO bond phys n -> MPS bond phys n -> Scalar bond
-mpsMPOInner nb np (MPS lB bB rB) (MPO lO bO rO) (MPS lK bK rK) =
-  transferMPORightSite nb np rB rO rK $
+  :: forall bond physIn physOut (n :: Nat).
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  FullNorm bond -> FullNorm physOut ->
+  MPS bond physOut n -> MPO bond n physIn physOut -> MPS bond physIn n -> Scalar bond
+mpsMPOInner nb npOut (MPS lB bB rB) (MPO lO bO rO _) (MPS lK bK rK) =
+  transferMPORightSite nb npOut rB rO rK $
     transferBulk $
-      transferMPOLeftSite nb np lB lO lK
+      transferMPOLeftSite nb npOut lB lO lK
   where
     transfers =
-      (\(bra, op, ket) -> transferMPOBulkSite nb np bra op ket)
+      (\(bra, op, ket) -> transferMPOBulkSite nb npOut bra op ket)
         <$> zip3 (toList bB) (toList bO) (toList bK)
     transferBulk = foldr (.) Cat.id transfers
 
@@ -356,49 +365,54 @@ type RightMPOEnv bond = (bond ⊗ bond) +> bond
 
 -- | Left environment through the left boundary site.
 leftMPOEnv
-  :: forall bond phys. MPSConstraints bond phys =>
-  FullNorm bond -> FullNorm phys ->
-  LeftSite bond phys -> (phys +> (bond ⊗ phys)) -> LeftSite bond phys ->
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  FullNorm bond -> FullNorm physOut ->
+  LeftSite bond physOut -> (physOut +> (bond ⊗ physIn)) -> LeftSite bond physIn ->
   LeftMPOEnv bond
 leftMPOEnv = transferMPOLeftSite
 
 -- | Right environment through the right boundary site (no trace).
 rightMPOEnv
-  :: forall bond phys. MPSConstraints bond phys =>
-  FullNorm bond -> FullNorm phys ->
-  RightSite bond phys -> ((bond ⊗ phys) +> phys) -> RightSite bond phys ->
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  FullNorm bond -> FullNorm physOut ->
+  RightSite bond physOut -> ((bond ⊗ physIn) +> physOut) -> RightSite bond physIn ->
   RightMPOEnv bond
-rightMPOEnv nb np bra op ket =
-  dagger np nb bra . op . (Cat.id ⊗^ ket)
+rightMPOEnv nb npOut bra op ket =
+  dagger npOut nb bra . op . (Cat.id ⊗^ ket)
 
 -- | Bulk-centre apply: @Heff x = R ∘ opWire op x ∘ (L ⊗^ id_phys)@.
 effectiveHBulk
-  :: forall bond phys. MPSConstraints bond phys =>
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
   LeftMPOEnv bond ->
-  ((bond ⊗ phys) +> (bond ⊗ phys)) ->
+  ((bond ⊗ physOut) +> (bond ⊗ physIn)) ->
   RightMPOEnv bond ->
-  BulkSite bond phys ->
-  BulkSite bond phys
+  BulkSite bond physIn ->
+  BulkSite bond physOut
 effectiveHBulk leftEnv op rightEnv centreKet =
   rightEnv . opWire op centreKet . (leftEnv ⊗^ Cat.id)
 
 -- | Left-centre apply: @Heff x = R ∘ (id ⊗^ x) ∘ op@.
 effectiveHLeft
-  :: forall bond phys. MPSConstraints bond phys =>
-  (phys +> (bond ⊗ phys)) ->
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  (physOut +> (bond ⊗ physIn)) ->
   RightMPOEnv bond ->
-  LeftSite bond phys ->
-  LeftSite bond phys
+  LeftSite bond physIn ->
+  LeftSite bond physOut
 effectiveHLeft op rightEnv centreKet =
   rightEnv . (Cat.id ⊗^ centreKet) . op
 
 -- | Right-centre apply: @Heff x = op ∘ (id ⊗^ x) ∘ L@.
 effectiveHRight
-  :: forall bond phys. MPSConstraints bond phys =>
+  :: forall bond physIn physOut.
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
   LeftMPOEnv bond ->
-  ((bond ⊗ phys) +> phys) ->
-  RightSite bond phys ->
-  RightSite bond phys
+  ((bond ⊗ physIn) +> physOut) ->
+  RightSite bond physIn ->
+  RightSite bond physOut
 effectiveHRight leftEnv op centreKet =
   op . (Cat.id ⊗^ centreKet) . leftEnv
 
@@ -408,12 +422,12 @@ mpsWithBulkSite
 mpsWithBulkSite site mps =
   mps { mpsBulk = mpsBulk mps & _1 .~ site }
 
--- | Environments and bulk @Heff@ on a three-site (@bulk length 1@) chain.
+-- | Environments and bulk @Heff@ on a three-site (@bulk length 1@) endomorphism chain.
 effectiveHBulk3
   :: forall bond phys.
   MPSConstraints bond phys =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys 1 -> MPO bond phys 1 ->
+  MPS bond phys 1 -> EndoMPO bond phys 1 ->
   BulkSite bond phys -> BulkSite bond phys
 effectiveHBulk3 nb np mps mpo = effectiveHBulk
     (leftMPOEnv nb np (mpsLeft mps) (mpoLeft mpo) (mpsLeft mps))
@@ -428,7 +442,7 @@ effectiveHBulkInner
   , InnerSpace (BulkSite bond phys)
   ) =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys 1 -> MPO bond phys 1 ->
+  MPS bond phys 1 -> EndoMPO bond phys 1 ->
   BulkSite bond phys -> BulkSite bond phys -> Scalar bond
 effectiveHBulkInner nb np mps mpo braCentre ketCentre =
   braCentre <.> effectiveHBulk3 nb np mps mpo ketCentre
@@ -438,29 +452,29 @@ effectiveHBulkInner nb np mps mpo braCentre ketCentre =
 --------------------------------------------------------------------------------
 
 -- | Apply an MPO to an MPS sitewise. The product bond stays in tensor form
--- @bond ⊗ bond@ (no truncation).
+-- @bond ⊗ bond@ (no truncation). Result physical space is @physOut@.
 mpoApplyExact
-  :: forall bond phys (n :: Nat).
-  MPSConstraints bond phys =>
-  MPO bond phys n -> MPS bond phys n -> MPS (bond ⊗ bond) phys n
-mpoApplyExact (MPO lO bO rO) (MPS lK bK rK) =
+  :: forall bond physIn physOut (n :: Nat).
+  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  MPO bond n physIn physOut -> MPS bond physIn n -> MPS (bond ⊗ bond) physOut n
+mpoApplyExact (MPO lO bO rO _) (MPS lK bK rK) =
   MPS
     ((Cat.id ⊗^ lK) . lO)
     (V . Vector.fromList $ zipWith opWire (toList bO) (toList bK))
     (rO . (Cat.id ⊗^ rK))
 
--- | Compose two MPOs sitewise (@h₁ ∘ h₂@ = apply @h₂@ then @h₁@). Product bond
--- stays @bond ⊗ bond@ (no truncation). Physical content matches
--- @toPhysicalMPO h1 . toPhysicalMPO h2@.
+-- | Compose two MPOs sitewise (@h₁ ∘ h₂@ = Category @h1 . h2@). Product bond
+-- stays @bond ⊗ bond@ (no truncation).
 mpoComposeExact
-  :: forall bond phys (n :: Nat).
-  MPSConstraints bond phys =>
-  MPO bond phys n -> MPO bond phys n -> MPO (bond ⊗ bond) phys n
-mpoComposeExact (MPO l1 b1 r1) (MPO l2 b2 r2) =
+  :: forall bond a b c (n :: Nat).
+  (MPSConstraints bond a, MPSConstraints bond b, MPSConstraints bond c) =>
+  MPO bond n b c -> MPO bond n a b -> MPO (bond ⊗ bond) n a c
+mpoComposeExact (MPO l1 b1 r1 d1) (MPO l2 b2 r2 d2) =
   MPO
-    (lassocMap . (Cat.id ⊗^ swapMap) . rassocMap . (l1 ⊗^ Cat.id) . swapMap . l2)
+    (lassocMap . (Cat.id ⊗^ l2) . l1)
     (V . Vector.fromList $ zipWith composeOpWire (toList b1) (toList b2))
     (r1 . (Cat.id ⊗^ r2) . rassocMap)
+    (d1 * d2)
 
 -- | Fuse a Kronecker product bond @C a ⊗ C b@ into @C (a·b)@ on every site.
 fuseMPSBond
@@ -627,7 +641,7 @@ mpoApplyMPS
   , MPSConstraints (C n ⊗ C n) (C p)
   , MPSConstraints (C (n * n)) (C p)
   ) =>
-  MPO (C n) (C p) q -> MPS (C n) (C p) q -> MPS (C n) (C p) q
+  EndoMPO (C n) (C p) q -> MPS (C n) (C p) q -> MPS (C n) (C p) q
 mpoApplyMPS op psi =
   compressMPS @(n * n) @n @p (fuseMPSBond (mpoApplyExact op psi))
 
