@@ -94,6 +94,7 @@ import TensorNetwork.DMRG.Fixed
   , denseGroundEnergy
   , seededMPS222, solveCenterAt
   )
+import Lanczos (prop_lanczosLowestResidualC2)
 
 requireQC :: QC.Result -> IO ()
 requireQC (QC.Success{}) = pure ()
@@ -123,6 +124,8 @@ checkDMRG j h = do
 
 main :: IO ()
 main = do
+  putStrLn "Lanczos lowest eigenpair residual on random Hermitian C 2..."
+  requireQC =<< QC.quickCheckResult prop_lanczosLowestResidualC2
   putStrLn "Recomposed map applies basis to its images..."
   requireQC =<< QC.quickCheckResult prop_applyMatchesImages
   putStrLn "... also with tensor codomain..."

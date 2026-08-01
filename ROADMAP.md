@@ -248,28 +248,63 @@ Measured conventions (memory `conjugation-conventions`): `<.>` on **`C n` is ses
 - Keep the flattened-vector overlap (`mpsToPhysical ψ <.> mpsToPhysical φ`, which uses
   `C n`'s correct `<.>`) as the **test oracle**, not the DMRG contraction path.
 
-### Backend layout mismatch (blocking categorical path)
+### Backend layout mismatch (blocking honest tensor-domain maps)
 
-`TensorNetwork.MPS.Fixed` has two layers:
+**Status (2026-07):** `MPSLayout` removed (it was docs + an `unsafeCoerce` shim, not a fix).
+Static×Static `composeLinear` now packs via columnwise `applyLinear` (associativity /
+Heff↔Inner green on the TFIM witness). Tensor-domain **storage is still inconsistent**.
 
-| Layer | Role | Status |
-|---|---|---|
-| **Production** | `applySite`, `applyOpSite`, `mpsStateMap`/`mpsToFlat`, `transferStep`, `mpsInner`, `mpoTransferStep`, `mpsMPOInner`, `mpoApplyMPS` | **partial** — MPS + MPO site `$`, closed `mpoTransferStep` chain for `⟨ψ|H|φ⟩`, and `mpoApplyMPS` green; `mpoApplyFlat` still uses p⁶ element sum |
-| **Reference / oracle** | `Fixed.Reference`: `siteCoeff`, `mpsInnerReference`, `mpsToFlatReference` (basis sums) | works; used for QuickCheck oracles |
+#### What the class does *not* specify
 
-**Root cause:** the static `C n` backend stores a site map `(C bl ⊗ C p) +> C br` as a matrix of shape `bl × (br·p)` (bond-major rows, physical-minor columns within each outgoing-bond block). But `applyTensorLinMap` in `linearmap-hmatrix` (`COrphans.hs`) applies maps via `m #> flatten(t)`, which assumes a different indexing (`br·p == bl·p` when `bl ≠ br`). That is a **convention mismatch**, not a missing norm or a dagger issue.
+`TensorSpace` / `LinearSpace` only require an associated `TensorProduct` and laws.
+For `C n`, the instance chooses leaf packing (typically `M (dim w) n`). Index order
+inside that `M` is an **instance convention** and must be shared by every writer/reader.
 
-**Do not fix with `unsafeCoerce`.** Coercing matrix types to force the manual contraction loop is a sign the typed API and storage layout are out of sync. The correct fix is upstream in `linearmap-family`, making storage, `applyTensorLinMap`, `recomposeContraLinMapTensor`, and `composeLinear` agree on one documented layout.
+#### Inventory — static `(C n ⊗ u) +> w` (and `R` mirrors)
 
-**Fix plan (ordered):**
+| Writer / reader | File | Payload shape assumed | Notes |
+|---|---|---|---|
+| `tensorProduct` | `COrphans` | tensor as `M (dim u) n` (`outer (toArray u) v`) | columns = left (`C n`) basis |
+| `flatten` in `applyTensorLinMap` | `COrphans` | domain vec = column-major of that `M` → index `lB·dim(u)+s` | |
+| `recomposeContraLinMapTensor` | `COrphans` | **nested** `(dim u · dim w) × n` via `generateColsC` | Confirmed by tests: `(C 2⊗C 2)+>C br` payload is `(p·br)×bl` |
+| `tensorId` | `COrphans` | nested-sized: `(C 2⊗C 2)+>(C 2⊗C 2)` is **8×2**, not flat 4×4 | `reshape n` of `ident (n·dim w)` |
+| `applyTensorLinMap` | `COrphans` / `Orphans` | accepts **flat** `dim w × (n·dim u)` *or* nested `(dim u·dim w)×n`, converts then `#>` | Shape sniff. **Apply↔image oracle is green** for maps from `recomposeLinMap` (nested path). Flat coerce shims are what break. |
+| `composeLinear` (Static×Static) | `COrphans` | columnwise apply + pack | fixed; no longer densify-`toArray` |
+| `siteLinFromRows` / … | quantum `LinmapStorage` | **flat** via **`unsafeCoerce`** | Disagrees with categorical writers; remove after flat is canonical *or* stop writing flat |
 
-1. ✅ **Document the canonical layout** — `Numeric.LinearAlgebra.Static.MPSLayout` in `linearmap-hmatrix`: row `lB`, column `r·p + s`.
-2. ✅ **Fix `applyTensorLinMap`** (static case) — bond-major contraction in `COrphans` (no `unsafeCoerce`).
-3. ✅ **Regression test in `linearmap-hmatrix`** — `MPSLayoutTests`: categorical `$` vs oracle for `bl,br ∈ {1,2,4}`.
-4. ✅ **Categorical `applySite`** in `Fixed` — `prop_applySiteMatchesCoeff` green.
-5. ➡ **Fix bra pullback for `transferStep` (categorical path):** `siteDagger` types `C br +> (C bl ⊗ C p)` but `DualVector (C bl ⊗ C p) ≠ C bl ⊗ C p` at the type level; `toArray` (`flatten∘tr`) vs `applyLinear` (`reshape`) disagree on tensor codomains. Either (a) a typed identification `DualVector (Tensor s u v) ≅ LinearMap s u (DualVector v)` used in contraction primitives, or (b) `contractLinearMapAgainst` / bilinear pairing that does not require pretending the dual tensor *is* the primal tensor. `TensorNetwork.Dagger.hilbertFromDual` is the right *conceptual* locus. **Workaround in place:** `transferStep` is built via `recomposeLinMap` from `matrixTransferCoeff`; bra conjugation uses `conjugateSite` (entry-wise `cmap conjugate`), not `vectorConjugate`.
-6. ✅ **Green `prop_innerMatchesFlat` / `prop_innerMatchesReference`** — Phase 2 done.
-7. ✅ **Module hygiene:** `Fixed.Internal` (types + coefficient helpers), `Fixed.Reference` (basis-sum oracles). Remaining: replace dense `mpoToMatrix` p⁶ loops with matmul on flattened layouts.
+**Regression suite:** `TensorDomainStorageTests` in `linearmap-hmatrix` (shape props red; apply-oracle props green).
+
+Same dual-layout sniff exists on the `R` path in `Orphans.hs`.
+
+#### Target (agreed direction)
+
+One canonical static layout for `(C n ⊗ u) +> w`:
+
+- **Flat matvec:** `M (dim w) (n · dim u)`
+- **Column `i = lB · dim(u) + s`** (same as `enumerateSubBasis` on the tensor and as `flatten` of `tensorProduct`)
+
+Then: `recomposeContraLinMapTensor` / `tensorId` / decompose write that shape; `applyTensorLinMap` only `#>`s (no sniff); quantum `LinmapStorage` drops `unsafeCoerce` and uses ordinary `LinearMap (create …)`.
+
+#### Regression tests to land (in `linearmap-hmatrix`, basis OK here)
+
+1. **Shape of categorical constructors** — `extract` of `recomposeLinMap` / `recomposeContraLinMapTensor` / `tensorId` for `(C bl ⊗ C p) +> C br` reports `rows = br`, `cols = bl·p` (and the `R` analogue). Fails today on nested writers.
+2. **Apply = curry path** — `f $ (v ⊗ u) === (uncurry / applyLinear chain)` for random static maps; no coerce.
+3. **Apply vs coefficient oracle** (test-local only) — for `f` built by `recomposeLinMap` from images `e_(lB,s) ↦ out`, check `(f $ (bond ⊗ phys))[r] = Σ_{lB,s} out_(lB,s)[r] · bond[lB] · phys[s]`. Covers `bl≠br` and `bl>1`.
+4. **Round-trip** — `decomposeLinMap ∘ recomposeLinMap = id` on images for tensor-domain maps.
+5. **Keep** — `ComposeTensorDomainTests` + quantum `heff-compose-mre` (associativity / Heff↔Inner).
+
+#### Fix order
+
+1. ➡ Inventory + tests above (red on shape / apply until writers agree).
+2. ➡ Make `recomposeContraLinMapTensor` (and `tensorId`) emit flat matvec; delete shape sniff in `applyTensorLinMap`.
+3. ➡ Mirror on `R` `Orphans`.
+4. ➡ Remove `unsafeCoerce` from quantum `LinmapStorage` once flat create typechecks as the real payload.
+5. ➡ Bra / `siteDagger` dual-tensor identification (former item 5 below) only after apply/storage agree.
+
+**Still open after layout (unchanged):**
+
+- **Bra pullback for `transferStep`:** `siteDagger` types `C br +> (C bl ⊗ C p)` but `DualVector (C bl ⊗ C p) ≠ C bl ⊗ C p` at the type level; needs a typed dual identification or a pairing that does not pretend dual = primal. `TensorNetwork.Dagger.hilbertFromDual` is the conceptual locus.
+- **Module hygiene:** `Fixed.Reference` oracles stay basis-sum; production stays categorical. Dense `mpoToMatrix` p⁶ loops still to replace with matmul on flattened layouts where appropriate.
 
 ### Still open (decide as they arise)
 - **Gauge / canonical form** — no orthonormality is enforced yet; DMRG gauge transport

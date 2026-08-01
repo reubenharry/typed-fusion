@@ -54,10 +54,12 @@ import Numeric.LinearAlgebra.Static (C, Sized (create))
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Data.VectorSpace.Free.FiniteSupportedSequence (FinSuppSeq (..))
+import Control.Lens (view)
 import TensorNetwork.Categorical ((⊗^))
 import TensorNetwork.MPS.General
   ( MPS (..), MPO (..), MPSConstraints
   , mpoApplyExact, mpoComposeExact
+  , mpoBondDimHint
   )
 import TensorNetwork.MPS.FinSupp.Bond
   ( Bond, bondCoeff, activeDimBond )
@@ -151,7 +153,7 @@ bondDimMPS (MPS l _ _) =
 
 -- | Runtime virtual-bond width carried explicitly by an MPO.
 bondDimMPO :: MPO Bond n physIn physOut -> Int
-bondDimMPO = max 1 . mpoBondDimHint
+bondDimMPO = max 1 . view mpoBondDimHint
 
 --------------------------------------------------------------------------------
 -- Identity, apply, compose

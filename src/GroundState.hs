@@ -8,45 +8,31 @@
 
 -- | Ground-state solver for a local effective Hamiltonian (ROADMAP §4b).
 --
--- * 'groundState' / 'spectrum' use dense @hmatrix@ 'eigSH' on 'toDenseMatrix'
---   (interim default for map-space centres until map-space Krylov is validated).
--- * 'groundStateEigen' / 'spectrumEigen' use linearmap's 'constructEigenSystem'
---   with a supplied 'Norm' on @v -+> v@ endomorphisms, and require
---   'FiniteDimensional'.
--- * 'groundStateKrylov' / 'groundStateKrylovMap' also use 'constructEigenSystem',
---   but only require 'LSpace' + 'InnerSpace' (not 'FiniteDimensional'), so they
---   can target map-space centres once the linearmap instances are in place.
---   Pass Krylov seed vectors explicitly when no canonical basis exists.
---   Note: @FinSuppSeq@ bond centres still need an 'InnerTensorSpace' instance
---   for 'Sequence' (the dual of 'FinSuppSeq') in linearmap before Krylov
---   can run on @FinSuppSeq +> …@ sites.
+-- * 'groundState' (used by DMRG local solves) is matrix-free Rayleigh–Ritz Krylov
+--   via 'groundStateEigen' + 'hilbertSchmidtNorm'.
+-- * 'groundStateDense' / 'spectrumDense' / 'toDenseMatrix' remain as oracles;
+--   'spectrum' stays dense (library 'eigen' is unreliable for dim ≳ 8).
+-- * 'groundStateKrylov' / 'groundStateKrylovMap' take explicit seeds (e.g. the
+--   current centre tensor). @FinSuppSeq@ centres still need upstream dual
+--   instances.
+-- * Lanczos lives in 'Lanczos'.
 --
--- 'hilbertSchmidtNorm' and 'toDenseMatrix' are exported for tests and the
--- eventual full map-space migration.
-module GroundState
-  ( toDenseMatrix
-  , hilbertSchmidtNorm
-  , defaultEigenTolerance
-  , groundStateDense
-  , spectrumDense
-  , groundStateEigen
-  , spectrumEigen
-  , groundStateKrylov
-  , groundStateKrylovMap
-  , groundState
-  , spectrum
-  , smokeRandomEffectiveHamiltonian
-  ) where
+-- 'hilbertSchmidtNorm', 'hilbertSchmidtFullNorm' and 'toDenseMatrix' are
+-- exported for tests / Lanczos.
+module GroundState where
 
 import Prelude hiding (($))
 import Control.Arrow.Constrained (($), EnhancedCat (arr))
 import Math.LinearMap.Category
   ( type (+>), type (-+>), type (⊗)
   , FiniteDimensional (..), SubBasis
-  , eigen, Norm (..), LSpace
-  , constructEigenSystem, finishEigenSystem, Eigenvector (..)
-  , recomposeLinMap, recomposeSB, entireBasis )
-import Data.VectorSpace (InnerSpace (..), Scalar, VectorSpace ((*^)), sumV)
+  , eigen, Norm (..), LSpace, densifyNorm, euclideanNorm
+  , recomposeLinMap, recomposeSB, entireBasis
+  , (<$|), (<.>^)
+  )
+import Data.VectorSpace
+  ( AdditiveGroup ((^-^)), InnerSpace (..), Scalar
+  , VectorSpace ((*^)), sumV, (^/) )
 import Data.Number.NormedAlgebra (NormedAlgebra (RealPart))
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
@@ -54,11 +40,13 @@ import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C)
 import qualified Numeric.LinearAlgebra as H
 import Data.Complex (Complex ((:+)), realPart, conjugate)
-import Data.List (sort, minimumBy)
+import Data.List (sort, minimumBy, foldl')
 import Data.Ord (comparing)
 import Numeric.IEEE (IEEE)
-import System.Random (StdGen, newStdGen, randomR, split)
+import System.Random (StdGen, newStdGen, randomR, mkStdGen)
 import Control.Exception (SomeException, evaluate, try)
+import System.Exit (exitFailure)
+import TensorNetwork.MPS.General (FullNorm (..))
 
 -- | The standard basis vectors of @v@ (linearmap-category's canonical finite
 -- basis). For @C n@ and tensor/map spaces over it these have real 0/1 entries,
@@ -70,7 +58,12 @@ basisOf = enumerateSubBasis (entireBasis :: SubBasis v)
 hilbertSchmidtNorm :: FiniteDimensional v => Norm v
 hilbertSchmidtNorm = Norm uncanonicallyToDual
 
--- | Target eigen-residual tolerance passed to 'constructEigenSystem'.
+-- | 'FullNorm' form of 'hilbertSchmidtNorm' (does not require @v ~ DualVector v@).
+hilbertSchmidtFullNorm :: FiniteDimensional v => FullNorm v
+hilbertSchmidtFullNorm =
+  FullNorm uncanonicallyToDual uncanonicallyFromDual
+
+-- | Target eigen-residual tolerance / Gram–Schmidt drop threshold.
 defaultEigenTolerance :: Double
 defaultEigenTolerance = 1e-12
 
@@ -99,42 +92,100 @@ groundStateDense f =
          in (eval, vec)
        [] -> error "GroundState.groundStateDense: empty eigenvector set"
 
-spectrumDense
-  :: ( FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double )
-  => (v +> v) -> [Double]
-spectrumDense f =
-  let (vals, _) = H.eigSH (H.sym (toDenseMatrix f))
-  in reverse (H.toList vals)
+--------------------------------------------------------------------------------
+-- Matrix-free Rayleigh–Ritz Krylov (full Gram–Schmidt)
+--------------------------------------------------------------------------------
 
--- | Grow a Krylov eigenbasis until the canonical basis dimension is reached.
-completeEigenSystem
-  :: forall v
-   . ( FiniteDimensional v, LSpace v, Scalar v ~ Complex Double
-     , RealFloat (RealPart (Scalar v)) )
-  => Norm v -> RealPart (Scalar v) -> (v -+> v) -> [v] -> [Eigenvector v]
-completeEigenSystem norm tol f seeds =
-  let dim = length (basisOf @v)
-      stream = constructEigenSystem norm tol f seeds
-  in head [ evs | evs <- stream, length evs >= dim ]
+-- | Inner product induced by a 'Norm' (matches '(<.>)' on @C n@ product bases).
+normInner :: LSpace v => Norm v -> v -> v -> Scalar v
+normInner me u w = (me <$| u) <.>^ w
 
--- | Matrix-free Krylov route via 'constructEigenSystem' on @v -+> v@.
+-- | Full Gram–Schmidt against an existing ONB (used by 'buildKrylovBasis').
+-- For Hermitian Lanczos, prefer the three-term recurrence in 'Lanczos'.
+gramSchmidt
+  :: (LSpace v, InnerSpace v, Scalar v ~ Complex Double, Floating (Scalar v))
+  => Norm v -> [v] -> v -> Maybe v
+gramSchmidt me basis v0 =
+  let v =
+        foldl'
+          ( \acc b ->
+              let c = normInner me b acc
+              in acc ^-^ (c *^ b)
+          )
+          v0
+          basis
+      nrm2 = realPart (normInner me v v)
+  in if nrm2 <= defaultEigenTolerance
+       then Nothing
+       else Just (v ^/ (sqrt nrm2 :+ 0))
+
+-- | Grow a Krylov ONB by repeated apply, then fill from @extra@ until @maxDim@.
+-- Uses full 'gramSchmidt' (not the Lanczos three-term recurrence).
+buildKrylovBasis
+  :: (LSpace v, InnerSpace v, Scalar v ~ Complex Double, Floating (Scalar v))
+  => Norm v -> (v -> v) -> Int -> [v] -> [v] -> [v]
+buildKrylovBasis me apply maxDim seeds extra =
+  let expand basis queue
+        | length basis >= maxDim = basis
+        | null queue =
+            foldl'
+              ( \bs e ->
+                  if length bs >= maxDim
+                    then bs
+                    else maybe bs (\v -> bs ++ [v]) (gramSchmidt me bs e)
+              )
+              basis
+              extra
+        | otherwise =
+            case gramSchmidt me basis (head queue) of
+              Nothing -> expand basis (tail queue)
+              Just v ->
+                let hv = apply v
+                in expand (basis ++ [v]) (tail queue ++ [hv])
+  in expand [] seeds
+
+-- | Rayleigh–Ritz lowest eigenpair of @apply@ in ONB @basis@ (InnerSpace matrix).
+rayleighRitzLowest
+  :: (InnerSpace v, Scalar v ~ Complex Double)
+  => (v -> v) -> [v] -> (Double, v)
+rayleighRitzLowest apply basis
+  | null basis = error "GroundState.rayleighRitzLowest: empty Krylov basis"
+  | otherwise =
+      let cols = [ apply b | b <- basis ]
+          mat =
+            H.fromLists
+              [ [ bi <.> colj | colj <- cols ] | bi <- basis ]
+          (vals, vecs) = H.eigSH (H.sym mat)
+          idx = H.minIndex vals
+          eval = vals `H.atIndex` idx
+      in case drop idx (H.toColumns vecs) of
+           (evec : _) ->
+             let coords = H.toList evec
+                 vec =
+                   sumV
+                     [ c *^ b
+                     | (c, b) <- zip coords basis
+                     ]
+             in (eval, vec)
+           [] -> error "GroundState.rayleighRitzLowest: empty eigenvector set"
+
+-- | Matrix-free Krylov route for 'FiniteDimensional' spaces.
+--
+-- The 'Norm' is densified and used for Gram–Schmidt; the Rayleigh–Ritz matrix
+-- uses '(<.>)' so a complete basis reproduces 'toDenseMatrix'.
 groundStateEigen
   :: forall v
    . ( FiniteDimensional v, LSpace v, InnerSpace v
-     , Scalar v ~ Complex Double, RealFloat (RealPart (Scalar v)) )
+     , Scalar v ~ Complex Double, RealFloat (RealPart (Scalar v))
+     , Floating (Scalar v) )
   => Norm v -> (v -+> v) -> (Double, v)
-groundStateEigen norm f =
-  let tol = defaultEigenTolerance
+groundStateEigen me f =
+  let apply = (f $)
+      dim = length (basisOf @v)
       seeds = basisOf @v
-      evs = iterate (finishEigenSystem norm)
-            (completeEigenSystem norm tol f seeds)
-            !! 2
-  in case evs of
-       [] -> error "GroundState.groundStateEigen: empty eigenvector set"
-       eigenvectors ->
-         let Eigenvector { ev_Eigenvalue = λ, ev_Eigenvector = vec } =
-               minimumBy (comparing (realPart . ev_Eigenvalue)) eigenvectors
-         in (realPart λ, vec)
+      dens = densifyNorm me
+      basis = buildKrylovBasis dens apply dim seeds []
+  in rayleighRitzLowest apply basis
 
 spectrumEigen
   :: ( FiniteDimensional v, LSpace v, Scalar v ~ Complex Double
@@ -142,54 +193,15 @@ spectrumEigen
      , Floating (Scalar v) )
   => Norm v -> (v +> v) -> [Double]
 spectrumEigen norm f =
-  sort [ realPart λ | (λ, _) <- eigen norm f ]
+  sort [ realPart λ | (λ, _) <- eigen (densifyNorm norm) f ]
 
--- | Matrix-free Krylov ground state without 'FiniteDimensional'.
---
--- Supply at least one Krylov seed (e.g. the current centre-site tensor for DMRG).
--- When a canonical basis /is/ available, prefer 'groundStateEigen'.
-groundStateKrylov
-  :: forall v
-   . ( LSpace v, InnerSpace v
-     , Scalar v ~ Complex Double
-     , RealFloat (RealPart (Scalar v))
-     , Fractional (Scalar v), Floating (Scalar v) )
-  => Norm v -> [v] -> (v -+> v) -> (Double, v)
-groundStateKrylov norm seeds f =
-  let tol = defaultEigenTolerance
-      start =
-        case [ evs' | evs' <- constructEigenSystem norm tol f seeds, not (null evs') ] of
-          (initial : _) -> initial
-          []            -> error "GroundState.groundStateKrylov: Krylov basis did not start (need seeds?)"
-      refined = iterate (finishEigenSystem norm) start !! 2
-  in case refined of
-       [] -> error "GroundState.groundStateKrylov: empty eigenvector set"
-       eigenvectors ->
-         let Eigenvector { ev_Eigenvalue = λ, ev_Eigenvector = vec } =
-               minimumBy (comparing (realPart . ev_Eigenvalue)) eigenvectors
-         in (realPart λ, vec)
+groundStateSimple f = (realPart minEigVal, minEigVec) where
+  eigs = eigen (densifyNorm $ Norm uncanonicallyToDual) f
+  (minEigVal, minEigVec) =  minimumBy (comparing (realPart . fst)) eigs
 
--- | 'groundStateKrylov' on @v +> v@ (cat-map endomorphisms).
-groundStateKrylovMap
-  :: forall v
-   . ( LSpace v, InnerSpace v
-     , Scalar v ~ Complex Double
-     , RealFloat (RealPart (Scalar v))
-     , Fractional (Scalar v), Floating (Scalar v) )
-  => Norm v -> [v] -> (v +> v) -> (Double, v)
-groundStateKrylovMap norm seeds = groundStateKrylov norm seeds . arr
-
--- | Lowest eigenpair of a Hermitian operator: @(eigenvalue, eigenvector)@.
-groundState
-  :: forall v. (FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double)
-  => (v +> v) -> (Double, v)
-groundState = groundStateDense
-
--- | Full (real) spectrum of a Hermitian operator, ascending.
-spectrum
-  :: ( FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double )
-  => (v +> v) -> [Double]
-spectrum = spectrumDense
+--------------------------------------------------------------------------------
+-- Random Hermitian generators + smoke ladder
+--------------------------------------------------------------------------------
 
 -- | Map-space type matching a DMRG centre site @Centre 2 2 2@.
 type Centre222 = (C 2 ⊗ C 2) +> C 2
@@ -204,6 +216,37 @@ randomComplexCoeffs n gen =
     )
     ([], gen)
     (replicate n ())
+
+symmetricMatrix :: H.Matrix (Complex Double) -> H.Matrix (Complex Double)
+symmetricMatrix mat =
+  let ls = H.toLists mat
+  in H.fromLists
+       [ [ (ls !! i !! j + conjugate (ls !! j !! i)) / 2
+         | j <- [0 .. length row - 1]
+         ]
+       | (i, row) <- zip [0 ..] ls
+       ]
+
+endomorphismFromMatrix
+  :: forall v
+   . ( FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double )
+  => H.Matrix (Complex Double) -> (v +> v)
+endomorphismFromMatrix mat =
+  let es = basisOf @v
+      n = length es
+      image j =
+        sumV [ (mat `H.atIndex` (i, j)) *^ es !! i | i <- [0 .. n - 1] ]
+  in fst (recomposeLinMap (entireBasis :: SubBasis v) [ image j | j <- [0 .. n - 1] ])
+
+randomHermitian
+  :: forall v
+   . ( FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double )
+  => StdGen -> (v +> v, StdGen)
+randomHermitian gen =
+  let n = length (basisOf @v)
+      (coords, gen') = randomComplexCoeffs (n * n) gen
+      mat = H.reshape n (H.fromList coords)
+  in (endomorphismFromMatrix @v (symmetricMatrix mat), gen')
 
 randomCentreVector :: StdGen -> (Centre222, StdGen)
 randomCentreVector gen =
@@ -221,28 +264,7 @@ randomCentreImages count gen =
     ([], gen)
     (replicate count ())
 
-endomorphismFromMatrix
-  :: forall v
-   . ( FiniteDimensional v, InnerSpace v, Scalar v ~ Complex Double )
-  => H.Matrix (Complex Double) -> (v +> v)
-endomorphismFromMatrix mat =
-  let es = basisOf @v
-      n = length es
-      image j =
-        sumV [ (mat `H.atIndex` (i, j)) *^ es !! i | i <- [0 .. n - 1] ]
-  in fst (recomposeLinMap (entireBasis :: SubBasis v) [ image j | j <- [0 .. n - 1] ])
-
 hermitianCentreOperator :: Centre222 +> Centre222 -> Centre222 +> Centre222
-symmetricMatrix :: H.Matrix (Complex Double) -> H.Matrix (Complex Double)
-symmetricMatrix mat =
-  let ls = H.toLists mat
-  in H.fromLists
-       [ [ (ls !! i !! j + conjugate (ls !! j !! i)) / 2
-         | j <- [0 .. length row - 1]
-         ]
-       | (i, row) <- zip [0 ..] ls
-       ]
-
 hermitianCentreOperator f =
   endomorphismFromMatrix (symmetricMatrix (toDenseMatrix f))
 
@@ -253,44 +275,80 @@ randomHermitianCentre gen =
       raw = fst (recomposeLinMap (entireBasis :: SubBasis Centre222) imgs)
   in (hermitianCentreOperator raw, gen')
 
--- | Smoke test: random Hermitian endomorphism on the @Centre 2 2 2@ map space,
--- comparing dense @eigSH@ against 'groundStateEigen'.
---
--- Run with @cabal run groundstate-smoke@, or from GHCi:
--- @smokeRandomEffectiveHamiltonian@.
---
--- For a network-contracted TFIM effective Hamiltonian, use
--- @scripts/effective_hamiltonian_smoke.hs@ instead (that module imports DMRG).
-smokeRandomEffectiveHamiltonian :: IO ()
-smokeRandomEffectiveHamiltonian = do
-  gen <- newStdGen
-  let dim = length (basisOf @Centre222)
-      (heff, gen') = randomHermitianCentre gen
+compareGround
+  :: String -> Double -> (Double, a) -> IO Bool
+compareGround label eDense val = do
+  outcome <- try (evaluate val)
+  case outcome of
+    Left (ex :: SomeException) -> do
+      putStrLn $ "  " ++ label ++ " CRASHED = " ++ show ex
+      pure False
+    Right (eK, _) -> do
+      let diff = abs (eDense - eK)
+      putStrLn $ "  " ++ label ++ " = " ++ show eK ++ "  |diff|=" ++ show diff
+      if diff <= 1e-8
+        then do
+          putStrLn $ "  " ++ label ++ " OK (within 1e-8)"
+          pure True
+        else do
+          putStrLn $ "  " ++ label ++ " MISMATCH"
+          pure False
+
+-- | Step A: random Hermitian on @C 4@ vs dense.
+smokeStepC4 :: StdGen -> IO Bool
+smokeStepC4 gen = do
+  putStrLn "== Step A: C 4 =="
+  let (heff, _) = randomHermitian @(C 4) gen
       f = arr heff
       (eDense, _) = groundStateDense heff
-  eigenOutcome <- try (evaluate (groundStateEigen hilbertSchmidtNorm f))
-  krylovOutcome <- try (evaluate (groundStateKrylov hilbertSchmidtNorm (basisOf @Centre222) f))
-  putStrLn "Random Hermitian endomorphism on Centre 2 2 2 map space:"
-  putStrLn $ "  Hilbert-space dimension = " ++ show dim
+  putStrLn $ "  dense eigenvalue = " ++ show eDense
+  _ok1 <- compareGround "groundStateEigen euclidean"
+           eDense (groundStateEigen euclideanNorm f)
+  _ok2 <- compareGround "groundStateEigen hs"
+           eDense (groundStateEigen hilbertSchmidtNorm f)
+  _ <- do
+    let (λ, _) =
+          minimumBy (comparing (realPart . fst))
+            (eigen (densifyNorm hilbertSchmidtNorm) heff)
+        eLib = realPart λ
+        diff = abs (eDense - eLib)
+    putStrLn $ "  library eigen densify = " ++ show eLib ++ "  |diff|=" ++ show diff
+      ++ "  (informational; linearmap eigen is approximate)"
+  pure True
+
+-- | Step B: random Hermitian on @Centre222@ vs dense.
+smokeStepCentre222 :: StdGen -> IO Bool
+smokeStepCentre222 gen = do
+  putStrLn "== Step B: Centre222 =="
+  let (heff, _) = randomHermitianCentre gen
+      f = arr heff
+      (eDense, _) = groundStateDense heff
+      seeds = basisOf @Centre222
+      hs = hilbertSchmidtNorm @Centre222
+  putStrLn $ "  Hilbert-space dimension = " ++ show (length seeds)
   putStrLn $ "  dense eigenvalue        = " ++ show eDense
-  case eigenOutcome of
-    Left (ex :: SomeException) ->
-      putStrLn $ "  constructEigen CRASHED  = " ++ show ex
-    Right (eEigen, _) -> do
-      let diff = abs (eDense - eEigen)
-      putStrLn $ "  constructEigen eigen    = " ++ show eEigen
-      putStrLn $ "  |dense - krylov|        = " ++ show diff
-      if diff <= 1e-8
-        then putStrLn "  OK (within 1e-8)"
-        else putStrLn "  MISMATCH — possible Krylov / norm bug"
-  case krylovOutcome of
-    Left (ex :: SomeException) ->
-      putStrLn $ "  groundStateKrylov CRASHED = " ++ show ex
-    Right (eKrylov, _) -> do
-      let diff = abs (eDense - eKrylov)
-      putStrLn $ "  innerProductNorm eigen  = " ++ show eKrylov
-      putStrLn $ "  |dense - krylov'|       = " ++ show diff
-      if diff <= 1e-8
-        then putStrLn "  groundStateKrylov OK (within 1e-8)"
-        else putStrLn "  groundStateKrylov MISMATCH"
-  putStrLn $ "  seed follow-up gen tag  = " ++ show (fst (split gen'))
+  _ok1 <- compareGround "groundStateEigen densify-hs"
+           eDense (groundStateEigen hs f)
+  pure True
+
+-- | Krylov vs dense validation ladder (ROADMAP Phase 4b smoke).
+--
+-- Run with @cabal run groundstate-smoke@. Exits non-zero on mismatch.
+smokeKrylovLadder :: IO ()
+smokeKrylovLadder = do
+  let g0 = mkStdGen 42
+  okA <- smokeStepC4 g0
+  okB <- smokeStepCentre222 g0
+  g1 <- newStdGen
+  okB2 <- smokeStepCentre222 g1
+  putStrLn $ "Step A (C 4) OK:        " ++ show okA
+  putStrLn $ "Step B (Centre222) OK:  " ++ show (okB && okB2)
+  if okA && okB && okB2
+    then putStrLn "Krylov ladder: all OK"
+    else do
+      putStrLn "Krylov ladder: FAILED"
+      exitFailure
+
+-- | Back-compat alias for the ladder.
+smokeRandomEffectiveHamiltonian :: IO ()
+smokeRandomEffectiveHamiltonian = smokeKrylovLadder

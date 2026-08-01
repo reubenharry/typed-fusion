@@ -37,7 +37,6 @@ module TensorNetwork.DMRG.FixedSVD where
 -- import Math.LinearMap.Category.Backend.HMatrix ()
 -- import Numeric.LinearAlgebra.Static.COrphans ()
 -- import Numeric.LinearAlgebra.Static (C, M, R, Sized (fromList, create), extract)
--- import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 -- import qualified Numeric.LinearAlgebra as HM
 -- import GHC.TypeLits (KnownNat, type (*))
 -- import Data.Complex (Complex ((:+)), realPart)
@@ -99,7 +98,7 @@ module TensorNetwork.DMRG.FixedSVD where
 --    . ( KnownNat bl, KnownNat p, KnownNat br
 --      , KnownNat (p * br), KnownNat (p * bl) )
 --   => M bl (p * br) -> Site bl p br
--- siteFromStorage = Site . siteLinearMap
+-- siteFromStorage = Site . …
 
 -- rowsToM :: forall r c. (KnownNat r, KnownNat c) => [C c] -> M r c
 -- rowsToM rs =

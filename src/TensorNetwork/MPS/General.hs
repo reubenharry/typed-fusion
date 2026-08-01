@@ -6,17 +6,23 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE TemplateHaskell #-}
 {- HLINT ignore "Redundant $" -}
 
 -- | Three-site MPS with abstract @LinearSpace@ operands and heterogeneous
 -- boundary sites. Open boundaries use @Scalar bond@ as the unit object.
 --
--- 'siteDagger' is categorical in 'TensorNetwork.Dagger' ('ApplicationTensorIso').
+-- 'siteDagger' flattens the tensor domain via 'fuseBond' then uses 'dagger'
+-- on the self-dual @C (n·m)@ (see 'TensorNetwork.Dagger'). Do /not/ dagger
+-- through 'tensorNorm': @DualVector (u ⊗ v) = u +> DualVector v@, so the
+-- @coerce@ into @Dual u ⊗ Dual v@ makes 'dagger' transpose a nested 'LinearMap'.
 --
 -- __Concrete @C n@ example:__ 'exampleMPSC22' and 'exampleMPSInnerC22' show that
 -- 'mpsInner' only needs 'TransferCtx' (not 'PhysicalCtx' / 'toPhysicalMPS').
@@ -35,7 +41,9 @@ import Math.LinearMap.Category
   ( type (+>), type (⊗), TensorProduct, Tensor (..), (⊗)
   , TensorSpace (..), LinearSpace (..), HilbertSpace, DualVector
   , trace, (-+$>), LinearMap (LinearMap), getLinearMap
-  , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun, SemilinearFunction (SemilinearFunction), VectorSpace (..), Num' , FiniteDimensional)
+  , LinearFunction, pattern LinearFunction, DimensionAware (..), LSpace, adjoint, Norm (..), type (-+>), getAntilinearFunction, lfun, SemilinearFunction (SemilinearFunction), VectorSpace (..), Num' , FiniteDimensional )
+import Math.LinearMap.Category.Class (asTensor, fromTensor)
+import Math.LinearMap.Coercion (curryLinearMap, uncurryLinearMap, (-+$=>))
 import Numeric.LinearAlgebra.Static
   ( Sized (konst, create, extract, fromList)
   , C, M, R, Domain (diagR), complex, mul
@@ -57,7 +65,7 @@ import GHC.TypeNats (natVal)
 import Data.Data (Proxy(..))
 import GHC.TypeLits (Nat)
 import Linear.V (V (..))
-import Control.Lens ((&), (.~), (^.), Ixed (ix), (^?), _1, _2)
+import Control.Lens ((&), (.~), (^.), Ixed (ix), (^?), _1, _2, makeLenses)
 import Data.Maybe (fromMaybe)
 import Data.Foldable (Foldable(toList))
 import qualified Data.Vector as Vector
@@ -83,9 +91,9 @@ type RightSite (bond :: Type) (phys :: Type) = bond +> phys
 
 -- | Open-boundary three-site MPS (@left + bulk + right@).
 data MPS (bond :: Type) (phys :: Type) (n :: Nat) = MPS
-  { mpsLeft :: phys +> bond
-  , mpsBulk :: V n ((bond ⊗ phys) +> bond)
-  , mpsRight :: bond +> phys
+  { _mpsLeft :: phys +> bond
+  , _mpsBulk :: V n ((bond ⊗ phys) +> bond)
+  , _mpsRight :: bond +> phys
   }
 
 -- | Matrix-product operator with possibly distinct physical legs.
@@ -94,14 +102,16 @@ data MPS (bond :: Type) (phys :: Type) (n :: Nat) = MPS
 -- ket (@physIn@). Parameter order puts Category object slots last so
 -- @MPO bond n :: Type -> Type -> Type@.
 data MPO (bond :: Type) (n :: Nat) (physIn :: Type) (physOut :: Type) = MPO
-  { mpoLeft :: physOut +> (bond ⊗ physIn)
-  , mpoBulk :: V n ((bond ⊗ physOut) +> (bond ⊗ physIn))
-  , mpoRight :: (bond ⊗ physIn) +> physOut
-  , mpoBondDimHint :: Int
+  { _mpoLeft :: physOut +> (bond ⊗ physIn)
+  , _mpoBulk :: V n ((bond ⊗ physOut) +> (bond ⊗ physIn))
+  , _mpoRight :: (bond ⊗ physIn) +> physOut
+  , _mpoBondDimHint :: Int
   }
 
+makeLenses ''MPS
+makeLenses ''MPO
+
 -- | Homogeneous (endomorphism) MPO.
-type EndoMPO bond phys n = MPO bond n phys phys
 
 type MPSConstraints bond phys = (LSpace phys, LSpace bond, InnerSpace phys, Scalar bond ~ Complex Double, Scalar (DualVector bond) ~ Complex Double, Scalar (DualVector phys) ~ Complex Double,  Scalar phys ~ Complex Double, DualVector (DualVector bond) ~ bond, DualVector (DualVector phys) ~ phys, LinearSpace (DualVector bond), LinearSpace (DualVector phys), InnerSpace bond)
 
@@ -117,9 +127,31 @@ dagger nb nv  (LinearMap f)  = arr (raise nv . arr lm . lower nb) where
   tensor = transposeTensor $ coerce f :: DualVector (DualVector w) ⊗ DualVector v
   lm = coerce tensor :: DualVector w +> DualVector v
 
-siteDagger :: forall u v w. (LSpace v, LSpace w, LSpace u, LSpace (DualVector v), LSpace (DualVector w), Scalar v ~ Scalar w, Scalar (DualVector v) ~ Scalar w, Scalar (DualVector w) ~ Scalar w, DualVector (DualVector w) ~ w, Scalar u ~ Scalar w, Scalar (DualVector u) ~ Scalar w, LinearSpace (DualVector u)) => FullNorm w -> FullNorm v -> FullNorm u -> ((u ⊗ v) +> w)  -> (w +> (u ⊗ v))
-siteDagger nw nv nu = dagger nw (tensorNorm nu nv)
+-- | Bra pullback for a bulk-shaped map @(u ⊗ v) +> w@.
+--
+-- For @C n@ the instance flattens via 'fuseBond' (self-dual domain) — see
+-- 'siteDaggerC'. Do not dagger through 'tensorNorm' on a tensor domain:
+-- @DualVector (u ⊗ v) = u +> DualVector v@, and the nested-'LinearMap'
+-- transpose breaks @dagger(f ∘ (g ⊗ id)) = (g† ⊗ id) ∘ dagger f@.
+class SiteDagger u v w where
+  siteDagger
+    :: FullNorm w -> FullNorm v -> FullNorm u
+    -> ((u ⊗ v) +> w) -> (w +> (u ⊗ v))
 
+-- | @C n@ instance: @siteDagger f = splitBond ∘ dagger (f ∘ splitBond)@.
+instance
+  ( KnownNat n, KnownNat m, KnownNat p, KnownNat (n * m)
+  ) => SiteDagger (C n) (C m) (C p) where
+  siteDagger nw _nv _nu f =
+    splitBond @n @m . dagger nw flat (f . splitBond @n @m)
+    where
+      flat = hermitianNorm :: FullNorm (C (n * m))
+
+-- | Product Riesz map via @coerce :: Dual u ⊗ Dual v ↔ Dual(u ⊗ v)@.
+--
+-- WARNING: @DualVector (u ⊗ v) = u +> DualVector v@, not @Dual u ⊗ Dual v@.
+-- Prefer 'siteDagger' (flatten) for bulk bra pullback; this remains for
+-- diagnostics and non-@C@ experiments that do not go through transfer.
 tensorNorm :: forall v w . (LSpace v, LSpace w, Scalar v ~ Scalar w, Scalar (DualVector w) ~ Scalar w, Scalar (DualVector v) ~ Scalar w, LinearSpace (DualVector v), LinearSpace (DualVector w)) => FullNorm v -> FullNorm w -> FullNorm (v ⊗ w)
 tensorNorm nv nw = FullNorm {
   lower =
@@ -142,9 +174,9 @@ bulkToMap f = arr (lfun coerce :: (DualVector phys ⊗ bond) -+> ( phys +> bond)
 toPhysicalMPS :: forall bond phys . (MPSConstraints bond phys) => FullNorm phys -> MPS bond phys 1 -> OTimes 3 phys
 toPhysicalMPS (FullNorm _ lw) mps = (fmapTensor -+$> toTensorWithNorm lw)
  $ coerce (
-  postCompose (mpsRight mps)
-  . bulkToMap (mpsBulk mps ^. _1)
-  .  mpsLeft mps
+  postCompose (mps ^. mpsRight)
+  . bulkToMap (mps ^. mpsBulk . _1)
+  .  (mps ^. mpsLeft)
   . arr lw
   )
 
@@ -184,7 +216,7 @@ reorderPhysical3 =
 -- Pure morphism wiring (no Riesz / basis sums).
 toPhysicalMPO
   :: forall bond phys. MPSConstraints bond phys =>
-  EndoMPO bond phys 1 -> OTimes 3 phys +> OTimes 3 phys
+  MPO bond 1 phys phys -> OTimes 3 phys +> OTimes 3 phys
 toPhysicalMPO (MPO l bulk r _) =
   reorderPhysical3
     . (r ⊗^ Cat.id)
@@ -229,7 +261,7 @@ transferLeftSite
 transferLeftSite nb np bra ket = ket . dagger nb np bra
 
 transferBulkSite
-  :: forall bond phys. MPSConstraints bond phys =>
+  :: forall bond phys. (MPSConstraints bond phys, SiteDagger bond phys bond) =>
   FullNorm bond -> FullNorm phys ->
   BulkSite bond phys
   -> BulkSite bond phys
@@ -249,7 +281,7 @@ transferRightSite nb np bra ket env = trace $ (env . dagger np nb  ket . bra)
 
 mpsInner
   :: forall bond phys (n :: Nat).
-  MPSConstraints bond phys =>
+  (MPSConstraints bond phys, SiteDagger bond phys bond) =>
   FullNorm bond -> FullNorm phys -> MPS bond phys n -> MPS bond phys n -> Scalar bond
 mpsInner nb np (MPS lB bB rB) (MPS lK bK rK) =
   transferRightSite nb np rB rK $ transferBulk $ transferLeftSite nb np lB lK where
@@ -313,7 +345,7 @@ transferMPOLeftSite nb npOut bra op ket =
 -- | Bulk ⟨bra|op|ket⟩ transfer update.
 transferMPOBulkSite
   :: forall bond physIn physOut.
-  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  (MPSConstraints bond physIn, MPSConstraints bond physOut, SiteDagger bond physOut bond) =>
   FullNorm bond -> FullNorm physOut ->
   BulkSite bond physOut
   -> ((bond ⊗ physOut) +> (bond ⊗ physIn))
@@ -340,7 +372,7 @@ transferMPORightSite nb npOut bra op ket env =
 -- | ⟨ψ|H|φ⟩ via left-to-right MPO–MPS transfer: bra on @physOut@, ket on @physIn@.
 mpsMPOInner
   :: forall bond physIn physOut (n :: Nat).
-  (MPSConstraints bond physIn, MPSConstraints bond physOut) =>
+  (MPSConstraints bond physIn, MPSConstraints bond physOut, SiteDagger bond physOut bond) =>
   FullNorm bond -> FullNorm physOut ->
   MPS bond physOut n -> MPO bond n physIn physOut -> MPS bond physIn n -> Scalar bond
 mpsMPOInner nb npOut (MPS lB bB rB) (MPO lO bO rO _) (MPS lK bK rK) =
@@ -420,32 +452,38 @@ effectiveHRight leftEnv op centreKet =
 mpsWithBulkSite
   :: BulkSite bond phys -> MPS bond phys 1 -> MPS bond phys 1
 mpsWithBulkSite site mps =
-  mps { mpsBulk = mpsBulk mps & _1 .~ site }
+  mps & mpsBulk . _1 .~ site
 
 -- | Environments and bulk @Heff@ on a three-site (@bulk length 1@) endomorphism chain.
 effectiveHBulk3
   :: forall bond phys.
   MPSConstraints bond phys =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys 1 -> EndoMPO bond phys 1 ->
+  MPS bond phys 1 -> MPO bond 1 phys phys ->
   BulkSite bond phys -> BulkSite bond phys
 effectiveHBulk3 nb np mps mpo = effectiveHBulk
-    (leftMPOEnv nb np (mpsLeft mps) (mpoLeft mpo) (mpsLeft mps))
-    (mpoBulk mpo ^. _1)
-    (rightMPOEnv nb np (mpsRight mps) (mpoRight mpo) (mpsRight mps))
+    (leftMPOEnv nb np (mps ^. mpsLeft) (mpo ^. mpoLeft) (mps ^. mpsLeft))
+    (mpo ^. mpoBulk . _1)
+    (rightMPOEnv nb np (mps ^. mpsRight) (mpo ^. mpoRight) (mps ^. mpsRight))
 
--- | Hilbert–Schmidt pairing at the bulk centre (canonical gauge only).
+-- | Network bilinear form at the bulk centre: close @R ∘ opWire ∘ (L ⊗ id) ∘ siteDagger@
+-- via 'transferMPORightSite' (same contraction as 'mpsMPOInner').
+-- Hilbert–Schmidt @braCentre <.> Heff ketCentre@ is /not/ this pairing unless the
+-- mixed-canonical metric identifies them.
 effectiveHBulkInner
   :: forall bond phys.
-  ( MPSConstraints bond phys
-  , FiniteDimensional (BulkSite bond phys)
-  , InnerSpace (BulkSite bond phys)
-  ) =>
+  (MPSConstraints bond phys, SiteDagger bond phys bond) =>
   FullNorm bond -> FullNorm phys ->
-  MPS bond phys 1 -> EndoMPO bond phys 1 ->
+  MPS bond phys 1 -> MPO bond 1 phys phys ->
   BulkSite bond phys -> BulkSite bond phys -> Scalar bond
 effectiveHBulkInner nb np mps mpo braCentre ketCentre =
-  braCentre <.> effectiveHBulk3 nb np mps mpo ketCentre
+  let l = leftMPOEnv nb np (mps ^. mpsLeft) (mpo ^. mpoLeft) (mps ^. mpsLeft)
+      op = mpo ^. mpoBulk . _1
+      env =
+        opWire op ketCentre
+          . (l ⊗^ Cat.id)
+          . siteDagger nb np nb braCentre
+  in transferMPORightSite nb np (mps ^. mpsRight) (mpo ^. mpoRight) (mps ^. mpsRight) env
 
 --------------------------------------------------------------------------------
 -- MPO × MPS (exact product bond, then SVD truncate to fixed χ)
@@ -599,6 +637,63 @@ siteFromLeftSVD
   C (bl * p) +> C br -> (C bl ⊗ C p) +> C br
 siteFromLeftSVD g = g . fuseBond @p @bl . swapMap
 
+-- | Right-looking flatten: curry the left bond, then fuse @(p +> br)@ to @C (p·br)@.
+-- Matches the nested @getLinearMap@ layout used by the old 'normalizeRight'.
+siteForRightSVD
+  :: forall bl p br.
+  ( KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br) ) =>
+  (C bl ⊗ C p) +> C br -> C bl +> C (p * br)
+siteForRightSVD f =
+  let curried = curryLinearMap -+$=> f :: C bl +> (C p +> C br)
+  in arr (LinearFunction $ \x ->
+        fuseBond @p @br $ (asTensor -+$=> (curried $ x :: C p +> C br)))
+
+-- | Inverse of 'siteForRightSVD'.
+siteFromRightSVD
+  :: forall bl p br.
+  ( KnownNat bl, KnownNat p, KnownNat br, KnownNat (p * br) ) =>
+  C bl +> C (p * br) -> (C bl ⊗ C p) +> C br
+siteFromRightSVD g =
+  uncurryLinearMap -+$=>
+    (arr (LinearFunction $ \x ->
+       fromTensor -+$=> (splitBond @p @br $ (g $ x)) :: C p +> C br))
+
+-- | Mixed-canonical gauge with orthogonality centre on the right boundary:
+-- left isometry, left-canonical bulk, right carries the norm.
+mixedCanonicalRight3
+  :: forall χ p.
+  ( KnownNat χ, KnownNat p
+  , KnownNat (χ * p), KnownNat (p * χ)
+  , χ * p ~ p * χ
+  , MPSConstraints (C χ) (C p)
+  ) =>
+  MPS (C χ) (C p) 1 -> MPS (C χ) (C p) 1
+mixedCanonicalRight3 (MPS l bulk r) =
+  let (mL, lIso) = polarLeftSite l
+      b1 = (bulk ^. _1) . (mL ⊗^ Cat.id)
+      flat = siteForLeftSVD @χ @p @χ b1
+      (u, g) = svdSplit @(χ * p) @χ @χ flat
+      bLC = siteFromLeftSVD @χ @p @χ u
+  in MPS lIso (bulk & _1 .~ bLC) (r . g)
+
+-- | Mixed-canonical gauge with orthogonality centre on the left boundary:
+-- right coisometry, right-canonical bulk, left carries the norm.
+mixedCanonicalLeft3
+  :: forall χ p.
+  ( KnownNat χ, KnownNat p
+  , KnownNat (χ * p), KnownNat (p * χ)
+  , χ * p ~ p * χ, p <= χ  
+  , MPSConstraints (C χ) (C p)
+  ) =>
+  MPS (C χ) (C p) 1 -> MPS (C χ) (C p) 1
+mixedCanonicalLeft3 (MPS l bulk r) =
+  let (rIso, mR) = polarRightSite r
+      b1 = mR . (bulk ^. _1)
+      flat = siteForRightSVD @χ @p @χ b1
+      (g, v) = svdSplit @χ @(p * χ) @χ flat
+      bRC = siteFromRightSVD @χ @p @χ v
+  in MPS (g . l) (bulk & _1 .~ bRC) rIso
+
 -- | Left-to-right TT-SVD: truncate every internal bond from @C big@ to @C χ@.
 compressMPS
   :: forall big χ p (n :: Nat).
@@ -641,7 +736,7 @@ mpoApplyMPS
   , MPSConstraints (C n ⊗ C n) (C p)
   , MPSConstraints (C (n * n)) (C p)
   ) =>
-  EndoMPO (C n) (C p) q -> MPS (C n) (C p) q -> MPS (C n) (C p) q
+  MPO (C n) q (C p) (C p)  -> MPS (C n) (C p) q -> MPS (C n) (C p) q
 mpoApplyMPS op psi =
   compressMPS @(n * n) @n @p (fuseMPSBond (mpoApplyExact op psi))
 
@@ -697,8 +792,8 @@ instance (KnownNat n, KnownNat m, KnownNat (m*n), KnownNat (n*m), vb ~ C n, vp ~
   --   bulkRows = replicate 4 (fromList [0, 0])
 
 
--- step1 = transferLeftSite (FullNorm id id) (FullNorm id id) (mpsLeft exampleMPSC22) (mpsLeft exampleMPSC22) Cat.id
--- step2 = transferBulkSite' (FullNorm id id) (FullNorm id id) (mpsBulk exampleMPSC22) (mpsBulk exampleMPSC22) step1
+-- step1 = transferLeftSite (FullNorm id id) (FullNorm id id) (exampleMPSC22 ^. mpsLeft) (exampleMPSC22 ^. mpsLeft) Cat.id
+-- step2 = transferBulkSite' (FullNorm id id) (FullNorm id id) (exampleMPSC22 ^. mpsBulk) (exampleMPSC22 ^. mpsBulk) step1
 
 
 -- transferBulkSite'

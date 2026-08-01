@@ -35,7 +35,6 @@ module Random.Arbitrary where
 
 import qualified Test.QuickCheck as QC
 import Data.Complex (Complex)
-import TensorNetwork.DMRG.Concrete
 import System.Random (RandomGen)
 import GHC.TypeLits (KnownNat, natVal, Nat, type (*))
 import Numeric.LinearAlgebra.Static (R, C, Sized (..), toComplex)
@@ -53,6 +52,7 @@ import Control.Arrow.Constrained (($), arr)
 import qualified Data.Vector as Vector
 import Control.Monad (replicateM)
 import qualified Data.Vector.Storable as V
+import Math.TensorNetwork (Field)
 
 
 
@@ -101,10 +101,10 @@ genLinMapC =
 
 -- instance QC.Arbitrary (LinearMap (Complex Double)(C n) (C m))where 
 
-instance (KnownNat p, KnownNat b) => QC.Arbitrary (MPS p b) where
-    arbitrary :: (KnownNat p, KnownNat b) => QC.Gen (MPS p b)
-    arbitrary =  do
-        leftMPS <- QC.arbitrary
-        centerMPS <- QC.arbitrary
-        MPS leftMPS centerMPS <$> QC.arbitrary
+-- instance (KnownNat p, KnownNat b) => QC.Arbitrary (MPS p b) where
+--     arbitrary :: (KnownNat p, KnownNat b) => QC.Gen (MPS p b)
+--     arbitrary =  do
+--         leftMPS <- QC.arbitrary
+--         centerMPS <- QC.arbitrary
+--         MPS leftMPS centerMPS <$> QC.arbitrary
 

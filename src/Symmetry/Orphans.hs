@@ -38,7 +38,6 @@ import Control.Lens (Iso', (^.), _1, Ixed (ix), (^?))
 import Math.VectorSpace.DimensionAware
 import Data.Singletons (Sing, SingI (..), fromSing, sing)
 import Data.Singletons.TH (genSingletons)
-import TensorNetwork.DMRG.Concrete
 import qualified Test.QuickCheck as QC
 import Prelude hiding ((||), ($), id, (.))
 import Math.LinearMap.Asserted

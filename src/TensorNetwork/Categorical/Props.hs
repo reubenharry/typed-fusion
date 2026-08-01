@@ -29,7 +29,6 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static (C, Sized (fromList, unwrap, create, konst), extract, M)
-import Numeric.LinearAlgebra.Static.MPSLayout (siteLinearMap)
 import Data.Maybe (fromJust)
 import GHC.TypeLits (KnownNat, type (*), natVal)
 import Data.Proxy (Proxy (..))

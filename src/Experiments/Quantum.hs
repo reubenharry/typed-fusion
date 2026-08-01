@@ -32,7 +32,6 @@ import Control.Lens (Iso', (^.), _1, Ixed (ix), (^?))
 import Math.VectorSpace.DimensionAware
 import Data.Singletons (Sing, SingI (..), fromSing, sing)
 import Data.Singletons.TH (genSingletons)
-import TensorNetwork.DMRG.Concrete
 import qualified Test.QuickCheck as QC
 import Prelude hiding ((||), ($), id, (.))
 import Math.LinearMap.Asserted
@@ -57,6 +56,7 @@ import qualified Control.Category.Constrained as C
 import Unsafe.Coerce (unsafeCoerce)
 import Symmetry.Orphans
 import Symmetry.Utils
+import Math.TensorNetwork (Field)
 
 -- todos 
 -- tensors of representations 
@@ -244,7 +244,9 @@ type Spin = V2 Field
 -- product states @(0,1)@ and @(1,0)@ in the @'Tensor' ('V2' …)@ layout used elsewhere
 -- here (outer @'V2'@ index is the first site). For more sites, tensor larger spaces
 -- or use a tensor-network Hamiltonian; @'Ham' 'VP'@ is the two-site tensor factor.
-hoppingHamiltonianTwoSite :: Field -> Ham VP
+type VP = V2
+
+hoppingHamiltonianTwoSite :: Field -> Ham (VP)
 hoppingHamiltonianTwoSite t =
   arr $
     LinearFunction $

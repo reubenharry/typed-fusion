@@ -1,4 +1,4 @@
-import GroundState (smokeRandomEffectiveHamiltonian)
+import GroundState (smokeKrylovLadder)
 
 main :: IO ()
-main = smokeRandomEffectiveHamiltonian
+main = smokeKrylovLadder

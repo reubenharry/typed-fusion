@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE FlexibleContexts #-}
 import Data.Complex (Complex ((:+)))
 import Control.Arrow.Constrained (($), arr)
 import Math.LinearMap.Category
@@ -15,6 +16,7 @@ import Data.VectorSpace (VectorSpace ((*^)), sumV)
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 import qualified Data.Vector.Storable as VS
 import Numeric.LinearAlgebra.Static (unwrap)
+import Prelude hiding (($))
 
 cBasis :: Int -> C 2
 cBasis i = fromList [ if j == i then 1 else 0 | j <- [0, 1] ]

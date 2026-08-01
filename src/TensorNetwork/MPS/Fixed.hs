@@ -52,7 +52,7 @@ import Numeric.LinearAlgebra.Static
 import TensorNetwork.MPS.LinmapStorage
   ()
 import GHC.TypeLits (KnownNat, type (*))
-import Data.Complex (Complex ((:+)))
+import Data.Complex (Complex ((:+)), magnitude, imagPart)
 import Data.VectorSpace (InnerSpace ((<.>)))
 import qualified Test.QuickCheck as QC
 
@@ -84,14 +84,14 @@ import qualified Debug.Trace as Debug
 import GHC.TypeLits (Nat)
 import Linear.V (Finite (..))
 import Linear (V1(..))
-import Control.Lens ((^.), _1)
+import Control.Lens ((^.), _1, (&), (.~))
 import Random.Arbitrary
 import TensorNetwork.MPS.General
 
 genMPSC :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (MPS (C n) (C m) q)
 genMPSC = MPS <$> genEndo <*> genBulkSiteC2 <*> genEndo
 
-genMPOC :: QC.Gen (EndoMPO (C 2) (C 2) 1)
+genMPOC :: QC.Gen (MPO (C 2) 1 (C 2) (C 2))
 genMPOC = pure exampleMPO
 
 --------------------------------------------------------------------------------
@@ -126,7 +126,7 @@ exampleMPSInnerFlat :: Complex Double
 exampleMPSInnerFlat = foo <.> foo where
   foo = toPhysicalMPS (FullNorm id id) exampleMPSC22
 
-normFast :: forall n m q . (KnownNat n, KnownNat m) => MPS (C n) (C m) q -> Complex Double
+normFast :: forall n m q . (KnownNat n, KnownNat m, KnownNat (n * m)) => MPS (C n) (C m) q -> Complex Double
 normFast mps = mpsInner hermitianNorm hermitianNorm mps mps
 
 normSlow :: forall n m q . (KnownNat n, KnownNat m, 1 ~ q) => MPS (C n) (C m) q -> Complex Double
@@ -147,15 +147,45 @@ normSlow mps =  toPhysicalMPS hermitianNorm mps <.> toPhysicalMPS hermitianNorm 
 -- genBulkSiteC2 = pure $ V $ Vector.replicate (fromIntegral (natVal (Proxy @q))) (LinearMap (konst 1))
 
 
--- complexApproxEq :: Double -> Complex Double -> Complex Double -> Bool
--- complexApproxEq tol z w =
---   magnitude (z - w) <= tol * (1 + magnitude z + magnitude w)
+complexApproxEq :: Double -> Complex Double -> Complex Double -> Bool
+complexApproxEq tol z w =
+  magnitude (z - w) <= tol * (1 + magnitude z + magnitude w)
 
 prop_normFastMatchesSlow :: QC.Property
 prop_normFastMatchesSlow =
   QC.forAll (genMPSC @3 @2 @1) $ \mps ->
-    -- complexApproxEq 1e-9 (normFast mps) (normSlow mps)
-    normFast mps == normSlow mps
+    complexApproxEq 1e-8 (normFast mps) (normSlow mps)
+
+-- | Transfer 'mpsInner' stays real, matches the physical oracle, and is
+-- invariant under 'mixedCanonicalCentre3' / 'Left3' / 'Right3' (the failure
+-- mode of @scripts/mps_inner_not_real.hs@ before the flatten-'siteDagger' fix).
+prop_mpsInnerAfterMixedCanonical :: QC.Property
+prop_mpsInnerAfterMixedCanonical =
+  QC.forAll (genMPSC @3 @2 @1) $ \psi0 ->
+    let psiC = mixedCanonicalCentre3 psi0
+        psiL = mixedCanonicalLeft3 psi0
+        psiR = mixedCanonicalRight3 psi0
+        z0 = normFast psi0
+        zC = normFast psiC
+        zL = normFast psiL
+        zR = normFast psiR
+        o0 = normSlow psi0
+        oC = normSlow psiC
+        oL = normSlow psiL
+        oR = normSlow psiR
+    in  complexApproxEq 1e-8 z0 o0
+     QC..&&. complexApproxEq 1e-8 zC oC
+     QC..&&. complexApproxEq 1e-8 zL oL
+     QC..&&. complexApproxEq 1e-8 zR oR
+     QC..&&. complexApproxEq 1e-8 o0 oC
+     QC..&&. complexApproxEq 1e-8 o0 oL
+     QC..&&. complexApproxEq 1e-8 o0 oR
+     QC..&&. complexApproxEq 1e-8 z0 zC
+     QC..&&. complexApproxEq 1e-8 z0 zL
+     QC..&&. complexApproxEq 1e-8 z0 zR
+     QC..&&. abs (imagPart zC) <= 1e-8 * (1 + magnitude zC)
+     QC..&&. abs (imagPart zL) <= 1e-8 * (1 + magnitude zL)
+     QC..&&. abs (imagPart zR) <= 1e-8 * (1 + magnitude zR)
 
 ex :: IO ()
 ex = do
@@ -201,7 +231,7 @@ exampleFoo = f where
   tensor = getAntilinearFunction vectorConjugate $ transposeTensor $ coerce f :: DualVector (DualVector (C 2)) ⊗ DualVector (C 2 ⊗ C 2)
   lm = coerce tensor :: DualVector (C 2) +> DualVector (C 2 ⊗ C 2)
 
-exampleMPO :: EndoMPO (C 2) (C 2) 1
+exampleMPO :: MPO (C 2) 1 (C 2) (C 2)
 exampleMPO = MPO (LinearMap $ konst 1) (toV $ V1 $ LinearMap $ konst 1) (LinearMap $ konst 1) 2
 
 exampleMPOFlat :: LinearMap (Complex Double) (C 8) (C 8)
@@ -215,7 +245,7 @@ fastSandwich :: Complex Double
 fastSandwich = mpsMPOInner (hermitianNorm) (hermitianNorm) exampleMPSC22 exampleMPO exampleMPSC22
 
 exampleBulkSiteC22 :: (C 2 ⊗ C 2) +> C 2
-exampleBulkSiteC22 = mpsBulk exampleMPSC22 ^. _1
+exampleBulkSiteC22 = exampleMPSC22 ^. mpsBulk . _1
 
 -- | ⟨ψ|H|ψ⟩ via bulk 'effectiveHBulk3' (diagonal of the bilinear check).
 exampleHeffSandwich :: Complex Double
@@ -229,23 +259,23 @@ prop_effectiveHBulkMatchesInner =
   QC.forAll (genMPSC @2 @2 @1) $ \mpsEnv ->
   QC.forAll (genMPSC @2 @2 @1) $ \mpsKet ->
     let mpo = exampleMPO
-        braCentre = mpsBulk mpsEnv ^. _1
-        ketCentre = mpsBulk mpsKet ^. _1
+        braCentre = mpsEnv ^. mpsBulk . _1
+        ketCentre = mpsKet ^. mpsBulk . _1
         lhs =
           effectiveHBulkInner
             hermitianNorm hermitianNorm mpsEnv mpo braCentre ketCentre
         rhs =
           mpsMPOInner hermitianNorm hermitianNorm
-            (mpsWithBulkSite braCentre mpsEnv)
+            ( mpsEnv & mpsBulk . _1 .~ braCentre )
             mpo
-            (mpsWithBulkSite ketCentre mpsEnv)
+            ( mpsEnv & mpsBulk . _1 .~ ketCentre )
     in lhs == rhs
 
 prop_effectiveHBulkDiagonalMatchesMPOInner :: QC.Property
 prop_effectiveHBulkDiagonalMatchesMPOInner =
   QC.forAll (genMPSC @2 @2 @1) $ \mps ->
     let mpo = exampleMPO
-        centre = mpsBulk mps ^. _1
+        centre = mps ^. mpsBulk . _1
     in effectiveHBulkInner hermitianNorm hermitianNorm mps mpo centre centre
          == mpsMPOInner hermitianNorm hermitianNorm mps mpo mps
 
@@ -254,7 +284,7 @@ exampleApplyExact :: MPS (C 2 ⊗ C 2) (C 2) 1
 exampleApplyExact = mpoApplyExact exampleMPO exampleMPSC22
 
 -- | Exact MPO∘MPO product (bond stays @C 2 ⊗ C 2@).
-exampleComposeExact :: EndoMPO (C 2 ⊗ C 2) (C 2) 1
+exampleComposeExact :: MPO (C 2 ⊗ C 2) 1 (C 2) (C 2)
 exampleComposeExact = mpoComposeExact exampleMPO exampleMPO
 
 -- | Same product after fusing the Kronecker bond to @C 4@.
