@@ -569,6 +569,9 @@ svdCut mat =
 
 -- | Factor @C dom +> C cod@ as @(C dom +> C χ) ; (C χ +> C cod)@, keeping the
 -- leading @χ@ singular values (pad with zeros if rank is smaller).
+--
+-- Puts @Σ@ in the /left/ factor: @(Σ·V†, U)@. Prefer 'svdSplitLeftCanonical'
+-- when the left factor must be left-canonical (coisometry @V†@).
 svdSplit
   :: forall dom cod χ.
   (KnownNat dom, KnownNat cod, KnownNat χ) =>
@@ -577,6 +580,21 @@ svdSplit (LinearMap lm) =
   let (u, s, vt) = svdCut @cod @dom @χ lm
   in ( LinearMap (mul (diagR 0 (complex s)) vt)
      , LinearMap u
+     )
+
+-- | Left-looking TT-SVD / left-canonical gauge split: @(V†, U·Σ)@.
+--
+-- For a flatten @C (χ·p) +> C χ'@ with matrix layout @χ' × (χ·p)@, @V†@ is a
+-- coisometry (@V† ∘ (V†)† = id@ on the kept bond), so the reconstructed bulk
+-- site is left-canonical. Singular weight sits in the right factor.
+svdSplitLeftCanonical
+  :: forall dom cod χ.
+  (KnownNat dom, KnownNat cod, KnownNat χ) =>
+  C dom +> C cod -> (C dom +> C χ, C χ +> C cod)
+svdSplitLeftCanonical (LinearMap lm) =
+  let (u, s, vt) = svdCut @cod @dom @χ lm
+  in ( LinearMap vt
+     , LinearMap (u `mul` diagR 0 (complex s))
      )
 
 -- | Polar-decompose a left boundary site @A = m ∘ iso@ with @iso = U·V†@ an
@@ -672,8 +690,8 @@ mixedCanonicalRight3 (MPS l bulk r) =
   let (mL, lIso) = polarLeftSite l
       b1 = (bulk ^. _1) . (mL ⊗^ Cat.id)
       flat = siteForLeftSVD @χ @p @χ b1
-      (u, g) = svdSplit @(χ * p) @χ @χ flat
-      bLC = siteFromLeftSVD @χ @p @χ u
+      (vt, g) = svdSplitLeftCanonical @(χ * p) @χ @χ flat
+      bLC = siteFromLeftSVD @χ @p @χ vt
   in MPS lIso (bulk & _1 .~ bLC) (r . g)
 
 -- | Mixed-canonical gauge with orthogonality centre on the left boundary:
@@ -704,7 +722,7 @@ compressMPS
   ) =>
   MPS (C big) (C p) n -> MPS (C χ) (C p) n
 compressMPS (MPS l bulk r) =
-  let (l', g0) = svdSplit @p @big @χ l
+  let (l', g0) = svdSplitLeftCanonical @p @big @χ l
       (bulk', gFinal) = go g0 (toList bulk)
   in MPS l' (V (Vector.fromList bulk')) (r . gFinal)
   where
@@ -716,8 +734,8 @@ compressMPS (MPS l bulk r) =
     go g (s : ss) =
       let absorbed = s . (g ⊗^ Cat.id)
           flat = siteForLeftSVD @χ @p @big absorbed
-          (u, g') = svdSplit @(χ * p) @big @χ flat
-          s' = siteFromLeftSVD @χ @p @χ u
+          (vt, g') = svdSplitLeftCanonical @(χ * p) @big @χ flat
+          s' = siteFromLeftSVD @χ @p @χ vt
           (rest, gFinal) = go g' ss
       in (s' : rest, gFinal)
 

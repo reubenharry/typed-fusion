@@ -91,8 +91,15 @@ instance KnownNat p => QC.Arbitrary (C p) where
 genEndo :: forall n m . (KnownNat n, KnownNat m) => QC.Gen (C n +> C m)
 genEndo = linMapFromColumnImages @n @m <$> replicateM (fromIntegral (natVal (Proxy @n))) (QC.arbitrary @(C m))
 
-genBulkSiteC2 :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (V q ((C n ⊗ C m) +> C n))
-genBulkSiteC2 = pure $ V $ Vector.replicate (fromIntegral (natVal (Proxy @q))) (LinearMap (konst 1))
+-- | Placeholder bulk (all-ones). Prefer a left-SVD flatten generator at the
+-- call site when a truly random bulk is needed (tensor-domain 'LinearMap'
+-- layout is not the same as flat @C (n·m)@ column packing).
+genBulkSiteC2
+  :: forall n m (q :: Nat)
+   . (KnownNat n, KnownNat m, KnownNat q, KnownNat (m * n), KnownNat (n * m))
+  => QC.Gen (V q ((C n ⊗ C m) +> C n))
+genBulkSiteC2 =
+  pure $ V $ Vector.replicate (fromIntegral (natVal (Proxy @q))) (LinearMap (konst 1))
 
 genLinMapC :: forall dom cod . (KnownNat dom, KnownNat cod) => QC.Gen (C dom +> C cod)
 genLinMapC =

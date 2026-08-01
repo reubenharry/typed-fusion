@@ -399,7 +399,9 @@ executable dmrg-site-variational
         vector-space,
         lens,
         constrained-categories,
-        linearmap-category
+        linearmap-category,
+        linearmap-hmatrix,
+        hmatrix
     default-language: GHC2021
 
 executable general-inner-quick
@@ -496,6 +498,31 @@ executable dmrg-smoke
         quantum
     default-language: GHC2021
 
+executable dmrg-ground-props
+    import:           warnings
+    main-is:          dmrg_ground_props.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        QuickCheck
+    default-language: GHC2021
+
+executable dmrg-time-probe
+    import:           warnings
+    main-is:          dmrg_time_probe.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        time,
+        vector-space,
+        lens,
+        constrained-categories,
+        linearmap-category,
+        linearmap-hmatrix
+    default-language: GHC2021
+
 executable tfim-dmrg-plot
     import:           warnings
     main-is:          tfim_dmrg_plot.hs
@@ -525,6 +552,21 @@ executable lanczos-heff-smoke
         QuickCheck,
         vector-space,
         lens,
+        constrained-categories,
+        linearmap-category,
+        linearmap-hmatrix,
+        hmatrix
+    default-language: GHC2021
+
+executable mpo-inner-real-ladder
+    import:           warnings
+    main-is:          mpo_inner_real_ladder.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        QuickCheck,
+        vector-space,
         constrained-categories,
         linearmap-category,
         linearmap-hmatrix,

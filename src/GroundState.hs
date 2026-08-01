@@ -54,11 +54,14 @@ import TensorNetwork.MPS.General (FullNorm (..))
 basisOf :: forall v. FiniteDimensional v => [v]
 basisOf = enumerateSubBasis (entireBasis :: SubBasis v)
 
--- | Hilbert–Schmidt norm via 'uncanonicallyToDual' (for map-space Krylov).
+-- | Library dual packing via 'uncanonicallyToDual'. On @C n@ this matches
+-- Euclidean structure; on map spaces (@BulkSite@) it is /not/ the
+-- Hilbert–Schmidt Riesz map for @('<.>')@ — prefer 'InnerSpace' (see 'Lanczos').
 hilbertSchmidtNorm :: FiniteDimensional v => Norm v
 hilbertSchmidtNorm = Norm uncanonicallyToDual
 
--- | 'FullNorm' form of 'hilbertSchmidtNorm' (does not require @v ~ DualVector v@).
+-- | 'FullNorm' packing twin of 'hilbertSchmidtNorm'. Same caveat on map spaces;
+-- Lanczos no longer uses this.
 hilbertSchmidtFullNorm :: FiniteDimensional v => FullNorm v
 hilbertSchmidtFullNorm =
   FullNorm uncanonicallyToDual uncanonicallyFromDual

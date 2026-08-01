@@ -14,10 +14,8 @@
 --
 -- Local effective Hamiltonians are morphism applies
 -- ('effectiveHLeft' / 'effectiveHBulk' / 'effectiveHRight'). Local solves use
--- 'GroundState.groundStateDense' (HS densification + eigSH). Do not use
--- 'groundStateSimple' / library 'eigen' here: on map-space centres it returns
--- vectors whose true HS Rayleigh is not the reported eigenvalue
--- ('cabal run dmrg-site-variational').
+-- 'Lanczos.groundStateLanczos' (matrix-free, 'InnerSpace' metric). Do not use
+-- 'groundStateSimple' / library 'eigen' on map-space centres.
 --
 -- For bulk length 1, 'sweep' gauge-centres left → bulk → right before each
 -- local solve. Multi-bulk gauge transport is not wired yet.
@@ -33,8 +31,13 @@ module TensorNetwork.DMRG.Fixed
   , sweep
   , dmrg
   , DmrgResult (..)
+  , centreDimLeft
+  , centreDimBulk
+  , centreDimRight
   , tfimMPO
   , productMPS
+  , denseTfimGroundEnergy
+  , prop_dmrgConvergesFromRandomMPS
   ) where
 
 import Prelude hiding (id, ($), (.))
@@ -61,9 +64,13 @@ import GHC.TypeNats (natVal, sameNat)
 import Data.Type.Equality ((:~:) (Refl))
 
 import Control.Lens ((^.), (&), (%~), (^?))
+import Data.Maybe (fromMaybe)
+import Lanczos (groundStateLanczos)
 import GroundState (groundStateDense)
+import qualified Test.QuickCheck as QC
 import TensorNetwork.Categorical ((⊗^))
 import TensorNetwork.MPS.LinmapStorage (linMapFromColumnImages, siteLinFromRows)
+import Random.Arbitrary (genEndo)
 import TensorNetwork.MPS.General
   ( FullNorm (..), MPS (..), MPO (..)
   , LeftSite, BulkSite, RightSite
@@ -72,6 +79,7 @@ import TensorNetwork.MPS.General
   , effectiveHLeft, effectiveHBulk, effectiveHRight
   , mixedCanonicalCentre3, mixedCanonicalLeft3, mixedCanonicalRight3
   , mpsBulk, mpoLeft, mpoBulk, mpoRight, mpsLeft, mpsRight, mpoApplyExact
+  , toPhysicalMPO, physical3ToFlat, physical3FromFlat, siteFromLeftSVD
   )
 import TensorNetwork.DMRG.Chain
   ( getBulk )
@@ -84,7 +92,6 @@ import Control.Lens.At (Ixed(ix))
 import Control.Lens.Combinators (to)
 import Control.Monad.RWS (MonadWriter(..))
 import Control.Monad.Trans.Writer (runWriter)
-import Debug.Trace (traceM)
 
 --------------------------------------------------------------------------------
 -- Energy
@@ -135,7 +142,7 @@ heffRight nb np mps mpo =
   in arr (LinearFunction (effectiveHRight l (mpo ^. mpoRight)))
 
 --------------------------------------------------------------------------------
--- Local solves (concrete @C χ@ / @C p@ centres for 'groundState')
+-- Local solves (concrete @C χ@ / @C p@ centres for 'groundStateLanczos')
 --------------------------------------------------------------------------------
 
 type DmrgNats χ p =
@@ -144,13 +151,21 @@ type DmrgNats χ p =
   , χ * p ~ p * χ, p <= χ
   )
 
+-- | Centre Hilbert-space dimensions (no 'FiniteDimensional' on the map space).
+centreDimLeft, centreDimBulk, centreDimRight :: forall χ p. DmrgNats χ p => Int
+centreDimLeft = cdim @p * cdim @χ
+centreDimBulk = cdim @χ * cdim @p * cdim @χ
+centreDimRight = cdim @χ * cdim @p
+
 solveLeft
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
   FullNorm (C χ) -> FullNorm (C p) ->
   MPO (C χ) q (C p) (C p) -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 solveLeft nb np mpo mps =
-  let (e, s) = groundStateDense (heffLeft nb np mps mpo)
+  let heff = heffLeft nb np mps mpo
+      seed = mps ^. mpsLeft
+      (e, s) = groundStateLanczos (centreDimLeft @χ @p) seed heff
   in (e, mps & mpsLeft .~ s)
 
 solveBulk
@@ -159,7 +174,9 @@ solveBulk
   FullNorm (C χ) -> FullNorm (C p) ->
   Int -> MPO (C χ) q (C p) (C p) -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 solveBulk nb np j mpo mps =
-  let (e, s) = groundStateDense (heffBulk nb np j mps mpo)
+  let heff = heffBulk nb np j mps mpo
+      seed = fromMaybe (error "solveBulk: missing bulk site") (mps ^? mpsBulk . ix j)
+      (e, s) = groundStateLanczos (centreDimBulk @χ @p) seed heff
   in (e, mps & mpsBulk %~ ix j .~ s)
 
 solveRight
@@ -168,7 +185,9 @@ solveRight
   FullNorm (C χ) -> FullNorm (C p) ->
   MPO (C χ) q (C p) (C p) -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
 solveRight nb np mpo mps =
-  let (e, s) = groundStateDense (heffRight nb np mps mpo)
+  let heff = heffRight nb np mps mpo
+      seed = mps ^. mpsRight
+      (e, s) = groundStateLanczos (centreDimRight @χ @p) seed heff
   in (e, mps & mpsRight .~ s)
 
 swap (a,b) = (b,a)
@@ -185,21 +204,18 @@ solveAllSites
   MPO (C χ) q (C p) (C p) -> MPS (C χ) (C p) q -> (MPS (C χ) (C p) q, [Double])
 solveAllSites nb np mpo mps0 =
   case sameNat (Proxy @q) (Proxy @1) of
-    Just Refl -> runWriter $ do 
+    Just Refl -> runWriter $ do
       let mpsL = mixedCanonicalLeft3 mps0
       (_, m1) <- pure $ solveLeft @χ @p @1 nb np mpo mpsL
       tell [energy nb np mpo m1]
-      traceM $ show $ energy nb np mpo m1
 
       let mpsC = mixedCanonicalCentre3 m1
       (_, m2) <- pure $ solveBulk @χ @p @1 nb np 0 mpo mpsC
       tell [energy nb np mpo m2]
-      traceM $ show $ energy nb np mpo m2
 
       let mpsR = mixedCanonicalRight3 m2
       (_, m3) <- pure $ solveRight @χ @p @1 nb np mpo mpsR
       tell [energy nb np mpo m3]
-      traceM $ show $ energy nb np mpo m3
       return m3
     Nothing -> undefined
       -- let mBulk =
@@ -243,7 +259,7 @@ dmrg maxSweeps tol mpo = go maxSweeps [] Nothing
       DmrgResult
         { dmrgFinalEnergy = e
         , dmrgFinalMPS = psi
-        , dmrgSweepEnergies = reverse hist
+        , dmrgSweepEnergies = hist  -- chronological (oldest first)
         }
     go 0 hist mE psi =
       finish (maybe (energy nb np mpo psi) id mE) psi hist
@@ -333,6 +349,12 @@ acceptingOp accept step src =
 
 -- | Right tensor: on basis @|src⟩ ⊗ |s⟩@ apply the accepting op at @src@.
 -- Equivalently @⟨accept| ∘ W@ with the outgoing bond discarded.
+--
+-- Column order for 'siteLinFromRows' must be /physical-outer/
+-- (@s@ major, bond @b@ minor: flat index @s·χ + b@). That matches how
+-- coerced @LinearMap@ apply reads @(C χ ⊗ C p)@; bond-major packing
+-- (@b·p + s@) scrambled the accepting ops and made densified TFIM
+-- non-Hermitian ('cabal run mpo-inner-real-ladder').
 compileRight
   :: forall χ p b.
   ( KnownNat χ, KnownNat p, KnownNat (χ * p), KnownNat (p * p)
@@ -341,8 +363,8 @@ compileRight
   b -> (b -> [(b, C p +> C p)]) -> (C χ ⊗ C p) +> C p
 compileRight accept step = siteLinFromRows @χ @p @p
        [ acceptingOp accept step (toEnum b) $ basisC @p s
-       | b <- [0 .. cdim @χ - 1]
-       , s <- [0 .. cdim @p - 1]
+       | s <- [0 .. cdim @p - 1]
+       , b <- [0 .. cdim @χ - 1]
        ]
 
 -- | Compile a transducer on @C χ@ into an open-boundary MPO of bulk length @q@.
@@ -416,6 +438,53 @@ productMPS =
     (V $ Vector.replicate (fromIntegral (natVal (Proxy @q))) (LinearMap (konst 1)))
     (LinearMap (konst 1))
 
+-- | Dense @C 8@ ground energy of the three-site TFIM MPO (oracle).
+denseTfimGroundEnergy :: Double -> Double -> Double
+denseTfimGroundEnergy j h =
+  let mpo = tfimMPO @1 j h
+      hFlat = physical3ToFlat @2 . toPhysicalMPO mpo . physical3FromFlat @2
+      (e, _) = groundStateDense hFlat
+  in e
+
+-- | Random open three-site MPS at bond @C 3@, physical @C 2@.
+-- Bulk is drawn as a flat @C 6 +> C 3@ then reshaped with 'siteFromLeftSVD'.
+genRandomMPS32 :: QC.Gen (MPS (C 3) (C 2) 1)
+genRandomMPS32 = do
+  l <- genEndo @2 @3
+  flat <- genEndo @(3 * 2) @3
+  r <- genEndo @3 @2
+  pure (MPS l (V (Vector.singleton (siteFromLeftSVD @3 @2 @3 flat))) r)
+
+-- | Single-site DMRG reaches the dense TFIM ground energy from a random MPS.
+--
+-- Discards near-zero seeds. Uses enough sweeps that a typical random start
+-- converges; fails if the final Rayleigh is above the dense floor by more than
+-- @1e-6@, or below it (variational violation) by more than @1e-8@.
+prop_dmrgConvergesFromRandomMPS :: QC.Property
+prop_dmrgConvergesFromRandomMPS =
+  let j = 1.0
+      h = 0.7
+      mpo = tfimMPO @1 j h
+      eDense = denseTfimGroundEnergy j h
+      nb = hermitianNorm :: FullNorm (C 3)
+      np = hermitianNorm :: FullNorm (C 2)
+  in QC.forAll genRandomMPS32 $ \psi0 ->
+       let z = realPart (mpsInner nb np psi0 psi0)
+       in z > 1e-8 QC.==>
+            let r = dmrg @3 @2 @1 8 1e-10 mpo psi0
+                e = dmrgFinalEnergy r
+                hist = dmrgSweepEnergies r
+                nonIncreasing =
+                  and [ a <= b + 1e-8 | (b, a) <- zip hist (drop 1 hist) ]
+            in QC.counterexample
+                 ("eDense=" ++ show eDense
+                  ++ " eDMRG=" ++ show e
+                  ++ " Δ=" ++ show (e - eDense)
+                  ++ " hist=" ++ show hist)
+                 ( abs (e - eDense) <= 1e-6
+                   QC..&&. e >= eDense - 1e-8
+                   QC..&&. nonIncreasing
+                 )
 
 dmrgExample :: DmrgResult 3 2 1
 dmrgExample = dmrg 2 5e-4 (tfimMPO 0.5 0.5) productMPS
@@ -423,13 +492,8 @@ dmrgExample = dmrg 2 5e-4 (tfimMPO 0.5 0.5) productMPS
 dmrgExample2 :: MPS   (C 3 ⊗ C 3)   (C 2)   1
 dmrgExample2 = mpoApplyExact (tfimMPO 0.5 0.5) productMPS
 
-dmrgExample3 = (e1, e2) where 
+dmrgExample3 = (e1, e2) where
   e1 = energy hermitianNorm hermitianNorm (tfimMPO @1 0.5 0.5) productMPS
   e2 = energy hermitianNorm hermitianNorm (tfimMPO @1 0.5 0.5) (mixedCanonicalLeft3 productMPS)
 
--- displayMPS :: MPS (C 3) (C 2) 1 -> String
 displayMPS mps = "MPS:\n " <> "Left Boundary: " <> show (mps ^. mpsLeft . to getLinearMap) <> "\n" <> "Bulk: " <> show (mps ^? mpsBulk . ix 0 . to getLinearMap) <> "\n" <> "Right Boundary: " <> show (mps ^. mpsRight . to getLinearMap)
-
--- try:
--- compute energy and check it matches 
--- apply mpo and see that it works
