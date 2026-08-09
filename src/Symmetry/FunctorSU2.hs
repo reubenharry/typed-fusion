@@ -31,20 +31,20 @@ import Symmetry.Tensor (Tensor)
 -- | Singlet ⊕ triplet (the CG image of ½ ⊗ ½).
 type SingletTriplet = '[ 2 `IrrepOf` 0, 3 `IrrepOf` 2]
 
-type HalfSpine = '[ 1 `IrrepOf` 1]
-type Half = ('REP HalfSpine :: RepObj SU2)
+-- type '[ 1 `IrrepOf` 1] = '[ 1 `IrrepOf` 1]
+-- type ('REP '[ 1 `IrrepOf` 1]) = ('REP '[ 1 `IrrepOf` 1] :: RepObj SU2)
 
-exampleId :: Mor SU2 Half Half
+exampleId :: Mor SU2 ('REP '[ 1 `IrrepOf` 1]) ('REP '[ 1 `IrrepOf` 1])
 exampleId = RepInter (mkIdHom @SU2)
 
 exampleIdMap :: C 2 -+> C 2
 exampleIdMap = fmap' exampleId
 
 -- | Two spin-½ fuse to singlet ⊕ triplet (CG).
-exampleFuse :: Mor SU2 (Half ':⊗: Half) ('REP '[ 1 `IrrepOf` 0, 1 `IrrepOf` 2])
+exampleFuse :: Mor SU2 (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1])) ('REP '[ 1 `IrrepOf` 0, 1 `IrrepOf` 2])
 exampleFuse = Fuse
 
-exampleFuseThenId :: Mor SU2 (Half ':⊗: Half) ('REP '[ 1 `IrrepOf` 0, 1 `IrrepOf` 2])
+exampleFuseThenId :: Mor SU2 (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1])) ('REP '[ 1 `IrrepOf` 0, 1 `IrrepOf` 2])
 exampleFuseThenId = RepInter (mkIdHom @SU2 @'[ 1 `IrrepOf` 0, 1 `IrrepOf` 2]) . Fuse
 
 exampleFuseMap :: (C 2 ⊗ C 2) -+> C 4
@@ -54,57 +54,71 @@ exampleFuseLM :: (C 2 ⊗ C 2) +> C 4
 exampleFuseLM = arr exampleFuseMap
 
 -- | Associator on three spin-½ factors.
-exampleAssoc :: Mor SU2 (Half ':⊗: (Half ':⊗: Half)) ((Half ':⊗: Half) ':⊗: Half)
+exampleAssoc :: Mor SU2 (('REP '[ 1 `IrrepOf` 1]) ':⊗: (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1]))) ((('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1])) ':⊗: ('REP '[ 1 `IrrepOf` 1]))
 exampleAssoc = Assoc
 
 exampleAssocMap :: (C 2 ⊗ (C 2 ⊗ C 2)) -+> ((C 2 ⊗ C 2) ⊗ C 2)
 exampleAssocMap = fmap' exampleAssoc
 
-exampleAssocInv :: Mor SU2 ((Half ':⊗: Half) ':⊗: Half) (Half ':⊗: (Half ':⊗: Half))
+exampleAssocInv :: Mor SU2 ((('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1])) ':⊗: ('REP '[ 1 `IrrepOf` 1])) (('REP '[ 1 `IrrepOf` 1]) ':⊗: (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1])))
 exampleAssocInv = AssocInv
 
 -- | Swap two spin-½ factors.
-exampleSwap :: Mor SU2 (Half ':⊗: Half) (Half ':⊗: Half)
+exampleSwap :: Mor SU2 (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1])) (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1]))
 exampleSwap = Swap
 
 exampleSwapMap :: (C 2 ⊗ C 2) -+> (C 2 ⊗ C 2)
 exampleSwapMap = fmap' exampleSwap
 
 -- | Right unitor on spin-½.
-exampleRUnit :: Mor SU2 (Half ':⊗: 'I) Half
+exampleRUnit :: Mor SU2 (('REP '[ 1 `IrrepOf` 1]) ':⊗: 'I) ('REP '[ 1 `IrrepOf` 1])
 exampleRUnit = RUnit
 
 exampleRUnitMap :: (C 2 ⊗ C 1) -+> C 2
 exampleRUnitMap = fmap' exampleRUnit
 
-exampleLUnit :: Mor SU2 ('I ':⊗: Half) Half
+exampleLUnit :: Mor SU2 ('I ':⊗: ('REP '[ 1 `IrrepOf` 1])) ('REP '[ 1 `IrrepOf` 1])
 exampleLUnit = LUnit
 
 exampleLUnitMap :: (C 1 ⊗ C 2) -+> C 2
 exampleLUnitMap = fmap' exampleLUnit
 
 -- | Monoidal product of two identity morphisms (stays symbolic until fmap').
-exampleOTimes :: Mor SU2 (Half ':⊗: Half) (Half ':⊗: Half)
+exampleOTimes :: Mor SU2 (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1])) (('REP '[ 1 `IrrepOf` 1]) ':⊗: ('REP '[ 1 `IrrepOf` 1]))
 exampleOTimes = OTimes exampleId exampleId
 
 exampleOTimesMap :: (C 2 ⊗ C 2) -+> (C 2 ⊗ C 2)
 exampleOTimesMap = fmap' exampleOTimes
 
 -- | F-move on three spin-½ fusions: @(½⊗½)⊗½ → ½⊗(½⊗½)@.
--- Stays symbolic (@FMove@); @fmap'@ blocked on F-symbols \/ 6j.
+-- Carries Schur F-symbols; @fmap'@ densifies via @intertwinerLinearG@.
 exampleFMove
   :: Mor SU2
-       ('REP (Tensor SU2 (Tensor SU2 HalfSpine HalfSpine) HalfSpine))
-       ('REP (Tensor SU2 HalfSpine (Tensor SU2 HalfSpine HalfSpine)))
-exampleFMove = FMove (Proxy @HalfSpine) (Proxy @HalfSpine) (Proxy @HalfSpine)
+       ('REP (Tensor SU2 (Tensor SU2 '[ 1 `IrrepOf` 1] '[ 1 `IrrepOf` 1]) '[ 1 `IrrepOf` 1]))
+       ('REP (Tensor SU2 '[ 1 `IrrepOf` 1] (Tensor SU2 '[ 1 `IrrepOf` 1] '[ 1 `IrrepOf` 1])))
+exampleFMove = fMoveSU2 (Proxy @'[ 1 `IrrepOf` 1]) (Proxy @'[ 1 `IrrepOf` 1]) (Proxy @'[ 1 `IrrepOf` 1])
 
 exampleFMoveInv
   :: Mor SU2
-       ('REP (Tensor SU2 HalfSpine (Tensor SU2 HalfSpine HalfSpine)))
-       ('REP (Tensor SU2 (Tensor SU2 HalfSpine HalfSpine) HalfSpine))
-exampleFMoveInv = FMoveInv (Proxy @HalfSpine) (Proxy @HalfSpine) (Proxy @HalfSpine)
+       ('REP (Tensor SU2 '[ 1 `IrrepOf` 1] (Tensor SU2 '[ 1 `IrrepOf` 1] '[ 1 `IrrepOf` 1])))
+       ('REP (Tensor SU2 (Tensor SU2 '[ 1 `IrrepOf` 1] '[ 1 `IrrepOf` 1]) '[ 1 `IrrepOf` 1]))
+exampleFMoveInv = fMoveSU2Inv (Proxy @'[ 1 `IrrepOf` 1]) (Proxy @'[ 1 `IrrepOf` 1]) (Proxy @'[ 1 `IrrepOf` 1])
 
-example :: Mor SU2 Half ('REP '[ 1 `IrrepOf` 2])
+exampleFMoveMap
+  :: C 8 -+> C 8
+exampleFMoveMap = fmap' exampleFMove
+
+-- | R-move on fused ½⊗½ (singlet ⊕ triplet): @Tensor ½ ½ → Tensor ½ ½@.
+exampleRMove
+  :: Mor SU2
+       ('REP (Tensor SU2 '[ 1 `IrrepOf` 1] '[ 1 `IrrepOf` 1]))
+       ('REP (Tensor SU2 '[ 1 `IrrepOf` 1] '[ 1 `IrrepOf` 1]))
+exampleRMove = rMoveSU2 (Proxy @'[ 1 `IrrepOf` 1]) (Proxy @'[ 1 `IrrepOf` 1])
+
+exampleRMoveMap :: C 4 -+> C 4
+exampleRMoveMap = fmap' exampleRMove
+
+example :: Mor SU2 ('REP '[ 1 `IrrepOf` 1]) ('REP '[ 1 `IrrepOf` 2])
 example = RepInter (MkIntertwiner InterNil)
 
 example' :: C 2 +> C 3

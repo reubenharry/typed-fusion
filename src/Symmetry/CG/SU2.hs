@@ -22,6 +22,8 @@ module Symmetry.CG.SU2
   ( fuseSU2Flat
   , cgMatrixTwoIrreps
   , fusionChannels
+  , sectorsSU2
+  , repDimOf
   ) where
 
 import Control.Monad.ST (runST)

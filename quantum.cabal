@@ -71,6 +71,8 @@ library
         Symmetry.Tensor
         Symmetry.CG.SU2
         Symmetry.CG.U1
+        Symmetry.CG.FSymbol
+        Symmetry.CG.RSymbol
         Symmetry.RepObj
         Symmetry.RepMor
         Symmetry.Intertwiner.Pretty
