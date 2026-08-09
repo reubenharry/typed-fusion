@@ -14,6 +14,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {- HLINT ignore "Redundant $" -}
 
 -- | Three-site MPS with abstract @LinearSpace@ operands and heterogeneous
@@ -67,12 +69,13 @@ import GHC.TypeLits (Nat)
 import Linear.V (V (..))
 import Control.Lens ((&), (.~), (^.), Ixed (ix), (^?), _1, _2, makeLenses)
 import Data.Maybe (fromMaybe)
-import Data.Foldable (Foldable(toList))
+import Data.Foldable (Foldable(toList), foldl')
 import qualified Data.Vector as Vector
 import qualified Numeric.LinearAlgebra as HM
 import Data.VectorSpace.Free (FinSuppSeq(..))
 import Data.VectorSpace.Free.FiniteSupportedSequence
 import qualified Data.Vector.Unboxed as U
+import Data.Finite (Finite, packFinite, getFinite)
 import Random.Arbitrary
 -- currently broken because of sesquilinearity of complex metric
 data FullNorm v = FullNorm {lower :: v -+> DualVector v, raise :: DualVector v -+> v}
@@ -88,6 +91,19 @@ type family OTimes (n :: Nat) (phys :: Type) :: Type where
 type LeftSite (bond :: Type) (phys :: Type) = phys +> bond
 type BulkSite (bond :: Type) (phys :: Type) = (bond ⊗ phys) +> bond
 type RightSite (bond :: Type) (phys :: Type) = bond +> phys
+
+-- | Orthogonality-center location on an open-boundary 'MPS' of bulk length @n@.
+--
+-- 'CenterBulk' carries a 'Finite' index into '_mpsBulk', so out-of-range bulk
+-- positions are unrepresentable. For @n = 0@ that constructor is uninhabited
+-- (left ↔ right only).
+data CenterPos (n :: Nat) where
+  CenterLeft  :: CenterPos n
+  CenterBulk  :: Finite n -> CenterPos n
+  CenterRight :: CenterPos n
+
+deriving instance Eq (CenterPos n)
+deriving instance Show (CenterPos n)
 
 -- | Open-boundary three-site MPS (@left + bulk + right@).
 data MPS (bond :: Type) (phys :: Type) (n :: Nat) = MPS
@@ -284,10 +300,10 @@ mpsInner
   (MPSConstraints bond phys, SiteDagger bond phys bond) =>
   FullNorm bond -> FullNorm phys -> MPS bond phys n -> MPS bond phys n -> Scalar bond
 mpsInner nb np (MPS lB bB rB) (MPS lK bK rK) =
-  transferRightSite nb np rB rK $ transferBulk $ transferLeftSite nb np lB lK where
-
+  transferRightSite nb np rB rK $
+    foldl' (\e t -> t e) (transferLeftSite nb np lB lK) transfers
+  where
     transfers = uncurry (transferBulkSite nb np) <$> zip (toList bB) (toList bK)
-    transferBulk = foldr (.) Cat.id transfers
 
 -- | Left-to-right ⟨ψ|H|φ⟩ environment: bra bond ↦ MPO bond ⊗ ket bond.
 
@@ -377,13 +393,11 @@ mpsMPOInner
   MPS bond physOut n -> MPO bond n physIn physOut -> MPS bond physIn n -> Scalar bond
 mpsMPOInner nb npOut (MPS lB bB rB) (MPO lO bO rO _) (MPS lK bK rK) =
   transferMPORightSite nb npOut rB rO rK $
-    transferBulk $
-      transferMPOLeftSite nb npOut lB lO lK
+    foldl' (\e t -> t e) (transferMPOLeftSite nb npOut lB lO lK) transfers
   where
     transfers =
       (\(bra, op, ket) -> transferMPOBulkSite nb npOut bra op ket)
         <$> zip3 (toList bB) (toList bO) (toList bK)
-    transferBulk = foldr (.) Cat.id transfers
 
 --------------------------------------------------------------------------------
 -- Effective Hamiltonian (morphism apply; no basis enumeration)
@@ -676,41 +690,180 @@ siteFromRightSVD g =
     (arr (LinearFunction $ \x ->
        fromTensor -+$=> (splitBond @p @br $ (g $ x)) :: C p +> C br))
 
--- | Mixed-canonical gauge with orthogonality centre on the right boundary:
--- left isometry, left-canonical bulk, right carries the norm.
-mixedCanonicalRight3
-  :: forall χ p.
+--------------------------------------------------------------------------------
+-- One-site gauge transport (fixed uniform χ)
+--------------------------------------------------------------------------------
+
+type GaugeShiftNats χ p =
   ( KnownNat χ, KnownNat p
   , KnownNat (χ * p), KnownNat (p * χ)
   , χ * p ~ p * χ
-  , MPSConstraints (C χ) (C p)
-  ) =>
-  MPS (C χ) (C p) 1 -> MPS (C χ) (C p) 1
-mixedCanonicalRight3 (MPS l bulk r) =
-  let (mL, lIso) = polarLeftSite l
-      b1 = (bulk ^. _1) . (mL ⊗^ Cat.id)
-      flat = siteForLeftSVD @χ @p @χ b1
-      (vt, g) = svdSplitLeftCanonical @(χ * p) @χ @χ flat
-      bLC = siteFromLeftSVD @χ @p @χ vt
-  in MPS lIso (bulk & _1 .~ bLC) (r . g)
+  , p <= χ
+  )
 
--- | Mixed-canonical gauge with orthogonality centre on the left boundary:
--- right coisometry, right-canonical bulk, left carries the norm.
+-- | Left-canonicalize a bulk site: @(V†, U·Σ)@ with residual on the right bond.
+leftCanonicalizeBulk
+  :: forall χ p.
+  GaugeShiftNats χ p =>
+  BulkSite (C χ) (C p) -> (BulkSite (C χ) (C p), C χ +> C χ)
+leftCanonicalizeBulk b =
+  let flat = siteForLeftSVD @χ @p @χ b
+      (vt, g) = svdSplitLeftCanonical @(χ * p) @χ @χ flat
+  in (siteFromLeftSVD @χ @p @χ vt, g)
+
+-- | Right-canonicalize a bulk site: @(Σ·V†, U-layout)@ with residual on the left bond.
+rightCanonicalizeBulk
+  :: forall χ p.
+  GaugeShiftNats χ p =>
+  BulkSite (C χ) (C p) -> (C χ +> C χ, BulkSite (C χ) (C p))
+rightCanonicalizeBulk b =
+  let flat = siteForRightSVD @χ @p @χ b
+      (g, v) = svdSplit @χ @(p * χ) @χ flat
+  in (g, siteFromRightSVD @χ @p @χ v)
+
+setBulk
+  :: forall n a. KnownNat n
+  => Finite n -> a -> V n a -> V n a
+setBulk j x (V v) =
+  let i = fromIntegral (getFinite j)
+  in case v ^? ix i of
+    Nothing -> error ("setBulk: bad index " ++ show i)
+    Just _ -> V (v & ix i .~ x)
+
+getBulkAt
+  :: forall n a. KnownNat n
+  => Finite n -> V n a -> a
+getBulkAt j (V v) =
+  let i = fromIntegral (getFinite j)
+  in fromMaybe (error ("getBulkAt: bad index " ++ show i)) (v ^? ix i)
+
+-- | First bulk index, when @n >= 1@.
+bulkFirst :: forall n. KnownNat n => Maybe (Finite n)
+bulkFirst = packFinite 0
+
+-- | Successor bulk index, or 'Nothing' if @j@ is already last.
+bulkSucc :: forall n. KnownNat n => Finite n -> Maybe (Finite n)
+bulkSucc j = packFinite (getFinite j + 1)
+
+-- | Predecessor bulk index, or 'Nothing' if @j@ is already first.
+bulkPred :: forall n. KnownNat n => Finite n -> Maybe (Finite n)
+bulkPred j =
+  let i = getFinite j
+  in if i == 0 then Nothing else packFinite (i - 1)
+
+-- | Last bulk index, when @n >= 1@.
+bulkLast :: forall n. KnownNat n => Maybe (Finite n)
+bulkLast =
+  let n = natVal (Proxy @n)
+  in if n == 0 then Nothing else packFinite (toInteger n - 1)
+
+-- | Move the orthogonality center one site to the right.
+--
+-- Precondition: @mps@ is mixed-canonical about @pos@. Leaves a left-canonical
+-- site behind and absorbs the residual into the next site. Bond type stays @C χ@.
+shiftGaugeRight
+  :: forall χ p (n :: Nat).
+  (GaugeShiftNats χ p, KnownNat n, MPSConstraints (C χ) (C p)) =>
+  CenterPos n -> MPS (C χ) (C p) n -> (CenterPos n, MPS (C χ) (C p) n)
+shiftGaugeRight pos (MPS l bulk r) =
+  case pos of
+    CenterRight ->
+      error "shiftGaugeRight: already at right boundary"
+    CenterLeft ->
+      case bulkFirst @n of
+        Nothing ->
+          let (m, lIso) = polarLeftSite @p @χ l
+          in (CenterRight, MPS lIso bulk (r . m))
+        Just j0 ->
+          let (m, lIso) = polarLeftSite @p @χ l
+              b0 = getBulkAt j0 bulk
+              b0' = b0 . (m ⊗^ Cat.id)
+          in (CenterBulk j0, MPS lIso (setBulk j0 b0' bulk) r)
+    CenterBulk j ->
+      let b = getBulkAt j bulk
+          (bLC, g) = leftCanonicalizeBulk @χ @p b
+          bulkLC = setBulk j bLC bulk
+      in case bulkSucc j of
+           Nothing ->
+             (CenterRight, MPS l bulkLC (r . g))
+           Just j' ->
+             let bNext = getBulkAt j' bulkLC
+                 bNext' = bNext . (g ⊗^ Cat.id)
+             in (CenterBulk j', MPS l (setBulk j' bNext' bulkLC) r)
+
+-- | Move the orthogonality center one site to the left.
+--
+-- Precondition: @mps@ is mixed-canonical about @pos@. Leaves a right-canonical
+-- site behind and absorbs the residual into the previous site. Bond type stays @C χ@.
+shiftGaugeLeft
+  :: forall χ p (n :: Nat).
+  (GaugeShiftNats χ p, KnownNat n, MPSConstraints (C χ) (C p)) =>
+  CenterPos n -> MPS (C χ) (C p) n -> (CenterPos n, MPS (C χ) (C p) n)
+shiftGaugeLeft pos (MPS l bulk r) =
+  case pos of
+    CenterLeft ->
+      error "shiftGaugeLeft: already at left boundary"
+    CenterRight ->
+      case bulkLast @n of
+        Nothing ->
+          let (rIso, m) = polarRightSite @χ @p r
+          in (CenterLeft, MPS (m . l) bulk rIso)
+        Just jLast ->
+          let (rIso, m) = polarRightSite @χ @p r
+              bLast = getBulkAt jLast bulk
+              bLast' = m . bLast
+          in (CenterBulk jLast, MPS l (setBulk jLast bLast' bulk) rIso)
+    CenterBulk j ->
+      let b = getBulkAt j bulk
+          (g, bRC) = rightCanonicalizeBulk @χ @p b
+          bulkRC = setBulk j bRC bulk
+      in case bulkPred j of
+           Nothing ->
+             (CenterLeft, MPS (g . l) bulkRC r)
+           Just j' ->
+             let bPrev = getBulkAt j' bulkRC
+                 bPrev' = g . bPrev
+             in (CenterBulk j', MPS l (setBulk j' bPrev' bulkRC) r)
+
+-- | Put the orthogonality center on the left: right-canonicalize every site to
+-- the right of the left boundary (walk 'shiftGaugeLeft' from 'CenterRight').
+mixedCanonicalLeft
+  :: forall χ p (n :: Nat).
+  (GaugeShiftNats χ p, KnownNat n, MPSConstraints (C χ) (C p)) =>
+  MPS (C χ) (C p) n -> MPS (C χ) (C p) n
+mixedCanonicalLeft = walkLeft (fromIntegral (natVal (Proxy @n)) + 1) . shiftGaugeLeft CenterRight
+  where
+    walkLeft :: Int -> (CenterPos n, MPS (C χ) (C p) n) -> MPS (C χ) (C p) n
+    walkLeft _ (CenterLeft, mps) = mps
+    walkLeft 0 _ = error "mixedCanonicalLeft: failed to reach left boundary"
+    walkLeft k (pos, mps) = walkLeft (k - 1) (shiftGaugeLeft pos mps)
+
+-- | Put the orthogonality center on the right: left-canonicalize every site to
+-- the left of the right boundary (walk 'shiftGaugeRight' from 'CenterLeft').
+mixedCanonicalRight
+  :: forall χ p (n :: Nat).
+  (GaugeShiftNats χ p, KnownNat n, MPSConstraints (C χ) (C p)) =>
+  MPS (C χ) (C p) n -> MPS (C χ) (C p) n
+mixedCanonicalRight = walkRight (fromIntegral (natVal (Proxy @n)) + 1) . shiftGaugeRight CenterLeft
+  where
+    walkRight :: Int -> (CenterPos n, MPS (C χ) (C p) n) -> MPS (C χ) (C p) n
+    walkRight _ (CenterRight, mps) = mps
+    walkRight 0 _ = error "mixedCanonicalRight: failed to reach right boundary"
+    walkRight k (pos, mps) = walkRight (k - 1) (shiftGaugeRight pos mps)
+
+-- | Three-site specialisation of 'mixedCanonicalLeft'.
 mixedCanonicalLeft3
   :: forall χ p.
-  ( KnownNat χ, KnownNat p
-  , KnownNat (χ * p), KnownNat (p * χ)
-  , χ * p ~ p * χ, p <= χ  
-  , MPSConstraints (C χ) (C p)
-  ) =>
+  (GaugeShiftNats χ p, MPSConstraints (C χ) (C p)) =>
   MPS (C χ) (C p) 1 -> MPS (C χ) (C p) 1
-mixedCanonicalLeft3 (MPS l bulk r) =
-  let (rIso, mR) = polarRightSite r
-      b1 = mR . (bulk ^. _1)
-      flat = siteForRightSVD @χ @p @χ b1
-      (g, v) = svdSplit @χ @(p * χ) @χ flat
-      bRC = siteFromRightSVD @χ @p @χ v
-  in MPS (g . l) (bulk & _1 .~ bRC) rIso
+mixedCanonicalLeft3 = mixedCanonicalLeft
+
+-- | Three-site specialisation of 'mixedCanonicalRight'.
+mixedCanonicalRight3
+  :: forall χ p.
+  (GaugeShiftNats χ p, MPSConstraints (C χ) (C p)) =>
+  MPS (C χ) (C p) 1 -> MPS (C χ) (C p) 1
+mixedCanonicalRight3 = mixedCanonicalRight
 
 -- | Left-to-right TT-SVD: truncate every internal bond from @C big@ to @C χ@.
 compressMPS

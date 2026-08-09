@@ -9,6 +9,7 @@
     "ghc",
     "ghci",
     "stack",
+    "tricorder",
     "git show",
     "git diff",
     "git status",

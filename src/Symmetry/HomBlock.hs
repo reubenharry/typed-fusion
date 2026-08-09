@@ -22,21 +22,7 @@
 -- @m × n@ scalar coefficients, each acting as @λ · I@ on the irrep factor.
 -- U(1) embeds those coefficients directly as @M m n@; SU(2) expands via
 -- @kron(coeffMat, I_{j+1})@.
-module Symmetry.HomBlock
-  ( HasHomBlock (..)
-  , HomBlock
-  , HomBlockDim
-  , EndoHomDim
-  , HomBlockDimG
-  , U1HomBlock (..)
-  , flattenMat
-  , u1BlockAsMat
-  , u1ComposeBlock
-  , u1ZeroBlock
-  , applyBlock
-  , applyEndoAt
-  , su2ExpandBlock
-  ) where
+module Symmetry.HomBlock where
 
 import Data.Vector.Storable (toList)
 import GHC.TypeLits (Nat, KnownNat, natVal, type (*))
@@ -55,10 +41,13 @@ type family EndoHomDim (m :: Nat) :: Nat where
   EndoHomDim m = HomBlockDim m m
 
 newtype U1HomBlock (m :: Nat) (n :: Nat) = U1HomBlock
-  { unU1HomBlock :: C (HomBlockDim m n) }
+  { unU1HomBlock :: M m n }
 
 instance (KnownNat m, KnownNat n, KnownNat (m * n)) => Show (U1HomBlock m n) where
   show (U1HomBlock v) = show v
+
+instance Eq (M m n) where
+  a == b = undefined --  LA.flatten a == LA.flatten b
 
 instance (KnownNat m, KnownNat n, KnownNat (m * n)) => Eq (U1HomBlock m n) where
   U1HomBlock a == U1HomBlock b = a == b
@@ -71,7 +60,7 @@ flattenMat mat = fromList $ LA.toList $ LA.flatten $ unwrap mat
 u1BlockAsMat
   :: forall m n d. (KnownNat m, KnownNat n, KnownNat d, HomBlockDim m n ~ d)
   => U1HomBlock m n -> M m n
-u1BlockAsMat (U1HomBlock block) = fromList (toList (extract block))
+u1BlockAsMat (U1HomBlock block) = block --  fromList (toList (extract block))
 
 u1ComposeBlock
   :: forall m n p d1 d2 d3.
@@ -79,7 +68,7 @@ u1ComposeBlock
      , KnownNat d1, KnownNat d2, KnownNat d3
      , HomBlockDim m n ~ d1, HomBlockDim n p ~ d2, HomBlockDim m p ~ d3 )
   => U1HomBlock m n -> U1HomBlock n p -> U1HomBlock m p
-u1ComposeBlock ab bc = U1HomBlock (flattenMat @m @p @d3 prod)
+u1ComposeBlock ab bc = U1HomBlock (prod)
   where
     prod = mul (u1BlockAsMat ab) (u1BlockAsMat bc)
 
@@ -95,7 +84,7 @@ applyBlock blk = app (u1BlockAsMat blk)
 
 applyEndoAt
   :: forall m h. (KnownNat m, KnownNat h, EndoHomDim m ~ h)
-  => C h -> C m -> C m
+  => M m m -> C m -> C m
 applyEndoAt block v = applyBlock (U1HomBlock block) v
 
 su2ExpandBlock

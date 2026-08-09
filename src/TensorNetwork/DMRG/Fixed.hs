@@ -17,8 +17,9 @@
 -- 'Lanczos.groundStateLanczos' (matrix-free, 'InnerSpace' metric). Do not use
 -- 'groundStateSimple' / library 'eigen' on map-space centres.
 --
--- For bulk length 1, 'sweep' gauge-centres left → bulk → right before each
--- local solve. Multi-bulk gauge transport is not wired yet.
+-- 'sweep' is a zipper: 'mixedCanonicalLeft', then left→right local solves with
+-- 'shiftGaugeRight', then right→left with 'shiftGaugeLeft'. Works for any bulk
+-- length @q@ at fixed uniform bond @C χ@.
 module TensorNetwork.DMRG.Fixed
   ( energy
   , heffLeft
@@ -27,6 +28,7 @@ module TensorNetwork.DMRG.Fixed
   , solveLeft
   , solveBulk
   , solveRight
+  , solveAt
   , solveAllSites
   , sweep
   , dmrg
@@ -38,6 +40,8 @@ module TensorNetwork.DMRG.Fixed
   , productMPS
   , denseTfimGroundEnergy
   , prop_dmrgConvergesFromRandomMPS
+  , prop_dmrgSweepNonIncreasingQ2
+  , genRandomMPS32Q
   ) where
 
 import Prelude hiding (id, ($), (.))
@@ -60,9 +64,8 @@ import qualified Data.Vector as Vector
 import Linear.V (V (..))
 import GHC.TypeLits (KnownNat, Nat, type (*), type (<=))
 import Data.Proxy (Proxy (..))
-import GHC.TypeNats (natVal, sameNat)
-import Data.Type.Equality ((:~:) (Refl))
-
+import GHC.TypeNats (natVal)
+import Data.Finite (getFinite)
 import Control.Lens ((^.), (&), (%~), (^?))
 import Data.Maybe (fromMaybe)
 import Lanczos (groundStateLanczos)
@@ -77,7 +80,8 @@ import TensorNetwork.MPS.General
   , MPSConstraints, SiteDagger, hermitianNorm
   , mpsInner, mpsMPOInner
   , effectiveHLeft, effectiveHBulk, effectiveHRight
-  , mixedCanonicalCentre3, mixedCanonicalLeft3, mixedCanonicalRight3
+  , CenterPos (..), mixedCanonicalLeft
+  , shiftGaugeLeft, shiftGaugeRight
   , mpsBulk, mpoLeft, mpoBulk, mpoRight, mpsLeft, mpsRight, mpoApplyExact
   , toPhysicalMPO, physical3ToFlat, physical3FromFlat, siteFromLeftSVD
   )
@@ -90,8 +94,7 @@ import TensorNetwork.DMRG.Env
 import Control.Lens.Setter ((.~))
 import Control.Lens.At (Ixed(ix))
 import Control.Lens.Combinators (to)
-import Control.Monad.RWS (MonadWriter(..))
-import Control.Monad.Trans.Writer (runWriter)
+import Control.Monad.Writer (MonadWriter(..), Writer, runWriter)
 
 --------------------------------------------------------------------------------
 -- Energy
@@ -190,41 +193,63 @@ solveRight nb np mpo mps =
       (e, s) = groundStateLanczos (centreDimRight @χ @p) seed heff
   in (e, mps & mpsRight .~ s)
 
-swap (a,b) = (b,a)
+-- | Local solve at the orthogonality center.
+solveAt
+  :: forall χ p (q :: Nat).
+  (DmrgNats χ p, KnownNat q) =>
+  FullNorm (C χ) -> FullNorm (C p) ->
+  CenterPos q ->
+  MPO (C χ) q (C p) (C p) -> MPS (C χ) (C p) q -> (Double, MPS (C χ) (C p) q)
+solveAt nb np pos mpo mps =
+  case pos of
+    CenterLeft -> solveLeft @χ @p @q nb np mpo mps
+    CenterBulk j ->
+      solveBulk @χ @p @q nb np (fromIntegral (getFinite j)) mpo mps
+    CenterRight -> solveRight @χ @p @q nb np mpo mps
 
--- | One left→right pass of local solves.
---
--- For three-site chains (@q = 1@), each site is mixed-canonicalized about the
--- orthogonality centre before its Krylov solve (HS @Heff@ is only variational
--- there). Longer chains still solve bulk sites only (zipper gauge not wired).
+-- | One full sweep: left→right then right→left local solves with zipper gauge
+-- transport. Starts from 'mixedCanonicalLeft'.
 solveAllSites
   :: forall χ p (q :: Nat).
   (DmrgNats χ p, KnownNat q) =>
   FullNorm (C χ) -> FullNorm (C p) ->
   MPO (C χ) q (C p) (C p) -> MPS (C χ) (C p) q -> (MPS (C χ) (C p) q, [Double])
-solveAllSites nb np mpo mps0 =
-  case sameNat (Proxy @q) (Proxy @1) of
-    Just Refl -> runWriter $ do
-      let mpsL = mixedCanonicalLeft3 mps0
-      (_, m1) <- pure $ solveLeft @χ @p @1 nb np mpo mpsL
-      tell [energy nb np mpo m1]
+solveAllSites nb np mpo mps0 = runWriter $ do
+  let start = mixedCanonicalLeft @χ @p @q mps0
+  atRight <- sweepRight CenterLeft start
+  sweepLeftBack CenterRight atRight
+  where
+    record mps = do
+      tell [energy nb np mpo mps]
+      pure mps
 
-      let mpsC = mixedCanonicalCentre3 m1
-      (_, m2) <- pure $ solveBulk @χ @p @1 nb np 0 mpo mpsC
-      tell [energy nb np mpo m2]
+    sweepRight :: CenterPos q -> MPS (C χ) (C p) q -> Writer [Double] (MPS (C χ) (C p) q)
+    sweepRight pos mps = do
+      let (_, mps1) = solveAt @χ @p @q nb np pos mpo mps
+      mps1' <- record mps1
+      case pos of
+        CenterRight -> pure mps1'
+        _ ->
+          let (pos', mps2) = shiftGaugeRight @χ @p @q pos mps1'
+          in sweepRight pos' mps2
 
-      let mpsR = mixedCanonicalRight3 m2
-      (_, m3) <- pure $ solveRight @χ @p @1 nb np mpo mpsR
-      tell [energy nb np mpo m3]
-      return m3
-    Nothing -> undefined
-      -- let mBulk =
-      --       foldl
-      --         (\m j -> snd (solveBulk @χ @p @q nb np j mpo m))
-      --         mps0
-      --         [0 .. cdim @q - 1]
-      -- in (energy nb np mpo mBulk, mBulk)
+    -- After the right endpoint solve, move left and continue (do not re-solve right).
+    sweepLeftBack :: CenterPos q -> MPS (C χ) (C p) q -> Writer [Double] (MPS (C χ) (C p) q)
+    sweepLeftBack CenterLeft _ =
+      error "solveAllSites.sweepLeftBack: expected to start from CenterRight"
+    sweepLeftBack pos mps =
+      let (pos', mps2) = shiftGaugeLeft @χ @p @q pos mps
+      in goLeft pos' mps2
 
+    goLeft :: CenterPos q -> MPS (C χ) (C p) q -> Writer [Double] (MPS (C χ) (C p) q)
+    goLeft pos mps = do
+      let (_, mps1) = solveAt @χ @p @q nb np pos mpo mps
+      mps1' <- record mps1
+      case pos of
+        CenterLeft -> pure mps1'
+        _ ->
+          let (pos', mps2) = shiftGaugeLeft @χ @p @q pos mps1'
+          in goLeft pos' mps2
 
 --------------------------------------------------------------------------------
 -- Sweep / DMRG
@@ -455,6 +480,15 @@ genRandomMPS32 = do
   r <- genEndo @3 @2
   pure (MPS l (V (Vector.singleton (siteFromLeftSVD @3 @2 @3 flat))) r)
 
+genRandomMPS32Q
+  :: forall (q :: Nat). KnownNat q => QC.Gen (MPS (C 3) (C 2) q)
+genRandomMPS32Q = do
+  l <- genEndo @2 @3
+  r <- genEndo @3 @2
+  flats <- Vector.replicateM (fromIntegral (natVal (Proxy @q))) (genEndo @(3 * 2) @3)
+  pure $
+    MPS l (V (Vector.map (siteFromLeftSVD @3 @2 @3) flats)) r
+
 -- | Single-site DMRG reaches the dense TFIM ground energy from a random MPS.
 --
 -- Discards near-zero seeds. Uses enough sweeps that a typical random start
@@ -486,6 +520,24 @@ prop_dmrgConvergesFromRandomMPS =
                    QC..&&. nonIncreasing
                  )
 
+-- | Four-site (@q = 2@) zipper sweep: network Rayleigh is nonincreasing along
+-- the per-site energy history (no dense oracle for @p^{4}@ yet).
+prop_dmrgSweepNonIncreasingQ2 :: QC.Property
+prop_dmrgSweepNonIncreasingQ2 =
+  let j = 1.0
+      h = 0.7
+      mpo = tfimMPO @2 j h
+      nb = hermitianNorm :: FullNorm (C 3)
+      np = hermitianNorm :: FullNorm (C 2)
+  in QC.forAll (genRandomMPS32Q @2) $ \psi0 ->
+       let z = realPart (mpsInner nb np psi0 psi0)
+       in z > 1e-8 QC.==>
+            let (_, hist) = sweep @3 @2 @2 mpo psi0
+                nonIncreasing =
+                  and [ a <= b + 1e-6 | (b, a) <- zip hist (drop 1 hist) ]
+            in QC.counterexample ("hist=" ++ show hist) $
+                 not (null hist) QC..&&. nonIncreasing
+
 dmrgExample :: DmrgResult 3 2 1
 dmrgExample = dmrg 2 5e-4 (tfimMPO 0.5 0.5) productMPS
 
@@ -494,6 +546,6 @@ dmrgExample2 = mpoApplyExact (tfimMPO 0.5 0.5) productMPS
 
 dmrgExample3 = (e1, e2) where
   e1 = energy hermitianNorm hermitianNorm (tfimMPO @1 0.5 0.5) productMPS
-  e2 = energy hermitianNorm hermitianNorm (tfimMPO @1 0.5 0.5) (mixedCanonicalLeft3 productMPS)
+  e2 = energy hermitianNorm hermitianNorm (tfimMPO @1 0.5 0.5) (mixedCanonicalLeft @3 @2 @1 productMPS)
 
 displayMPS mps = "MPS:\n " <> "Left Boundary: " <> show (mps ^. mpsLeft . to getLinearMap) <> "\n" <> "Bulk: " <> show (mps ^? mpsBulk . ix 0 . to getLinearMap) <> "\n" <> "Right Boundary: " <> show (mps ^. mpsRight . to getLinearMap)

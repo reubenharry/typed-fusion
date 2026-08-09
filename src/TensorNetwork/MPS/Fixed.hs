@@ -47,14 +47,19 @@ import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Numeric.LinearAlgebra.Static.COrphans ()
 import Numeric.LinearAlgebra.Static
-  ( C, Sized (fromList)
+  ( C, Sized (fromList, unwrap)
    )
 import TensorNetwork.MPS.LinmapStorage
   ()
-import GHC.TypeLits (KnownNat, type (*))
+import GHC.TypeLits (KnownNat, Nat, type (*), natVal)
+import Data.Proxy (Proxy (..))
 import Data.Complex (Complex ((:+)), magnitude, imagPart)
 import Data.VectorSpace (InnerSpace ((<.>)))
 import qualified Test.QuickCheck as QC
+import qualified Data.Vector as Vector
+import qualified Data.Vector.Storable as VSt
+import Control.Monad (replicateM)
+import Linear.V (V (..))
 
 
 {- HLINT ignore "Redundant $" -}
@@ -81,12 +86,13 @@ import Numeric.LinearAlgebra.Static.COrphans ()
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Data.Coerce (coerce)
 import qualified Debug.Trace as Debug
-import GHC.TypeLits (Nat)
 import Linear.V (Finite (..))
 import Linear (V1(..))
 import Control.Lens ((^.), _1, (&), (.~))
 import Random.Arbitrary
 import TensorNetwork.MPS.General
+import Data.Finite (packFinite)
+import Data.Maybe (fromJust)
 
 genMPSC :: forall n m (q :: Nat) . (KnownNat n, KnownNat m, KnownNat q, KnownNat q, KnownNat (m*n), KnownNat (n*m)) => QC.Gen (MPS (C n) (C m) q)
 genMPSC = MPS <$> genEndo <*> genBulkSiteC2 <*> genEndo
@@ -186,6 +192,106 @@ prop_mpsInnerAfterMixedCanonical =
      QC..&&. abs (imagPart zC) <= 1e-8 * (1 + magnitude zC)
      QC..&&. abs (imagPart zL) <= 1e-8 * (1 + magnitude zL)
      QC..&&. abs (imagPart zR) <= 1e-8 * (1 + magnitude zR)
+
+--------------------------------------------------------------------------------
+-- One-site gauge shifts
+--------------------------------------------------------------------------------
+
+-- | Random MPS with non-trivial bulk (left-SVD layout), for gauge transport props.
+genGaugeMPSC
+  :: forall χ p (q :: Nat).
+  ( KnownNat χ, KnownNat p, KnownNat q
+  , KnownNat (χ * p), KnownNat (p * χ)
+  , χ * p ~ p * χ
+  ) =>
+  QC.Gen (MPS (C χ) (C p) q)
+genGaugeMPSC = do
+  l <- genEndo @p @χ
+  r <- genEndo @χ @p
+  sites <-
+    replicateM (fromIntegral (natVal (Proxy @q))) $
+      siteFromLeftSVD @χ @p @χ <$> genEndo @(χ * p) @χ
+  pure $ MPS l (V (Vector.fromList sites)) r
+
+maxDiffC :: KnownNat n => C n -> C n -> Double
+maxDiffC a b =
+  VSt.maximum (VSt.map magnitude (VSt.zipWith (-) (unwrap a) (unwrap b)))
+
+flatMPS3 :: MPS (C 3) (C 2) 1 -> C 8
+flatMPS3 psi = physical3ToFlat @2 $ toPhysicalMPS hermitianNorm psi
+
+physicalClose3 :: Double -> MPS (C 3) (C 2) 1 -> MPS (C 3) (C 2) 1 -> Bool
+physicalClose3 tol a b = maxDiffC (flatMPS3 a) (flatMPS3 b) <= tol
+
+-- | 'shiftGaugeRight' / 'shiftGaugeLeft' preserve the physical tensor (@q = 1@).
+prop_shiftGaugePreservesPhysical :: QC.Property
+prop_shiftGaugePreservesPhysical =
+  QC.forAll (genGaugeMPSC @3 @2 @1) $ \psi0 ->
+    let psiL = mixedCanonicalLeft3 psi0
+        bulk0 = CenterBulk (fromJust (packFinite @1 0))
+        (_, psiC) = shiftGaugeRight @3 @2 @1 CenterLeft psiL
+        (_, psiR) = shiftGaugeRight @3 @2 @1 bulk0 psiC
+        (_, psiC') = shiftGaugeLeft @3 @2 @1 CenterRight psiR
+        (_, psiL') = shiftGaugeLeft @3 @2 @1 bulk0 psiC'
+    in  physicalClose3 1e-8 psi0 psiL
+     QC..&&. physicalClose3 1e-8 psiL psiC
+     QC..&&. physicalClose3 1e-8 psiC psiR
+     QC..&&. physicalClose3 1e-8 psiR psiC'
+     QC..&&. physicalClose3 1e-8 psiC' psiL'
+
+-- | Right then left (and reverse) round-trip on a mixed-canonical seed.
+prop_shiftGaugeRoundTrip :: QC.Property
+prop_shiftGaugeRoundTrip =
+  QC.forAll (genGaugeMPSC @3 @2 @1) $ \psi0 ->
+    let psiL = mixedCanonicalLeft3 psi0
+        (posC, psiC) = shiftGaugeRight @3 @2 @1 CenterLeft psiL
+        (posL, psiBack) = shiftGaugeLeft @3 @2 @1 posC psiC
+        psiR = mixedCanonicalRight3 psi0
+        (posC2, psiC2) = shiftGaugeLeft @3 @2 @1 CenterRight psiR
+        (posR, psiBackR) = shiftGaugeRight @3 @2 @1 posC2 psiC2
+        bulk0 = CenterBulk (fromJust (packFinite @1 0))
+    in  posC == bulk0
+     QC..&&. posL == CenterLeft
+     QC..&&. physicalClose3 1e-8 psiL psiBack
+     QC..&&. posC2 == bulk0
+     QC..&&. posR == CenterRight
+     QC..&&. physicalClose3 1e-8 psiR psiBackR
+
+-- | Left3 + shifts agree with Centre3 / Right3 on the physical tensor.
+prop_shiftGaugeMatchesMixedCanonical3 :: QC.Property
+prop_shiftGaugeMatchesMixedCanonical3 =
+  QC.forAll (genGaugeMPSC @3 @2 @1) $ \psi0 ->
+    let psiL = mixedCanonicalLeft3 psi0
+        bulk0 = CenterBulk (fromJust (packFinite @1 0))
+        (_, psiViaShiftC) = shiftGaugeRight @3 @2 @1 CenterLeft psiL
+        (_, psiViaShiftR) = shiftGaugeRight @3 @2 @1 bulk0 psiViaShiftC
+        psiC = mixedCanonicalCentre3 psi0
+        psiR = mixedCanonicalRight3 psi0
+    in  physicalClose3 1e-8 psiViaShiftC psiC
+     QC..&&. physicalClose3 1e-8 psiViaShiftR psiR
+
+-- | Longer chain: walking the center left→right preserves 'mpsInner'.
+prop_shiftGaugePreservesInnerQ2 :: QC.Property
+prop_shiftGaugePreservesInnerQ2 =
+  QC.forAll (genGaugeMPSC @3 @2 @2) $ \psi0 ->
+    let z0 = normFast psi0
+        (pos1, psi1) = shiftGaugeRight @3 @2 @2 CenterLeft psi0
+        (pos2, psi2) = shiftGaugeRight @3 @2 @2 pos1 psi1
+        (pos3, psi3) = shiftGaugeRight @3 @2 @2 pos2 psi2
+        z3 = normFast psi3
+        (pos2', psi2') = shiftGaugeLeft @3 @2 @2 pos3 psi3
+        (pos1', psi1') = shiftGaugeLeft @3 @2 @2 pos2' psi2'
+        (pos0', psi0') = shiftGaugeLeft @3 @2 @2 pos1' psi1'
+        zBack = normFast psi0'
+        bulk0 = CenterBulk (fromJust (packFinite @2 0))
+        bulk1 = CenterBulk (fromJust (packFinite @2 1))
+    in  pos1 == bulk0
+     QC..&&. pos2 == bulk1
+     QC..&&. pos3 == CenterRight
+     QC..&&. pos0' == CenterLeft
+     QC..&&. complexApproxEq 1e-8 z0 z3
+     QC..&&. complexApproxEq 1e-8 z0 zBack
+     QC..&&. abs (imagPart z3) <= 1e-8 * (1 + magnitude z3)
 
 ex :: IO ()
 ex = do

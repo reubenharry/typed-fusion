@@ -12,6 +12,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {- HLINT ignore "Parenthesize unary negation" -}
 {- HLINT ignore "Move brackets to avoid $" -}
 {- HLINT ignore "Redundant $" -}
@@ -22,7 +23,11 @@ import Math.LinearMap.Category.Class
 import Data.VectorSpace
 import Control.Category.Constrained hiding (iso)
 import Prelude hiding ((||), ($), id, (.))
-import Math.LinearMap.Category (LinearFunction(..), HilbertSpace, Norm (Norm, applyNorm), euclideanNorm, (<$|), normSq, (|$|), (-+$>), (<.>^))
+import Math.LinearMap.Category
+  ( LinearFunction(..), HilbertSpace, Norm (Norm, applyNorm), euclideanNorm
+  , (<$|), normSq, (|$|), (-+$>), (<.>^), type (+>)
+  , FiniteDimensional (..), recomposeLinMap, LinearMap (..)
+  )
 import Linear (V2 (V2), V3 (V3), E (..))
 import Data.Coerce (Coercible)
 import Math.LinearMap.Asserted
@@ -36,6 +41,7 @@ import Math.VectorSpace.Initializable
 import Math.LinearMap.Category.Instances
 import Data.Number.NormedAlgebra (NormedAlgebra(RealPart))
 import Data.Complex (Complex, realPart, Complex((:+)))
+import System.Random (StdGen, mkStdGen, randomRs)
 
 trace' a = Debug.Trace.trace (show a ++ " : debug")
 
@@ -47,6 +53,59 @@ data SVDPendants v w = SVDPendants
           , codomainSingularVector :: w
           , singularValue :: Scalar w
           }
+
+-- | Thin SVD factors @(V†, Σ, U)@ from pendants, with singular subspace @chi@.
+--
+-- Expects @length ps >= dim chi@. Columns of @V : chi → v@ / @U : chi → w@ are
+-- the domain / codomain singular vectors; @Σ@ is diagonal in the @chi@ basis.
+-- Reconstruction: @U ∘ Σ ∘ V†@.
+--
+-- @V†@ is built as the dual of the isometry with columns @domainSingularVector@
+-- (via the ONB inner-product formula), so we do not need @DualVector v ~ v@.
+pendantsToFactors
+  :: forall chi v w
+   . ( FiniteDimensional chi, FiniteDimensional v
+     , HilbertSpace chi, HilbertSpace v, HilbertSpace w
+     , Scalar chi ~ Scalar v, Scalar v ~ Scalar w )
+  => [SVDPendants v w]
+  -> (v +> chi, chi +> chi, chi +> w)
+pendantsToFactors ps =
+  let n = subbasisDimension (entireBasis :: SubBasis chi)
+      pendants = take n ps
+      xs = fmap domainSingularVector pendants
+      ys = fmap codomainSingularVector pendants
+      ss = fmap singularValue pendants
+      esChi = enumerateSubBasis (entireBasis :: SubBasis chi)
+      esV = enumerateSubBasis (entireBasis :: SubBasis v)
+      uMap = fst (recomposeLinMap (entireBasis :: SubBasis chi) ys)
+      sigma =
+        fst
+          ( recomposeLinMap
+              (entireBasis :: SubBasis chi)
+              [ s *^ e | (s, e) <- zip ss esChi ]
+          )
+      -- (V† e)_i = ⟨x_i | e⟩  in the @chi@ basis
+      vt =
+        fst
+          ( recomposeLinMap
+              (entireBasis :: SubBasis v)
+              [ sumV [ (xi <.> ej) *^ ei | (xi, ei) <- zip xs esChi ]
+              | ej <- esV
+              ]
+          )
+  in (vt, sigma, uMap)
+
+-- | @U ∘ Σ ∘ V†@ from 'pendantsToFactors'.
+reconstructFromPendants
+  :: forall chi v w
+   . ( FiniteDimensional chi, FiniteDimensional v
+     , HilbertSpace chi, HilbertSpace v, HilbertSpace w
+     , Scalar chi ~ Scalar v, Scalar v ~ Scalar w )
+  => [SVDPendants v w]
+  -> v +> w
+reconstructFromPendants ps =
+  let (vt, sigma, u) = pendantsToFactors @chi @v @w ps
+  in u . sigma . vt
 
 svd :: (Show v, Show w, Scalar v ~ Double, Scalar w ~ Double, HilbertSpace v, HilbertSpace w, Monad m) => InitialVectors m v -> (v -+> w) -> Int -> m [SVDPendants v w]
 svd initialVectors a dimA = do
@@ -288,3 +347,35 @@ bar = svdStep (V3 4.7 (-0.8) 5.9) a foo
 
 -- inv :: LinearMap Double (V3 Double) (V2 Double)
 -- inv = xMat . pseudoInverse ((adjoint $ yMat) . arr a . xMat) . (adjoint $ yMat)
+
+-- | Random @V3 → V3@ endomorphism from a seed (nine uniform entries in @[-1,1]@).
+randomEndoV3 :: StdGen -> V3 Double -+> V3 Double
+randomEndoV3 gen =
+  let cs = take 9 (randomRs (-1, 1) gen)
+      row0 = V3 (cs !! 0) (cs !! 1) (cs !! 2)
+      row1 = V3 (cs !! 3) (cs !! 4) (cs !! 5)
+      row2 = V3 (cs !! 6) (cs !! 7) (cs !! 8)
+  in arr $ LinearMap $ V3 row0 row1 row2
+
+-- | Run iterative SVD on a random real @V3@ matrix and check @U Σ V† ≈ A@.
+testPendantsReconstruction :: IO ()
+testPendantsReconstruction = do
+  let seed = 42
+      aRand = randomEndoV3 (mkStdGen seed)
+      initVecs =
+        FixedInitialVectors [V3 1 0 0, V3 0 1 0, V3 0 0 1]
+      -- @dimA = 3@ with three seeds: @take 3@ of two tail steps → three pendants.
+      pendants = runIdentity (svd initVecs aRand 3)
+      rebuilt = reconstructFromPendants @(V3 Double) pendants
+      es = enumerateSubBasis (entireBasis :: SubBasis (V3 Double))
+      err =
+        maximum
+          [ magnitude ((aRand $ e) ^-^ (rebuilt $ e))
+          | e <- es
+          ]
+  putStrLn $ "singular values: " ++ show (singularValue <$> pendants)
+  putStrLn $ "reconstruction max-column error: " ++ show err
+  putStrLn $
+    if err < 1e-6
+      then "OK: U Σ V† ≈ A"
+      else "FAIL: reconstruction error too large"

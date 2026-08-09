@@ -27,42 +27,7 @@
 -- singletons), so these products can't be solved from the literal types alone.
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
-module Symmetry.FunctorExperiment
-  ( -- * U(1) aliases (backward compatible)
-    U1Rep
-  , RepDim
-  , U1RepList
-  , HomSectorList
-  , LookupMult
-  , IntertwinerSectors
-  , Intertwiner (..)
-  , BuildIdHom
-  , ApplyIntertwiner (..)
-  , pattern ToCU1
-  , ToCG (..)
-  , -- * Group-indexed core
-    RepListG
-  , RepDimG
-  , GroupSpine (..)
-  , HomSectorListK
-  , RepLookup (..)
-  , LookupResult
-  , IntertwinerG (..)
-  , composeG
-  , compose
-  , mkIdHom
-  , mkScalar
-  , intertwinerLinear
-  , intertwinerLinearG
-  , -- * Flatten tagged reps to @C (RepDimG g r)@
-    unRepVec
-  , flatRepLinear
-  , forgetLinearG
-  , repLinear
-  , ActsOnRep (..)
-  , HasHomBlock (..)
-  , HomBlock
-  ) where
+module Symmetry.FunctorExperiment where
 
 import Data.Complex (Complex((:+)))
 import Data.Kind (Constraint, Type)

@@ -68,13 +68,23 @@ library
         Symmetry.IrrepDecide
         Symmetry.RepSingleton
         Symmetry.HomBlock
+        Symmetry.Tensor
+        Symmetry.CG.SU2
+        Symmetry.CG.U1
+        Symmetry.RepObj
+        Symmetry.RepMor
+        Symmetry.Intertwiner.Pretty
         Symmetry.FunctorExperiment
         Symmetry.FunctorU1
+        Symmetry.FunctorSU2
         ITensor.Typed
         Random.Arbitrary
+        Random.Maps
         TensorNetwork.Dagger
         TensorNetwork.Categorical
         TensorNetwork.Categorical.Props
+        TensorNetwork.LieGroup
+        TensorNetwork.Bundle
         TensorNetwork.DMRG.Chain
         TensorNetwork.DMRG.Env
         TensorNetwork.DMRG.Fixed
@@ -508,6 +518,35 @@ executable dmrg-ground-props
         QuickCheck
     default-language: GHC2021
 
+executable mps-inner-scale
+    import:           warnings
+    main-is:          mps_inner_scale.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        time,
+        lens,
+        linearmap-category,
+        linearmap-hmatrix,
+        hmatrix
+    default-language: GHC2021
+
+executable mps-inner-micro
+    import:           warnings
+    main-is:          mps_inner_micro.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        time,
+        lens,
+        constrained-categories,
+        linearmap-category,
+        linearmap-hmatrix,
+        hmatrix
+    default-language: GHC2021
+
 executable dmrg-time-probe
     import:           warnings
     main-is:          dmrg_time_probe.hs
@@ -521,6 +560,38 @@ executable dmrg-time-probe
         constrained-categories,
         linearmap-category,
         linearmap-hmatrix
+    default-language: GHC2021
+
+executable dmrg-profile-nsite
+    import:           warnings
+    main-is:          dmrg_profile_nsite.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        time,
+        vector-space,
+        lens,
+        finite-typelits,
+        constrained-categories,
+        linearmap-category,
+        linearmap-hmatrix,
+        hmatrix
+    default-language: GHC2021
+
+executable tensor-of-maps-mre
+    import:           warnings
+    main-is:          tensor_of_maps_mre.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        time,
+        vector-space,
+        constrained-categories,
+        linearmap-category,
+        linearmap-hmatrix,
+        hmatrix
     default-language: GHC2021
 
 executable tfim-dmrg-plot

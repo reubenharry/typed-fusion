@@ -1,6 +1,51 @@
 # Roadmap: a symmetry-aware, basis-independent DMRG in Haskell
 
-*Status: living document. Last updated 2026-06-23.*
+*Status: living document. Last updated 2026-08-02.*
+
+## Current focus (2026-08)
+
+**Substrate choice:** stay on **typed `C χ` bonds** (`TensorNetwork.MPS.General` /
+`TensorNetwork.DMRG.Fixed`). The growable `FinSuppSeq` / `MPSClever` branch
+(§5b) is **paused** — revisit only when typed-bond DMRG is solid and we need
+state addition / adaptive χ / tangent spaces in earnest.
+
+**Near-term work (ordered):**
+
+1. **Categorical substrate cost (open question)** — N=8 ~35s is not explained by
+   “forgot to zipper envs” alone. Profile evidence (`dmrg-profile-nsite`,
+   `dmrg-time-probe`, `mps-inner-micro`) says the **morphism backend** pays
+   orders of magnitude more than BLAS for χ≈3 work:
+   - every `.` densifies via **columnwise `applyLinear`+`toArray`** (`COrphans.composeLinear`; densify-gemm disabled after nested DualVector associativity bugs);
+   - every `⊗^` is `tensorOfMaps` = densify `fmap ∘ transpose ∘ fmap ∘ transpose` with **per-column `fmapTensor`** (matmul path commented out);
+   - `opWire` / `transferMPOBulkSite` rebuild that braid on every env step / Heff sample;
+   - `arr (LinearFunction heff)` densifies by sampling the full categorical apply on each basis vector (~166ms for a 3-site bulk Heff) — after that, matvecs are free.
+   **Minimal MRE:** `cabal run tensor-of-maps-mre` — at `(χ,p)=(3,2)`,
+   `fuse∘(f⊗^g)∘split` **agrees exactly** with `HM.kronecker`, but categorical
+   densify is **~30×** slower. Goal: keep the categorical `⊗^` spec; implement
+   Static `C` via hmatrix Kronecker (then gemm `composeLinear` once flat layout
+   is safe). Algorithmic env zipper / fewer `energy` calls remain necessary but
+   secondary until this tax drops.
+2. **Incremental environments** — every local solve rebuilds L/R MPO envs from
+   scratch (`leftEnvBeforeBulk` / `rightEnvAfterBulk`). Zipper them through the
+   sweep (standard DMRG bookkeeping). Big win, but does not answer #1.
+3. **SVD with intertwiners** — eigensolve on symmetric (intertwiner) centres
+   should already typecheck; the open piece is **blockwise / symmetry-adapted
+   SVD** for gauge transport and truncation so DMRG can run on graded spaces
+   without leaving the typed-bond path.
+4. **Two-site DMRG** — local update on a fused two-site centre, SVD truncate
+   back to χ, grow/adapt bond dimension within the typed (or existential-χ)
+   setting. Single-site N-site zipper is already green.
+5. **Explore `manifold-core` for TDVP** — inventory what
+   `Semimanifold` / `PseudoAffine` / charts give us for the MPS manifold, and
+   what instances / tangent-space plumbing we still need.
+6. **DMRG as imaginary-time TDVP** — once the manifold picture is clearer,
+   treat single-/two-site DMRG updates as imaginary-time TDVP steps and see
+   how much of the driver unifies.
+
+Historical near-term phases (§4–§4b) and the FinSuppSeq plan (§5b) remain
+below as archive / deferred detail; they are not the active queue.
+
+---
 
 ## 0. The thesis
 
@@ -32,8 +77,8 @@ The single most important design principle, which makes (b) cheap, is stated in 
 | `Sector` / fusion category interface (`one, ⊗, dual, N, F, R, FS, dim`) | well-typed representations | `General.hs`, `SU2.hs` | exploratory; type-level fusion for U(1) & SU(2) charges exists, no F/R symbols |
 | `GradedSpace{I}` + block-sparse morphism (Schur blocks) | intertwiners | `FunctorExperiment.hs` | **most mature**: U(1) intertwiners as block-sparse hom; `compose` is now singleton-recursive (no `unsafeCoerce`); `TensorSpace` via `ToC`. Next: multi-block `ApplyInterGo` (toward SU(2)) |
 | `TensorMap` with named legs + contraction/permute | typed ITensors | `ItensorTyped.hs` | leg-labelling, type-level contraction (`Difference`/`Intersection`), permutation *evidence* done; `permute`/`rawContract` are `error "TODO"` |
-| MPS/DMRG algorithm layer (à la MPSKit) | DMRG | `TensorNetwork.DMRG.Fixed` | typed 3-site DMRG green (TFIM); local solve still dense `eigSH`; gauge SVD via `getLinearMap`; `Concrete` is legacy |
-| Symmetric MPS as a vector space (tangent space, addition of states) | vector space of MPS | `TensorNetwork.MPS.FinSupp` | `VectorSpace` + `HasBasis` (physical); growable `FinSuppSeq` bond; flatten / canonical section green. **Next (§5b):** categorical MPS/MPO layer, `InnerSpace`, effective-`H` eigensolve |
+| MPS/DMRG algorithm layer (à la MPSKit) | DMRG | `TensorNetwork.MPS.General`, `TensorNetwork.DMRG.Fixed` | **N-site typed-bond single-site DMRG green** (zipper sweep, Lanczos local solve, TFIM); performance still poor (~35s for N=8); two-site + intertwiner SVD next; `Concrete` is legacy |
+| Symmetric MPS as a vector space (tangent space, addition of states) | vector space of MPS | `TensorNetwork.MPS.FinSupp` | **Paused.** `VectorSpace` + flatten / canonical section green; categorical / inner / Heff layer (§5b) not pursued until typed path is done |
 
 TensorKit factors these as: `Sector` (in `TensorKitSectors.jl`) → `GradedSpace` →
 `ProductSpace`/`HomSpace` → `FusionTree` → `TensorMap`, with `MPSKit.jl`/`PEPSKit.jl`
@@ -99,29 +144,23 @@ because we pre-abstracted, but because the abstraction step is itself easy.
 
 ---
 
-## 4. Near-term: dense DMRG, natively in `linearmap-category` (the priority)
+## 4. Near-term: dense DMRG, natively in `linearmap-category` (largely done)
 
-Goal: an end-to-end, sweeping, single-site (then two-site) DMRG that finds the ground
+> **Status (2026-08):** Single-site typed N-site DMRG is green. Active work has
+> moved to **Current focus** (performance, intertwiner SVD, two-site, TDVP).
+> This section is retained as the completed design trail.
+
+Goal (achieved for single-site): an end-to-end, sweeping DMRG that finds the ground
 state of a known 1-D model, written in `+>`/`⊗`/`TensorSpace` vocabulary, validated
-against an exact answer. No symmetry yet.
+against an exact answer. No symmetry yet. Two-site is still open (Current focus #3).
 
 ### Phase 0 — substrate decisions (RESOLVED 2026-06-07; see §7)
 - **D1 field**: ✅ **complex** (`Complex Double`).
-- **D2 MPS representation**: ✅ **typed `C b` bonds first** (a finite, fixed-length,
-  type-checked-bond MPS — the `TensorNetwork.MPS`-style representation, cleaned up per
-  §4a). The growable `FinSuppSeq`/`MPSClever` vector-space form is deferred to medium-term
-  (§5a): it has the bilinear-bond conjugation hazard and trades type-level bond checking
-  for growability — worth it later for state addition / adaptive χ, not for the first
-  correct DMRG.
-  - **Site orientation** (settled): **transfer / contraction** — each site is
-    `(C bₗ ⊗ C p) +> C bᵣ`, boundaries use `C 1`.
-  - **Conjugation** (settled): **per-site, explicit** via `vectorConjugate`; bras and
-    environments contract the conjugated tensor against the ket with bilinear ops.
-- **D3 eigensolver**: ✅ **interim — dense hmatrix `eigSH`** (`GroundState.hs`): materialise
-  the operator in the `FiniteDimensional` basis (`toDenseMatrix`) and solve with hmatrix.
-  Verified on `diag(3,1,2)` → ground energy `1.0`, spectrum `[1,2,3]`. ➡ **Target —
-  matrix-free `eigen`** with a Hilbert–Schmidt `Norm` on map-space centres (§4b); keep
-  `toDenseMatrix` as an oracle only.
+- **D2 MPS representation**: ✅ **typed `C χ` bonds** (transfer orientation, per-site
+  `vectorConjugate`). N-site generalisation lives in `TensorNetwork.MPS.General`.
+  Growable `FinSuppSeq`/`MPSClever` is **paused** (§5b), not medium-term active work.
+- **D3 eigensolver**: ✅ **Lanczos on centres** (`Lanczos.groundStateLanczos`); dense
+  `eigSH` retained as oracle. §4b's `eigen` migration is no longer the DMRG blocker.
 
 **First concrete target: the typed 3-site MPS.** Build the whole pipeline below on a
 fixed **3-site**, typed-bond MPS (transfer orientation, §4a) before any generalisation.
@@ -162,7 +201,11 @@ a `C (p³)` oracle for every operation. N-site generalisation is §5a.
    `H.sym`, so a non-Hermitian `Heff` would be silently masked; test Hermiticity directly
    (`prop_effectiveHHermitian` ✅).
 
-### Phase 4b — migrate local solve to matrix-free `eigen` (planned)
+### Phase 4b — migrate local solve to matrix-free `eigen` (superseded)
+
+> **Superseded (2026-08):** DMRG centres use `Lanczos.groundStateLanczos` instead.
+> Keep the notes below if we ever want linearmap `eigen` as an alternative; do not
+> treat this as an active milestone.
 
 Replace the dense `toDenseMatrix` + `eigSH` path in `GroundState.groundState` with
 linearmap's `eigen`, keeping `Heff` as a map-space endomorphism (no flattening to `C n`).
@@ -339,32 +382,37 @@ The point of §3 is that this phase touches almost no algorithm code.
    implement the two stubs `permute` (swaps + associators) and `rawContract`
    (categorical evaluation) on top of `linearmap-category`'s `transposeTensor`/`⊗`.
    This is independent of symmetry and could even slot into Phase 1–2.
-5. **MPS-as-vector-space (`TensorNetwork.MPS.FinSupp`)** generalises to symmetric MPS, enabling
-   state addition / tangent vectors — the entry point to TDVP and excited-state methods.
-   The categorical / inner-product / local-solve layer for this representation is planned
-   in §5b.
+5. **MPS manifold / TDVP** — explore `manifold-core` (`Semimanifold`, charts) on the
+   typed MPS, then imaginary-time TDVP as a unifying view of DMRG (Current focus
+   items 4–5). Growable `FinSuppSeq` MPS-as-`VectorSpace` (§5b) stays paused until
+   that exploration says we need it.
 
 ### 5a. From the 3-site typed MPS to N sites (and growable bonds)
-Generalise the fixed 3-site typed MPS (§4a) to arbitrary length: a sequence of uniform
-bulk tensors `(C bᵢ ⊗ C p) +> C bᵢ₊₁` plus boundary caps, preserving the map-to-physical
-oracle, the inner-product/dual definitions, and the DMRG sweep. Two sub-threads:
-- **Length** — list/vector of sites; existentially-typed or runtime-checked bonds so the
-  chain length and per-bond χ aren't fixed at compile time.
-- **Growable bonds / state addition** — revisit `TensorNetwork.MPS.FinSupp.MPSClever`'s `FinSuppSeq` bond
-  and its `VectorSpace` instance (addition commutes with flattening) for adaptive χ and
-  tangent-space methods — *after* fixing its bilinear-bond conjugation (memory
-  `conjugation-conventions`). This is where the deferred D2 alternative comes back.
-- **Untyped/adaptive compression** — in the `FinSuppSeq` bond representation, bond
-  reduction can be expressed as a runtime operation: compute the SVD rank/truncation
-  threshold, rewrite the finite-support bond vectors to the retained support, and return
-  another `MPS vp` without changing the Haskell type. This is the natural home for truly
-  adaptive χ once the typed prototype has fixed the conventions.
-This turns the 3-site proof-of-concept into a usable finite-system DMRG.
+
+**Status (2026-08):** **Length is done** for fixed uniform typed bond `C χ`:
+`TensorNetwork.MPS.General` holds open-boundary MPS/MPO with left + `V q` bulk +
+right; `TensorNetwork.DMRG.Fixed` runs a zipper single-site DMRG for any bulk
+length `@q`. Remaining typed-path work is performance, two-site, and
+symmetry-adapted SVD (see **Current focus**), not "get N-site working".
+
+Still open on this thread (when needed):
+- **Per-bond / existential χ** — typed χ is uniform today; adaptive or
+  site-dependent χ needs existentials or a max-χ padding story (also needed
+  for honest two-site truncation).
+- **Growable bonds / state addition** — **paused** with §5b. Revisit
+  `FinSuppSeq` / `MPSClever` only after the typed path is performant and
+  two-site / TDVP exploration has clarified whether we need a growable
+  representation at all (vs typed χ + existentials).
 
 ### 5b. FinSuppSeq MPS: categorical layer, inner product, effective-`H` eigensolve
 
+> **Paused (2026-08).** Do not continue this branch for now. Preference is
+> typed bond dimension end-to-end; revisit §5b when state addition /
+> adaptive-χ / tangent-space methods force a growable bond representation.
+> The plan below is kept as deferred design notes.
+
 `TensorNetwork.MPS.FinSupp` is the growable-bond, runtime-χ counterpart to the typed
-`Fixed` prototype. It already has:
+prototype. It already has:
 
 - `MPS vp` with `FinSuppSeq` bonds and a `VectorSpace` instance (`addMPS` grows χ);
 - a flattening functor on objects: `mpsToFlat :: MPS vp -> C (vp³)` (and `mpsToPhysical3`);
@@ -580,16 +628,16 @@ the headline payoff.
 - **D1 — Field.** ✅ **Complex** (`Complex Double`). Matches the existing code and the
   physics. Native `svd` in `Math.TensorNetwork` remains real-only; complex local solve
   uses dense `eigSH` for now, migrating to `eigen` with a custom HS `Norm` (D3, §4b).
-- **D2 — MPS representation.** ✅ **Typed `C b` bonds, finite 3-site, transfer
-  orientation, per-site explicit conjugation** (full design in §4a). The untyped
-  growable-`FinSuppSeq` `MPSClever` (vector-space instance) is **deferred to §5a** — kept
-  for state addition / adaptive χ later, but it carries the bilinear-bond conjugation
-  hazard and gives up type-level bond checking, so it's not the first-DMRG substrate.
-- **D3 — Eigensolver.** ✅ **Interim: dense hmatrix `eigSH`** (`GroundState.hs`) —
-  materialise via `toDenseMatrix`, solve with hmatrix. Generic over map-space endos
-  (`Heff :: Centre +> Centre`); no flattening to `C n`. ➡ **Target: matrix-free
-  `eigen`** with a custom Hilbert–Schmidt `Norm` (§4b). `toDenseMatrix` stays as a test
-  oracle; the solve path stops building dense operator matrices.
+- **D2 — MPS representation.** ✅ **Typed `C χ` bonds, transfer orientation,
+  per-site explicit conjugation** (§4a); generalised to **N-site** in
+  `TensorNetwork.MPS.General`. Growable `FinSuppSeq` / `MPSClever` is **paused**
+  (§5b) — not the active substrate.
+- **D3 — Eigensolver.** ✅ **Production path: matrix-free Lanczos**
+  (`Lanczos.groundStateLanczos`) on map-space centres with an `InnerSpace`
+  metric — used by `TensorNetwork.DMRG.Fixed`. Dense `eigSH` /
+  `GroundState.groundStateDense` remains as oracle / fallback. The older §4b
+  plan to migrate to linearmap `eigen` is superseded for DMRG centres unless
+  Lanczos proves inadequate; do not block on `eigen` for the typed path.
 - **D4 — Fork strategy (open).** Candidates for `linearmap-family`: Hilbert–Schmidt /
   Frobenius `Norm` from `InnerSpace`; complex spectral helpers; `DaggerCategory` (already
   sketched in `Math.TensorNetwork`). Physics models and the DMRG driver stay in
@@ -608,8 +656,9 @@ the headline payoff.
 - *The monoidal/dagger/braided structure as actual `Category` instances* — we already
   build on `constrained-categories`; a symmetric tensor category becomes a literal
   `Monoidal`/`Braided`/`Dagger` instance (there's a `DaggerCategory` stub to grow).
-- *States as a `VectorSpace`* (`TensorNetwork.MPS.FinSupp`) — makes tangent spaces / TDVP / excited-state
-  subspaces first-class; addition-commutes-with-flattening is already property-tested.
+- *Manifold / TDVP structure* — `manifold-core` + (later) MPS-as-`VectorSpace` for
+  tangent spaces; FinSuppSeq addition-commutes-with-flattening exists but that branch
+  is paused pending the typed TDVP exploration.
 - *Property-testing coherence laws* (pentagon/hexagon, gauge invariance) with QuickCheck.
 - *Basis independence* — `linearmap-category`'s entire reason for being; aligns exactly
   with the "no magnetic-index dependence" (Wigner–Eckart) content of symmetric tensors.
@@ -628,31 +677,32 @@ the headline payoff.
 
 ## 9. Immediate next actions
 
-D1–D3 are resolved (§7). Concrete sequence (all on the **typed 3-site MPS**, §4/§4a):
+D1–D3 resolved (§7). **Active substrate:** typed N-site MPS/DMRG
+(`General` / `DMRG.Fixed`). **Paused:** FinSuppSeq (§5b).
 
-1. ✅ **Local ground-state solver** — `GroundState.hs`: `groundState ::
-   (FiniteDimensional v, HilbertSpace v, Scalar v ~ Complex Double) => (v +> v) ->
-   (Double, v)` via dense hmatrix `eigSH`. Generic over `v` (incl. map-space endos).
-   Verified on `diag(3,1,2)` → `1.0`, spectrum `[1,2,3]`. Full build + tests green.
-2. ✅ **Typed 3-site MPS type + map-to-physical** (Phase 1) — `TensorNetwork.MPS.Fixed`:
-   `data MPS p b1 b2` (transfer orientation, typed bonds) + categorical `mpsStateMap` /
-   `mpsToFlat :: MPS p b1 b2 -> C (p*p*p)` (bond threading via `applySite`, no p³ basis sum).
-   Index order `(s₁·p+s₂)·p+s₃` matches `TensorNetwork.MPS.FinSupp.mpsToFlat`
-   (`prop_mpsToFlatMatchesReference` green).
-3. ✅ **Inner product / norm / dual** (Phase 2) — `mpsConjugate` (`conjugateSite`),
-   `transferStep`, and `mpsInner` are green against flattened and basis oracles
-   (`prop_innerMatchesFlat`, `prop_innerMatchesReference`, conjugate-symmetry, norm).
-   Categorical bra pullback (§4a step 5) remains future work; current `transferStep`
-   uses explicit matrix coefficients.
-4. ✅ **MPO + `⟨ψ|H|φ⟩` contraction** (Phase 3) — categorical `applyOpSite`,
-   `mpoElement`, `mpoApplyMPS`, `mpoTransferStep`, and `mpsMPOInner` green; TFIM MPO in
-   `TensorNetwork.DMRG.Fixed`.
-5. ✅ **Effective Hamiltonian + local solve** (Phase 4) — `effectiveH`, `solveCentre` /
-   `groundState`; `prop_effectiveHMatchesInner`, `prop_effectiveHHermitian` green.
-6. ✅ **Sweep + validation** (Phase 5) — `sweep`, `dmrg`, SVD gauge transport via
-   `getLinearMap`; TFIM ground energy vs `denseGroundEnergy` green.
-7. ➡ **Migrate `groundState` to `eigen`** (Phase 4b) — Hilbert–Schmidt `Norm`; keep
-   `toDenseMatrix` as oracle; re-run DMRG validation.
-8. ➡ **FinSuppSeq MPS layer** (§5b) — categorical MPS/MPO + `Flatten` functor (5b-i),
-   `InnerSpace` (5b-ii), effective-`H` + dense local solve (5b-iii Tier A); Krylov (Tier C)
-   blocked on `InnerTensorSpace` for `FinSuppSeq` dual in `linearmap-family`.
+### Done (archive)
+
+1. ✅ Local ground-state tooling — dense `eigSH` oracle + **Lanczos** on centres.
+2. ✅ Typed MPS + map-to-physical (3-site, then N-site in `General`).
+3. ✅ Inner product / MPO / `⟨ψ|H|φ⟩` / effective-`H` (categorical path + props).
+4. ✅ Single-site zipper DMRG — `sweep` / `dmrg` for any bulk `@q`; TFIM checks green.
+
+### Next (see also **Current focus**)
+
+1. ➡ **Profile DMRG parts** — env rebuild vs Lanczos vs regauge vs energy on
+   N=8; then fix the hot path.
+2. ➡ **Incremental environments** — zipper L/R envs through the sweep instead of
+   rebuilding from scratch at every site (and stop paying full-network `energy`
+   more than necessary).
+3. ➡ **Intertwiner SVD** — symmetry-adapted gauge / truncation so graded centres
+   can leave the dense `C n` bond picture; local eigensolve on intertwiners is
+   expected to work already.
+4. ➡ **Two-site DMRG** on the typed chain (fused centre → SVD → absorb / truncate).
+5. ➡ **Explore `manifold-core`** for an MPS/TDVP formulation.
+6. ➡ **Explore DMRG ≡ imaginary-time TDVP** once the manifold inventory is clear.
+
+### Explicitly not next
+
+- ❌ Continue FinSuppSeq categorical / `InnerSpace` / Heff port (§5b).
+- ❌ Block on linearmap `eigen` migration (§4b) for typed DMRG centres — Lanczos
+  is the production path; revisit only if needed.
