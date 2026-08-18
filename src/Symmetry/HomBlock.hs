@@ -24,79 +24,105 @@
 -- @kron(coeffMat, I_{j+1})@.
 module Symmetry.HomBlock where
 
+import Data.Complex (Complex)
+import Data.Maybe (fromMaybe)
 import Data.Vector.Storable (toList)
 import GHC.TypeLits (Nat, KnownNat, natVal, type (*))
 import Data.Proxy (Proxy (..))
 import Numeric.LinearAlgebra.Static
-  (C, M, konst, extract, Sized(fromList, unwrap), Domain(app, mul))
+  (C, M, konst, extract, Sized(fromList, unwrap, create), Domain(app, mul))
+import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra as LA
 import Numeric.LinearAlgebra.Static.COrphans ()  -- Eq (C n)
 import Symmetry.Group (Group (..), Irreps, IrrepDim, SectorDim)
 
--- | Parameter count for a flat @U1HomBlock@ (coefficient layer).
+-- | Parameter count for a flat @CoeffBlock@ (multiplicity coefficient layer).
 type family HomBlockDim (m :: Nat) (n :: Nat) :: Nat where
   HomBlockDim m n = m * n
 
 type family EndoHomDim (m :: Nat) :: Nat where
   EndoHomDim m = HomBlockDim m m
 
-newtype U1HomBlock (m :: Nat) (n :: Nat) = U1HomBlock
-  { unU1HomBlock :: M m n }
+-- | Multiplicity coefficient matrix shared by all groups' Hom blocks
+-- (Schur: @Hom(V_j^{⊕n}, V_j^{⊕m}) ≅ M_{m,n}(C)@).
+newtype CoeffBlock (m :: Nat) (n :: Nat) = CoeffBlock
+  { unCoeffBlock :: M m n }
 
-instance (KnownNat m, KnownNat n, KnownNat (m * n)) => Show (U1HomBlock m n) where
-  show (U1HomBlock v) = show v
+instance (KnownNat m, KnownNat n, KnownNat (m * n)) => Show (CoeffBlock m n) where
+  show (CoeffBlock v) = show v
 
 instance Eq (M m n) where
   a == b = undefined --  LA.flatten a == LA.flatten b
 
-instance (KnownNat m, KnownNat n, KnownNat (m * n)) => Eq (U1HomBlock m n) where
-  U1HomBlock a == U1HomBlock b = a == b
+instance (KnownNat m, KnownNat n, KnownNat (m * n)) => Eq (CoeffBlock m n) where
+  CoeffBlock a == CoeffBlock b = a == b
 
 flattenMat
   :: forall m p d. (KnownNat m, KnownNat p, KnownNat d, HomBlockDim m p ~ d)
   => M m p -> C d
 flattenMat mat = fromList $ LA.toList $ LA.flatten $ unwrap mat
 
-u1BlockAsMat
+coeffBlockAsMat
   :: forall m n d. (KnownNat m, KnownNat n, KnownNat d, HomBlockDim m n ~ d)
-  => U1HomBlock m n -> M m n
-u1BlockAsMat (U1HomBlock block) = block --  fromList (toList (extract block))
+  => CoeffBlock m n -> M m n
+coeffBlockAsMat (CoeffBlock block) = block --  fromList (toList (extract block))
 
-u1ComposeBlock
+composeCoeffBlock
   :: forall m n p d1 d2 d3.
      ( KnownNat m, KnownNat n, KnownNat p
      , KnownNat d1, KnownNat d2, KnownNat d3
      , HomBlockDim m n ~ d1, HomBlockDim n p ~ d2, HomBlockDim m p ~ d3 )
-  => U1HomBlock m n -> U1HomBlock n p -> U1HomBlock m p
-u1ComposeBlock ab bc = U1HomBlock (prod)
+  => CoeffBlock m n -> CoeffBlock n p -> CoeffBlock m p
+composeCoeffBlock ab bc = CoeffBlock (prod)
   where
-    prod = mul (u1BlockAsMat ab) (u1BlockAsMat bc)
+    prod = mul (coeffBlockAsMat ab) (coeffBlockAsMat bc)
 
-u1ZeroBlock
+zeroCoeffBlock
   :: forall m n. (KnownNat m, KnownNat n, KnownNat (HomBlockDim m n))
-  => U1HomBlock m n
-u1ZeroBlock = U1HomBlock (konst 0)
+  => CoeffBlock m n
+zeroCoeffBlock = CoeffBlock (konst 0)
+
+addCoeffBlock
+  :: forall m n. (KnownNat m, KnownNat n)
+  => CoeffBlock m n -> CoeffBlock m n -> CoeffBlock m n
+addCoeffBlock (CoeffBlock a) (CoeffBlock b) = CoeffBlock (a + b)
+
+scaleCoeffBlock
+  :: forall m n. (KnownNat m, KnownNat n)
+  => Complex Double -> CoeffBlock m n -> CoeffBlock m n
+scaleCoeffBlock μ (CoeffBlock m) =
+  CoeffBlock
+    (fromMaybe (error "scaleCoeffBlock: create failed") . create $
+       LA.cmap (* μ) (extract m))
+
+negateCoeffBlock
+  :: forall m n. (KnownNat m, KnownNat n)
+  => CoeffBlock m n -> CoeffBlock m n
+negateCoeffBlock (CoeffBlock m) =
+  CoeffBlock
+    (fromMaybe (error "negateCoeffBlock: create failed") . create $
+       LA.cmap negate (extract m))
 
 applyBlock
   :: forall m n d. (KnownNat m, KnownNat n, KnownNat d, HomBlockDim m n ~ d)
-  => U1HomBlock m n -> C n -> C m
-applyBlock blk = app (u1BlockAsMat blk)
+  => CoeffBlock m n -> C n -> C m
+applyBlock blk = app (coeffBlockAsMat blk)
 
 applyEndoAt
   :: forall m h. (KnownNat m, KnownNat h, EndoHomDim m ~ h)
   => M m m -> C m -> C m
-applyEndoAt block v = applyBlock (U1HomBlock block) v
+applyEndoAt block v = applyBlock (CoeffBlock block) v
 
 su2ExpandBlock
   :: forall spin m n.
      (KnownNat spin, KnownNat m, KnownNat n, KnownNat (IrrepDim SU2 spin))
-  => U1HomBlock m n -> M (SectorDim SU2 spin m) (SectorDim SU2 spin n)
+  => CoeffBlock m n -> M (SectorDim SU2 spin m) (SectorDim SU2 spin n)
 su2ExpandBlock blk =
   fromList $
     LA.toList $
       LA.flatten $
         LA.kronecker
-          (unwrap (u1BlockAsMat blk))
+          (unwrap (coeffBlockAsMat blk))
           (LA.ident (fromIntegral (natVal (Proxy @(IrrepDim SU2 spin)))))
 
 --------------------------------------------------------------------------------
@@ -113,7 +139,7 @@ class HasHomBlock (g :: Group) where
 
   wrapCoeffs
     :: (KnownNat m, KnownNat n, KnownNat (HomBlockDimG g j m n))
-    => U1HomBlock m n -> HomBlock g j m n
+    => CoeffBlock m n -> HomBlock g j m n
 
   composeBlock
     :: forall j m n p.
@@ -137,12 +163,12 @@ class HasHomBlock (g :: Group) where
 instance HasHomBlock U1 where
   type HomBlockDimG U1 j m n = m * n
   newtype HomBlock U1 (j :: Irreps U1) (m :: Nat) (n :: Nat)
-    = U1HB (U1HomBlock m n)
+    = U1HB (CoeffBlock m n)
 
-  zeroBlock = U1HB u1ZeroBlock
+  zeroBlock = U1HB zeroCoeffBlock
   wrapCoeffs = U1HB
-  composeBlock (U1HB ab) (U1HB bc) = U1HB (u1ComposeBlock ab bc)
-  blockAsMat (U1HB blk) = u1BlockAsMat blk
+  composeBlock (U1HB ab) (U1HB bc) = U1HB (composeCoeffBlock ab bc)
+  blockAsMat (U1HB blk) = coeffBlockAsMat blk
 
 deriving instance
   ( KnownNat m, KnownNat n, KnownNat (HomBlockDimG U1 j m n)
@@ -155,11 +181,11 @@ deriving instance
 instance HasHomBlock SU2 where
   type HomBlockDimG SU2 j m n = m * n
   newtype HomBlock SU2 (j :: Nat) (m :: Nat) (n :: Nat)
-    = SU2HB (U1HomBlock m n)
+    = SU2HB (CoeffBlock m n)
 
-  zeroBlock = SU2HB u1ZeroBlock
+  zeroBlock = SU2HB zeroCoeffBlock
   wrapCoeffs = SU2HB
-  composeBlock (SU2HB ab) (SU2HB bc) = SU2HB (u1ComposeBlock ab bc)
+  composeBlock (SU2HB ab) (SU2HB bc) = SU2HB (composeCoeffBlock ab bc)
   blockAsMat (blk :: HomBlock SU2 j m n) =
     case blk of
       SU2HB b ->
@@ -167,7 +193,7 @@ instance HasHomBlock SU2 where
           LA.toList $
             LA.flatten $
               LA.kronecker
-                (unwrap (u1BlockAsMat b))
+                (unwrap (coeffBlockAsMat b))
                 (LA.ident (fromIntegral (natVal (Proxy @(IrrepDim SU2 j)))))
 
 deriving instance

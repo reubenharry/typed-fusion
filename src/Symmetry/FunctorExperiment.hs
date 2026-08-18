@@ -62,8 +62,9 @@ import Symmetry.Group
 import Symmetry.IrrepDecide (IrrepDecide (..), IrrepEqResult (..))
 import Symmetry.RepSingleton (SRep(..), KnownRep(..))
 import Symmetry.HomBlock
-  ( HasHomBlock (..), HomBlock, HomBlockDim, HomBlockDimG, U1HomBlock (..)
-  , u1ComposeBlock, u1ZeroBlock, u1BlockAsMat, su2ExpandBlock
+  ( HasHomBlock (..), HomBlock, HomBlockDim, HomBlockDimG, CoeffBlock (..)
+  , composeCoeffBlock, zeroCoeffBlock, addCoeffBlock, scaleCoeffBlock
+  , negateCoeffBlock, coeffBlockAsMat, su2ExpandBlock
   )
 
 --------------------------------------------------------------------------------
@@ -118,7 +119,7 @@ data IntertwinerSectorsG (g :: Group) (hom :: [(Irreps g, Nat, Nat)]) where
   InterCons
     :: ( KnownNat m, KnownNat n, KnownNat (HomBlockDim m n)
        ) =>
-       U1HomBlock m n
+       CoeffBlock m n
     -> IntertwinerSectorsG g rest
     -> IntertwinerSectorsG g ('(j, m, n) ': rest)
 
@@ -133,7 +134,7 @@ newtype IntertwinerG (g :: Group) (r :: Rep g) (q :: Rep g) = MkIntertwiner
   deriving Show via (IntertwinerSectorsG g (IntertwinerHom g r q))
 
 mkScalar :: Complex Double -> IntertwinerSectorsG U1 '[ '( 'Pos 1, 1, 1)]
-mkScalar z = InterCons (U1HomBlock (konst z)) InterNil
+mkScalar z = InterCons (CoeffBlock (konst z)) InterNil
 
 class BuildIdHomG (g :: Group) (hom :: [(Irreps g, Nat, Nat)]) where
   idHom :: IntertwinerSectorsG g hom
@@ -144,7 +145,7 @@ instance BuildIdHomG U1 '[] where
 instance
   ( KnownNat m, KnownNat (HomBlockDim m m), BuildIdHomG U1 rest
   ) => BuildIdHomG U1 ('(z, m, m) ': rest) where
-  idHom = InterCons (U1HomBlock (konst 1)) idHom
+  idHom = InterCons (CoeffBlock (konst 1)) idHom
 
 instance BuildIdHomG SU2 '[] where
   idHom = InterNil
@@ -152,7 +153,7 @@ instance BuildIdHomG SU2 '[] where
 instance
   ( KnownNat m, KnownNat j, KnownNat (HomBlockDim m m), BuildIdHomG SU2 rest
   ) => BuildIdHomG SU2 ('(j, m, m) ': rest) where
-  idHom = InterCons (U1HomBlock (konst 1)) idHom
+  idHom = InterCons (CoeffBlock (konst 1)) idHom
 
 mkIdHom
   :: forall g a.
@@ -229,14 +230,14 @@ data family BCEntry (g :: Group) (c :: Rep g)
 data instance BCEntry U1 (c :: Rep U1) where
   BCEntryU1 :: forall z src tgt c.
                ( KnownNat src, KnownNat tgt, LookupMultU1 z c ~ 'Just tgt )
-            => Sing z -> U1HomBlock tgt src -> BCEntry U1 c
+            => Sing z -> CoeffBlock tgt src -> BCEntry U1 c
 
 data instance BCEntry SU2 (c :: Rep SU2) where
   BCEntrySU2 :: forall j src tgt c.
                 ( KnownNat src, KnownNat tgt, KnownNat j
                 , LookupMultSU2 j c ~ 'Just tgt
                 )
-             => Sing j -> U1HomBlock tgt src -> BCEntry SU2 c
+             => Sing j -> CoeffBlock tgt src -> BCEntry SU2 c
 
 type BCEntryG g c = BCEntry g c
 
@@ -279,10 +280,10 @@ instance BCIndexGo SU2 where
 findBCU1
   :: forall az c m p.
      (LookupMultU1 az c ~ 'Just p, KnownNat m, KnownNat p)
-  => Sing az -> [BCEntry U1 c] -> U1HomBlock p m
+  => Sing az -> [BCEntry U1 c] -> CoeffBlock p m
 findBCU1 _ [] =
   error "findBC: b->c block absent (unreachable: label present in both b and c)"
-findBCU1 saz (BCEntryU1 (sz :: Sing z) (blk :: U1HomBlock tgt src) : rest) =
+findBCU1 saz (BCEntryU1 (sz :: Sing z) (blk :: CoeffBlock tgt src) : rest) =
   case saz %~ sz of
     Proved Refl -> case GHC.TypeNats.sameNat (Proxy @src) (Proxy @m) of
       Just Refl -> blk
@@ -292,10 +293,10 @@ findBCU1 saz (BCEntryU1 (sz :: Sing z) (blk :: U1HomBlock tgt src) : rest) =
 findBCSU2
   :: forall aj c m p.
      (LookupMultSU2 aj c ~ 'Just p, KnownNat m, KnownNat p)
-  => Sing aj -> [BCEntry SU2 c] -> U1HomBlock p m
+  => Sing aj -> [BCEntry SU2 c] -> CoeffBlock p m
 findBCSU2 _ [] =
   error "findBC: b->c block absent (unreachable: label present in both b and c)"
-findBCSU2 saj (BCEntrySU2 (sj :: Sing j) (blk :: U1HomBlock tgt src) : rest) =
+findBCSU2 saj (BCEntrySU2 (sj :: Sing j) (blk :: CoeffBlock tgt src) : rest) =
   case saj %~ sj of
     Proved Refl -> case GHC.TypeNats.sameNat (Proxy @src) (Proxy @m) of
       Just Refl -> blk
@@ -314,7 +315,7 @@ composeGoU1 (SRepCons @az @an saz rest) sb sc ab bcIx =
     (Absent, Absent) ->
       composeGoU1 rest sb sc ab bcIx
     (Absent, Present (_ :: Proxy p)) ->
-      InterCons (u1ZeroBlock @p @an) (composeGoU1 rest sb sc ab bcIx)
+      InterCons (zeroCoeffBlock @p @an) (composeGoU1 rest sb sc ab bcIx)
     (Present (_ :: Proxy m), Absent) ->
       case ab of
         InterCons _ abRest -> composeGoU1 rest sb sc abRest bcIx
@@ -322,7 +323,7 @@ composeGoU1 (SRepCons @az @an saz rest) sb sc ab bcIx =
       case ab of
         InterCons abBlk abRest ->
           InterCons
-            (u1ComposeBlock (findBCU1 saz bcIx) abBlk)
+            (composeCoeffBlock (findBCU1 saz bcIx) abBlk)
             (composeGoU1 rest sb sc abRest bcIx)
 
 composeGoSU2
@@ -337,7 +338,7 @@ composeGoSU2 (SRepConsSU2 @aj @an saj rest) sb sc ab bcIx =
     (SU2Absent, SU2Absent) ->
       composeGoSU2 rest sb sc ab bcIx
     (SU2Absent, SU2Present (_ :: Proxy p)) ->
-      InterCons (u1ZeroBlock @p @an) (composeGoSU2 rest sb sc ab bcIx)
+      InterCons (zeroCoeffBlock @p @an) (composeGoSU2 rest sb sc ab bcIx)
     (SU2Present (_ :: Proxy m), SU2Absent) ->
       case ab of
         InterCons _ abRest -> composeGoSU2 rest sb sc abRest bcIx
@@ -345,7 +346,7 @@ composeGoSU2 (SRepConsSU2 @aj @an saj rest) sb sc ab bcIx =
       case ab of
         InterCons abBlk abRest ->
           InterCons
-            (u1ComposeBlock (findBCSU2 saj bcIx) abBlk)
+            (composeCoeffBlock (findBCSU2 saj bcIx) abBlk)
             (composeGoSU2 rest sb sc abRest bcIx)
 
 class ComposeGo (g :: Group) where
@@ -361,6 +362,50 @@ instance ComposeGo U1 where
 
 instance ComposeGo SU2 where
   composeGo = composeGoSU2
+
+--------------------------------------------------------------------------------
+-- Vector space on Schur-block spines (blockwise @+@ / scale)
+--------------------------------------------------------------------------------
+
+zeroInterSectors
+  :: BuildIdHomG g hom => IntertwinerSectorsG g hom
+zeroInterSectors = scaleInterSectors 0 idHom
+
+addInterSectors
+  :: IntertwinerSectorsG g hom
+  -> IntertwinerSectorsG g hom
+  -> IntertwinerSectorsG g hom
+addInterSectors InterNil InterNil = InterNil
+addInterSectors (InterCons a as) (InterCons b bs) =
+  InterCons (addCoeffBlock a b) (addInterSectors as bs)
+
+scaleInterSectors
+  :: Complex Double
+  -> IntertwinerSectorsG g hom
+  -> IntertwinerSectorsG g hom
+scaleInterSectors _ InterNil = InterNil
+scaleInterSectors μ (InterCons a as) =
+  InterCons (scaleCoeffBlock μ a) (scaleInterSectors μ as)
+
+negateInterSectors
+  :: IntertwinerSectorsG g hom -> IntertwinerSectorsG g hom
+negateInterSectors InterNil = InterNil
+negateInterSectors (InterCons a as) =
+  InterCons (negateCoeffBlock a) (negateInterSectors as)
+
+instance
+  BuildIdHomG g (IntertwinerHom g r q)
+  => AdditiveGroup (IntertwinerG g r q) where
+  zeroV = MkIntertwiner zeroInterSectors
+  MkIntertwiner a ^+^ MkIntertwiner b = MkIntertwiner (addInterSectors a b)
+  MkIntertwiner a ^-^ MkIntertwiner b = MkIntertwiner (addInterSectors a (negateInterSectors b))
+  negateV (MkIntertwiner s) = MkIntertwiner (negateInterSectors s)
+
+instance
+  BuildIdHomG g (IntertwinerHom g r q)
+  => VectorSpace (IntertwinerG g r q) where
+  type Scalar (IntertwinerG g r q) = Complex Double
+  μ *^ MkIntertwiner s = MkIntertwiner (scaleInterSectors μ s)
 
 composeG
   :: forall g a b c.
@@ -507,7 +552,7 @@ instance CollectCompiledGo U1 where
          Absent -> collectCompiledSteps srest sq hom (off + srcDim)
          Present (_ :: Proxy srcMult) -> case hom of
            InterCons blk homRest ->
-             CompiledStep off (targetIrrepOffset @U1 @z saz sq) (u1BlockAsMat blk)
+             CompiledStep off (targetIrrepOffset @U1 @z saz sq) (coeffBlockAsMat blk)
                : collectCompiledSteps srest sq homRest (off + srcDim)
            InterNil ->
              error "collectCompiledSteps: hom spine exhausted early (unreachable)"
@@ -776,7 +821,7 @@ composedLinearAction = repLinear @Pos1 1 . repLinear @Pos1 2
 
 doublePos1Inter :: Intertwiner DoublePos1 DoublePos1
 doublePos1Inter =
-  MkIntertwiner (InterCons (U1HomBlock (konst 1)) InterNil)
+  MkIntertwiner (InterCons (CoeffBlock (konst 1)) InterNil)
 
 testDoublePos1 :: ToCU1 DoublePos1
 testDoublePos1 = getLinearFunction (intertwinerLinear doublePos1Inter) repDoublePos1
@@ -787,8 +832,8 @@ repPosNeg1 = ToCU1 (fromList [1, 2])
 negPhase :: Intertwiner PosNeg1 PosNeg1
 negPhase =
   MkIntertwiner
-    ( InterCons (U1HomBlock (konst 1))
-    $ InterCons (U1HomBlock (konst (0 :+ 1)))
+    ( InterCons (CoeffBlock (konst 1))
+    $ InterCons (CoeffBlock (konst (0 :+ 1)))
     $ InterNil
     )
 
@@ -817,7 +862,7 @@ testSpinHalfId = getLinearFunction (intertwinerLinearG @SU2 spinHalfId) repSpinH
 spinHalfScale :: IntertwinerG SU2 '[ '(1, 1)] '[ '(2, 1)]
 spinHalfScale =
   MkIntertwiner InterNil
--- (InterCons (U1HomBlock (konst 2)) InterNil)
+-- (InterCons (CoeffBlock (konst 2)) InterNil)
 spinHalfScaleLM :: ToCG SU2 '[ '(1, 1)] -+> ToCG SU2 '[ '(2, 1)]
 spinHalfScaleLM = fmap spinHalfScale
 
@@ -836,5 +881,5 @@ testSpinHalfScale' = getLinearFunction spinHalfScaleFlat (konst 2)
 fancyExample :: IntertwinerG SU2 '[ '(1, 1), '(3, 2)] '[ '(3, 3), '(1, 1)]
 fancyExample =
   MkIntertwiner
-    ( InterCons (U1HomBlock (konst 1)) (InterCons undefined InterNil)
+    ( InterCons (CoeffBlock (konst 1)) (InterCons undefined InterNil)
     )

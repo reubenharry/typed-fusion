@@ -43,6 +43,8 @@ module Symmetry.RepMor
   , GObj (..)
   , ForgetFuse (..)
   , fmap'
+  , fmapSectors
+  , ForgetRepEndo (..)
   , fMoveU1, fMoveU1Inv
   , fMoveSU2, fMoveSU2Inv
   , rMoveU1, rMoveU1Inv
@@ -56,7 +58,7 @@ import Control.Arrow.Constrained (arr, ($))
 import Control.Category.Constrained (Category (..))
 import Data.Complex (Complex)
 import Data.Proxy (Proxy (..))
-import Data.VectorSpace ((*^))
+import Data.VectorSpace ((*^), VectorSpace)
 import GHC.TypeLits (KnownNat, type (*))
 import Math.LinearMap.Category
   ( TensorSpace (..), Scalar, LinearSpace (..), LSpace
@@ -93,7 +95,8 @@ import Symmetry.FunctorExperiment
   )
 import Symmetry.HomBlock (HasHomBlock)
 import Symmetry.Group (Group (..), RepDimG, IntertwinerHom)
-import Symmetry.RepObj (RepObj (..), ToVector)
+import Symmetry.RepObj (RepObj (..), ToSectors, ToVector)
+import Symmetry.RepSectors (ApplyEndoSectors, intertwinerEndoSectors)
 import Symmetry.RepSingleton (KnownRep (..))
 import Symmetry.Tensor (Tensor)
 
@@ -632,6 +635,43 @@ fmap' m@RUnitInv       = forgetRUnitInv m
 fmap' m@OTimes{}       = forgetOTimes m
 fmap' MorId            = forgetId @g @a
 fmap' (Comp h f)       = fmap' h . fmap' f
+
+-- | Structure-preserving forgetful functor on reduced-spine endomorphisms
+-- (sibling of 'fmap''). Applies @coeff ⊗ id@ per sector.
+-- General @r → q@ (and @Fuse@ / unfused structural maps) are unfinished.
+class ForgetRepEndo (g :: Group) where
+  forgetRepEndo
+    :: ( ApplyEndoSectors g r
+       , VectorSpace (ToSectors g ('REP r))
+       , Scalar (ToSectors g ('REP r)) ~ ℂ
+       )
+    => IntertwinerG g r r
+    -> ToSectors g ('REP r) -+> ToSectors g ('REP r)
+
+instance ForgetRepEndo U1 where
+  forgetRepEndo = intertwinerEndoSectors @U1
+
+instance ForgetRepEndo SU2 where
+  forgetRepEndo = intertwinerEndoSectors @SU2
+
+fmapSectors
+  :: forall g r.
+     ( ApplyEndoSectors g r
+     , ForgetRepEndo g
+     , VectorSpace (ToSectors g ('REP r))
+     , Scalar (ToSectors g ('REP r)) ~ ℂ
+     )
+  => Mor g ('REP r) ('REP r)
+  -> ToSectors g ('REP r) -+> ToSectors g ('REP r)
+fmapSectors (RepInter mor) = forgetRepEndo mor
+fmapSectors (FMove mor _ _ _) = forgetRepEndo mor
+fmapSectors (FMoveInv mor _ _ _) = forgetRepEndo mor
+fmapSectors (RMove mor _ _) = forgetRepEndo mor
+fmapSectors (RMoveInv mor _ _) = forgetRepEndo mor
+fmapSectors MorId = linearFunction (\x -> x)
+fmapSectors (Comp _ _) =
+  undefined -- fmapSectors Comp: intermediate object may not be this spine
+
 
 instance Category (Mor g) where
   type Object (Mor g) a = GObj g a

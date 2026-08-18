@@ -43,7 +43,7 @@ import Symmetry.CG.SU2 (fuseSU2Flat, repDimOf, sectorsSU2)
 import Symmetry.FunctorExperiment (IntertwinerG (..), IntertwinerSectorsG (..))
 import Symmetry.Group
   ( Group (..), IntertwinerHom, Irreps )
-import Symmetry.HomBlock (HomBlockDim, U1HomBlock (..))
+import Symmetry.HomBlock (HomBlockDim, CoeffBlock (..))
 import Symmetry.RepSingleton (KnownRep (..), SRep)
 import Symmetry.Tensor (Tensor)
 
@@ -55,10 +55,10 @@ type ℂ = Complex Double
 
 eyeBlock
   :: forall m. (KnownNat m, KnownNat (HomBlockDim m m))
-  => U1HomBlock m m
+  => CoeffBlock m m
 eyeBlock =
   let n = fromIntegral (natVal (Proxy @m)) :: Int
-   in U1HomBlock $
+   in CoeffBlock $
         fromList
           [ if i == j then 1 else 0
           | i <- [0 .. n - 1]
@@ -254,14 +254,14 @@ extractKronEye
   => Int -> Int -> Int
   -> HM.Matrix ℂ
   -> Int -> Int
-  -> U1HomBlock m n
+  -> CoeffBlock m n
 extractKronEye mV nV d mat offCod offDom =
   let entries =
         [ mat `HM.atIndex` (offCod + a * d, offDom + b * d)
         | a <- [0 .. mV - 1]
         , b <- [0 .. nV - 1]
         ]
-   in U1HomBlock (fromList entries :: M m n)
+   in CoeffBlock (fromList entries :: M m n)
 
 fSymbolHomSU2
   :: forall r q s.

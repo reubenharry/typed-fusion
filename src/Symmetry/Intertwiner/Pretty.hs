@@ -42,7 +42,7 @@ import Symmetry.FunctorExperiment
 import Symmetry.Group
   ( Group (..), Rep, RepDimG, SectorDim, IrrepDim )
 import Symmetry.HomBlock
-  ( u1BlockAsMat, su2ExpandBlock )
+  ( coeffBlockAsMat, su2ExpandBlock )
 import Symmetry.RepSingleton (SRep (..), KnownRep (..))
 import Symmetry.Utils (Z (..))
 
@@ -157,7 +157,7 @@ schurBlocksU1 (SRepCons @z @m saz rest) sq (InterCons blk homRest) off =
   in  case sLookupMult @U1 saz sq of
         Absent -> schurBlocksU1 rest sq (InterCons blk homRest) (off + stride)
         Present (_ :: Proxy n) ->
-          let mat = unwrap (u1BlockAsMat blk)
+          let mat = unwrap (coeffBlockAsMat blk)
               hdr =
                 printf "  charge %s  mult %d→%d  @col %d:"
                   (prettyZU1 (fromSing saz))
@@ -213,7 +213,7 @@ schurBlocksSU2 (SRepConsSU2 @j @m saj rest) sq (InterCons blk homRest) off =
   in  case sLookupMult @SU2 saj sq of
         SU2Absent -> schurBlocksSU2 rest sq (InterCons blk homRest) (off + stride)
         SU2Present (_ :: Proxy n) ->
-          let mat = unwrap (u1BlockAsMat blk)
+          let mat = unwrap (coeffBlockAsMat blk)
               mI = fromIntegral (natVal (Proxy @m)) :: Int
               nI = fromIntegral (natVal (Proxy @n)) :: Int
               hdr =
@@ -260,7 +260,7 @@ denseBlocksU1 (SRepCons @z @m saz rest) sq (InterCons blk homRest) off =
   in  case sLookupMult @U1 saz sq of
         Absent -> denseBlocksU1 rest sq (InterCons blk homRest) (off + stride)
         Present (_ :: Proxy n) ->
-          (targetIrrepOffset @U1 saz sq, off, unwrap (u1BlockAsMat blk))
+          (targetIrrepOffset @U1 saz sq, off, unwrap (coeffBlockAsMat blk))
             : denseBlocksU1 rest sq homRest (off + stride)
 
 denseBlocksSU2

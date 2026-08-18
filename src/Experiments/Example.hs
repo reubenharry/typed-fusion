@@ -32,7 +32,8 @@ import GHC.TypeLits
 import Numeric.LinearAlgebra.Static (M, Sized (..), C, vector, R, build)
 import Linear.V (V (..), Finite (toV))
 import Symmetry.Utils
-import Math.LinearMap.Category (type (-+>), type (+>), LinearMap (..), AdditiveGroup, VectorSpace, DimensionAware (..), Dimensional, TensorSpace, PseudoAffine, Semimanifold)
+import Math.LinearMap.Category (type (-+>), type (+>), LinearMap (..), AdditiveGroup, VectorSpace, DimensionAware (..), Dimensional, TensorSpace, PseudoAffine, Semimanifold, type (⊗), (⊗))
+-- (⊗), type (⊗)
 import Control.Arrow.Constrained (EnhancedCat(..))
 import Data.VectorSpace (AdditiveGroup(..), VectorSpace (..))
 import Symmetry.Orphans (SU2Irreps, IrrepSU2)
@@ -48,8 +49,8 @@ import qualified Data.Vector as V
 -- import Symmetry.Orphans (IrrepSU2(..), Irreps, Group(..), Irrep(..))
 import qualified Data.Vector.Sized as VS
 import Data.IndexedListLiterals (IndexedListLiterals)
-import Experiments.General
-import Symmetry.Orphans hiding (U1, SU2, Irrep) 
+import Experiments.General 
+import Symmetry.Orphans hiding (U1, SU2, Irrep, (⊗)) 
 
 
 
@@ -57,7 +58,10 @@ example1 :: C 2
 example1 = vec (1,2)
 
 example2 :: C 3
-example2 = vec (4,5,6)
+example2 = vec (5,6,4)
+
+example2' :: C 3 ⊗ C 2
+example2' = (vec (5,6,4) ⊗ vec (1,2)) ^+^ (vec (5,7,4) ⊗ vec (1,2)) 
 
 -- example2' :: C 3 +> C 2
 -- example2' = LinearMap ( undefined :: M 3 2 ) where
@@ -74,23 +78,23 @@ example4' :: Irrep U1 (Pos 2) -- j = 1/2
 example4' = Irrep 1
 
 
-example5 :: Irrep SU2 1 ⊗ Irrep SU2 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example5 :: Irrep SU2 1 :⊗: Irrep SU2 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
 example5 = Representation (
     toV (V1 (Irrep (vec (1,2,3)))) :& toV (V1 (Irrep (vec (4,5,6,7,8)))) :& HNil
     )
 
-example6 :: Irrep SU2 1 ⊗ Irrep SU2 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example6 :: Irrep SU2 1 :⊗: Irrep SU2 3 -- 1/2 :⊗: 3/2 = 1 ⊕ 2
 example6 = Representation undefined
 
 
-example7 :: Irrep U1 (Pos 1) ⊗ Irrep U1 (Pos 1) -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example7 :: Irrep U1 (Pos 1) :⊗: Irrep U1 (Pos 1) -- 1/2 ⊗ 3/2 = 1 ⊕ 2
 example7 = Representation undefined
 
 
-example8 :: Representation U1 '[ '(Pos 1, 1)] --> Representation U1 '[ '(Pos 2, 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example8 :: Representation U1 '[ '(Pos 1, 1)] --> Representation U1 '[ '(Pos 2, 1)] 
 example8 =  HNil
 
-example8' :: Representation SU2 '[ '(3, 1)] --> Representation SU2 '[ '(2, 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example8' :: Representation SU2 '[ '(3, 1)] --> Representation SU2 '[ '(2, 1)] 
 example8' =  HNil
 
 

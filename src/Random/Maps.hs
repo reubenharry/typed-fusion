@@ -28,9 +28,11 @@ module Random.Maps
   , genEndo
   , genBulkSiteC2
     -- * Schur blocks / intertwiners
-  , genU1HomBlock
+  , genCoeffBlock
   , GenHomSectors (..)
   , genIntertwiner
+    -- * SU(2) Haar
+  , genSU2Element
   ) where
 
 import Control.Monad (replicateM)
@@ -45,7 +47,8 @@ import qualified Test.QuickCheck as QC
 import Symmetry.FunctorExperiment
   ( IntertwinerG (..), IntertwinerSectorsG (..) )
 import Symmetry.Group (Group (..), Irreps, IntertwinerHom)
-import Symmetry.HomBlock (HomBlockDim, U1HomBlock (..))
+import Symmetry.HomBlock (HomBlockDim, CoeffBlock (..))
+import Symmetry.SU2 (SU2Element, su2FromQuaternion)
 import TensorNetwork.MPS.LinmapStorage (linMapFromColumnImages)
 
 --------------------------------------------------------------------------------
@@ -64,6 +67,17 @@ genGaussian = do
 -- | Complex normal with i.i.d. @N(0,1)@ real\/imag parts.
 genComplexGaussian :: QC.Gen (Complex Double)
 genComplexGaussian = (:+) <$> genGaussian <*> genGaussian
+
+-- | Haar-random SU(2) element (normalized Gaussian quaternion on @S³@).
+genSU2Element :: QC.Gen SU2Element
+genSU2Element = do
+  w <- genGaussian
+  x <- genGaussian
+  y <- genGaussian
+  z <- genGaussian
+  case su2FromQuaternion w x y z of
+    Just g  -> pure g
+    Nothing -> genSU2Element
 
 --------------------------------------------------------------------------------
 -- Vectors / dense maps
@@ -104,10 +118,10 @@ genBulkSiteC2 =
 -- Schur blocks / intertwiners
 --------------------------------------------------------------------------------
 
-genU1HomBlock
+genCoeffBlock
   :: forall m n. (KnownNat m, KnownNat n, KnownNat (HomBlockDim m n))
-  => QC.Gen (U1HomBlock m n)
-genU1HomBlock = U1HomBlock <$> genMat @m @n
+  => QC.Gen (CoeffBlock m n)
+genCoeffBlock = CoeffBlock <$> genMat @m @n
 
 -- | Draw one independent coefficient block per hom-sector entry.
 class GenHomSectors (g :: Group) (hom :: [(Irreps g, Nat, Nat)]) where
@@ -120,7 +134,7 @@ instance
   ( KnownNat m, KnownNat n, KnownNat (HomBlockDim m n)
   , GenHomSectors U1 rest
   ) => GenHomSectors U1 ('(z, m, n) ': rest) where
-  genHomSectors = InterCons <$> genU1HomBlock @m @n <*> genHomSectors
+  genHomSectors = InterCons <$> genCoeffBlock @m @n <*> genHomSectors
 
 instance GenHomSectors SU2 '[] where
   genHomSectors = pure InterNil
@@ -129,7 +143,7 @@ instance
   ( KnownNat m, KnownNat n, KnownNat (HomBlockDim m n)
   , GenHomSectors SU2 rest
   ) => GenHomSectors SU2 ('(j, m, n) ': rest) where
-  genHomSectors = InterCons <$> genU1HomBlock @m @n <*> genHomSectors
+  genHomSectors = InterCons <$> genCoeffBlock @m @n <*> genHomSectors
 
 genIntertwiner
   :: forall g r q

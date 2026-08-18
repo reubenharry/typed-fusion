@@ -93,10 +93,10 @@ type family RepToVectors
     Product (Dim m) (Irrep U1 i) ': RepToVectors U1 rs
 
 
-foo :: Irrep SU2 2 ⊗ Irrep SU2 4
+foo :: Irrep SU2 2 :⊗: Irrep SU2 4
 foo = Representation undefined
 
-foo' :: Irrep U1 (Pos 2) ⊗ Irrep U1 (Pos 2)
+foo' :: Irrep U1 (Pos 2) :⊗: Irrep U1 (Pos 2)
 foo' = Representation undefined
 
 
@@ -170,14 +170,14 @@ type family TensorOne
 
 type family
   (a :: Type)
-  ⊗
+  :⊗:
   (b :: Type)
   :: Type where
 
-   (Irrep g j1) ⊗ (Irrep g j2) =
+   (Irrep g j1) :⊗: (Irrep g j2) =
     Representation g (  TensorIrrepRep g j1 j2)
 
-   Representation g r ⊗ Representation g q =
+   Representation g r :⊗: Representation g q =
     Representation g (Tensor g r q)
 
 
@@ -220,10 +220,10 @@ type family
       (
         Tensor g (DualRep g r) q)))
 
-tstR :: Representation U1 '[ '(Pos 1, 2)] ⊗ Representation U1 '[ '(Pos 2, 1)]
+tstR :: Representation U1 '[ '(Pos 1, 2)] :⊗: Representation U1 '[ '(Pos 2, 1)]
 tstR = undefined
 
-tstR' :: Representation SU2 '[ '( 1, 2), '( 2, 1)] ⊗ Representation SU2 '[ '( 2, 1), '( 3, 1)]
+tstR' :: Representation SU2 '[ '( 1, 2), '( 2, 1)] :⊗: Representation SU2 '[ '( 2, 1), '( 3, 1)]
 tstR' = undefined
 -- type Re g 
 

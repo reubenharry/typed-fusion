@@ -55,6 +55,7 @@ import Symmetry.ChargeEq (chargeInteger)
 import Symmetry.Utils (Z)
 import Symmetry.ChargeEq ()  -- SDecide Z
 import Symmetry.Group (Group (..), GroupElement, Irreps, IrrepDim)
+import Symmetry.SU2 (applyWigner)
 import Symmetry.Utils ()
 import Data.Complex (Complex ((:+)))
 import Data.VectorSpace (InnerSpace ((<.>)))
@@ -182,7 +183,9 @@ instance ActsOn U1 (Sector U1) where
   action ge (Sector sj v) = Sector sj (u1PhaseFactorSing sj ge *^ v)
 
 instance ActsOn SU2 (Sector SU2) where
-  action _ge (Sector sj v) = Sector sj v
+  action ge (Sector sj v) =
+    let tj = fromIntegral (fromSing sj)
+    in  Sector sj (applyWigner tj ge v)
 
 instance (Ord (IrrepSlot g), ActsOn g (Sector g)) => ActsOn g (InfRep g) where
   action ge (InfRep m) =

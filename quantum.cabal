@@ -65,6 +65,7 @@ library
         Symmetry.Orphans
         Symmetry.ChargeEq
         Symmetry.Group
+        Symmetry.SU2
         Symmetry.IrrepDecide
         Symmetry.RepSingleton
         Symmetry.HomBlock
@@ -74,6 +75,7 @@ library
         Symmetry.CG.FSymbol
         Symmetry.CG.RSymbol
         Symmetry.RepObj
+        Symmetry.RepSectors
         Symmetry.RepMor
         Symmetry.Intertwiner.Pretty
         Symmetry.FunctorExperiment

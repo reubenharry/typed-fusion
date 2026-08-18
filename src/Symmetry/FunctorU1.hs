@@ -24,14 +24,14 @@ import Numeric.LinearAlgebra.Static (C, konst)
 import Symmetry.FunctorExperiment
   ( IntertwinerG (..), IntertwinerSectorsG (..) )
 import Symmetry.Group (Group (U1))
-import Symmetry.HomBlock (U1HomBlock (..))
+import Symmetry.HomBlock (CoeffBlock (..))
 import Symmetry.RepMor
 import Symmetry.RepObj (RepObj (..), type IrrepOf)
 import Symmetry.Tensor (Tensor)
 import Symmetry.Utils (Z (..))
 
 example :: U1Mor ('REP '[ 1 `IrrepOf` Pos 2]) ('REP '[ 2 `IrrepOf` Pos 2])
-example = RepInter (MkIntertwiner (InterCons (U1HomBlock (konst 1)) InterNil))
+example = RepInter (MkIntertwiner (InterCons (CoeffBlock (konst 1)) InterNil))
 
 example2 :: C 1 -+> C 2
 example2 = fmap' example

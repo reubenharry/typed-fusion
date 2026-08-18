@@ -10,12 +10,12 @@
 
 -- | Shared group index for representation spines and intertwiner plumbing.
 --
--- Phase 1 parameterizes the spine types here; only @U1@ is operationally wired
--- in 'Symmetry.FunctorExperiment'. @SU2@ carries the type-level aliases needed
--- for the next phase.
+-- @GroupElement SU2@ is the Cayley–Klein type from 'Symmetry.SU2'; the irrep
+-- action lives there as 'Symmetry.SU2.applyWigner'.
 module Symmetry.Group
   ( Group (..)
   , GroupElement
+  , SU2Element
   , Irreps
   , Rep
   , IrrepDim
@@ -35,6 +35,7 @@ module Symmetry.Group
 import Data.Kind (Type)
 import GHC.TypeLits (Nat, type (+), type (*))
 import Symmetry.ChargeEq (NatEq, ZEq)
+import Symmetry.SU2 (SU2Element)
 import Symmetry.Utils (Z, Append)
 
 data Group = U1 | SU2
@@ -42,7 +43,7 @@ data Group = U1 | SU2
 -- | Concrete group element used by representation actions.
 type family GroupElement (g :: Group) :: Type where
   GroupElement U1 = Double
-  GroupElement SU2 = (Double, Double)
+  GroupElement SU2 = SU2Element
 
 type family Irreps (g :: Group) :: Type where
   Irreps U1 = Z
