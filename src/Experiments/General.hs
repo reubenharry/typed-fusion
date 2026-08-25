@@ -22,19 +22,8 @@
 
 -- | Leaf / multiplicity-block fusion experiments.
 --
--- Type-level fusion spines are 'Tensor' (@Coalesce ∘ TensorRaw@). In particular
---
---   @FuseSectors g x y = Tensor g '[x] '[y]@
---
--- so 'FuseMN' carries @RepToVectors g (Tensor g '[x] '[y])@. Hom packing is
--- @FilterNonTrivial (Tensor (DualRep r) q)@.
---
--- Term-level: 'fuseMN' = @recompose . f . decompose@ (flat CG supplies columns of
--- @f@ on unfused basis vectors). 'rmoveMN' / 'swapUnfuseMN' braid fused /
--- unfused sides. 'UnfuseMN' / 'FuseMN' are type synonyms; call sites usually
--- need visible type applications because 'Sector' is a type family (indices are
--- not inferred from the payload alone).
---
+-- Type-level fusion spines are 'Tensor' (@Coalesce ∘ TensorRaw@). Unfused @r ⊗ q@
+-- is 'Unfuse' (= 'HList' of 'UnfuseRaw' pair tensors, same order as 'TensorRaw').
 -- Examples: 'Experiments.GeneralExamples'.
 module Experiments.General where
 
@@ -249,18 +238,42 @@ type family (a :: Type) `Intertwiner` (b :: Type) :: Type where
   (Representation g r) `Intertwiner` (Representation g q) =
     HList (RepToVectors g (FilterNonTrivial g (Tensor g (DualRep g r) q)))
 
--- | Single-sector fusion spine = type-level 'Tensor' of singleton spines.
-type FuseSectors
+-- | Fused @r ⊗ q@.
+type Fuse g r q = HList (RepToVectors g (Tensor g r q))
+
+type UnfusePair g x y =
+  Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y)
+
+-- | All pair tensors for one left sector against every right sector.
+type UnfuseOne
   :: forall (g :: Group)
   -> (Irreps g, Multiplicity)
-  -> (Irreps g, Multiplicity)
   -> [(Irreps g, Multiplicity)]
-type family FuseSectors g x y where
-  FuseSectors g x y = Tensor g '[x] '[y]
+  -> [Type]
+type family UnfuseOne g x q where
+  UnfuseOne U1 x '[] = '[]
+  UnfuseOne SU2 x '[] = '[]
+  UnfuseOne U1 x ('(j, n) ': qs) =
+    UnfusePair U1 x '(j, n) ': UnfuseOne U1 x qs
+  UnfuseOne SU2 x ('(j, n) ': qs) =
+    UnfusePair SU2 x '(j, n) ': UnfuseOne SU2 x qs
 
--- | Leaf fused pair (multiplicity 1). Prefer 'FuseMN' when @m,n > 1@.
-newtype Fuse (g :: Group) (a :: Irreps g) (b :: Irreps g) =
-  Fuse { unFuse :: Representation g (Tensor g '[ '(a, 1)] '[ '(b, 1)]) }
+-- | Unfused @r ⊗ q@ as direct sum of pair tensors ('TensorRaw' order).
+type UnfuseRaw
+  :: forall (g :: Group)
+  -> [(Irreps g, Multiplicity)]
+  -> [(Irreps g, Multiplicity)]
+  -> [Type]
+type family UnfuseRaw g r q where
+  UnfuseRaw U1 '[] _ = '[]
+  UnfuseRaw SU2 '[] _ = '[]
+  UnfuseRaw U1 ('(i, m) ': rs) q =
+    Append (UnfuseOne U1 '(i, m) q) (UnfuseRaw U1 rs q)
+  UnfuseRaw SU2 ('(i, m) ': rs) q =
+    Append (UnfuseOne SU2 '(i, m) q) (UnfuseRaw SU2 rs q)
+
+-- | Term-level unfused @r ⊗ q@ payload.
+type Unfuse g r q = HList (UnfuseRaw g r q)
 
 type family Fst (p :: (k, l)) :: k where
   Fst '(a, _) = a
@@ -335,18 +348,6 @@ instance
     either (decompose' x) (decompose' xs)
 
 --------------------------------------------------------------------------------
--- UnfuseMN / FuseMN (aliases over sector tensor / fused spine HList)
---------------------------------------------------------------------------------
-
--- | Unfused @m·V_a ⊗ n·V_b@.
-type UnfuseMN g x y =
-  Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y)
-
--- | Fused @m·V_a ⊗ n·V_b@: @RepToVectors g (Tensor g '[x] '[y])@.
-type FuseMN g x y =
-  HList (RepToVectors g (FuseSectors g x y))
-
---------------------------------------------------------------------------------
 -- Constructors / helpers
 --------------------------------------------------------------------------------
 
@@ -379,13 +380,15 @@ tensorSectors
      , KnownNat (IrrepDim g b)
      , Sector g a m ~ (C m ⊗ C (IrrepDim g a))
      , Sector g b n ~ (C n ⊗ C (IrrepDim g b))
+     , UnfuseRaw g '[ '(a, m)] '[ '(b, n)]
+         ~ '[UnfusePair g '(a, m) '(b, n)]
      )
   => Sector g a m
   -> Sector g b n
-  -> UnfuseMN g '(a, m) '(b, n)
-tensorSectors ua vb = ua ⊗ vb
+  -> Unfuse g '[ '(a, m)] '[ '(b, n)]
+tensorSectors ua vb = (ua ⊗ vb) :& HNil
 
-swapUnfuseMN
+swapUnfuse
   :: forall g a m b n.
      ( KnownNat m
      , KnownNat n
@@ -393,13 +396,133 @@ swapUnfuseMN
      , KnownNat (IrrepDim g b)
      , Sector g a m ~ (C m ⊗ C (IrrepDim g a))
      , Sector g b n ~ (C n ⊗ C (IrrepDim g b))
+     , UnfuseRaw g '[ '(a, m)] '[ '(b, n)]
+         ~ '[UnfusePair g '(a, m) '(b, n)]
+     , UnfuseRaw g '[ '(b, n)] '[ '(a, m)]
+         ~ '[UnfusePair g '(b, n) '(a, m)]
      )
-  => UnfuseMN g '(a, m) '(b, n)
-  -> UnfuseMN g '(b, n) '(a, m)
-swapUnfuseMN t = swapMap $ t
+  => Unfuse g '[ '(a, m)] '[ '(b, n)]
+  -> Unfuse g '[ '(b, n)] '[ '(a, m)]
+swapUnfuse (t :& HNil) = (swapMap $ t) :& HNil
+
+-- | Flatten unfused pair-tensor 'HList' in 'UnfuseRaw' order.
+class UnfuseOneToArray g x q where
+  unfuseOneToArray :: HList (UnfuseOne g x q) -> VS.Vector (Complex Double)
+
+instance UnfuseOneToArray U1 x '[] where
+  unfuseOneToArray HNil = VS.empty
+
+instance UnfuseOneToArray SU2 x '[] where
+  unfuseOneToArray HNil = VS.empty
+
+instance
+  ( x ~ '(i, m)
+  , KnownNat m
+  , KnownNat n
+  , KnownNat (IrrepDim U1 i)
+  , KnownNat (IrrepDim U1 j)
+  , UnfuseOneToArray U1 x qs
+  , UnfuseOne U1 x ('(j, n) ': qs)
+      ~ (UnfusePair U1 x '(j, n) ': UnfuseOne U1 x qs)
+  ) =>
+  UnfuseOneToArray U1 x ('(j, n) ': qs)
+  where
+  unfuseOneToArray (t :& rest) =
+    VS.concat [toArray t, unfuseOneToArray @U1 @x @qs rest]
+
+instance
+  ( x ~ '(i, m)
+  , KnownNat i
+  , KnownNat j
+  , KnownNat m
+  , KnownNat n
+  , KnownNat (IrrepDim SU2 i)
+  , KnownNat (IrrepDim SU2 j)
+  , UnfuseOneToArray SU2 x qs
+  , UnfuseOne SU2 x ('(j, n) ': qs)
+      ~ (UnfusePair SU2 x '(j, n) ': UnfuseOne SU2 x qs)
+  ) =>
+  UnfuseOneToArray SU2 x ('(j, n) ': qs)
+  where
+  unfuseOneToArray (t :& rest) =
+    VS.concat [toArray t, unfuseOneToArray @SU2 @x @qs rest]
+
+class SplitUnfuseOne g x q rest where
+  splitUnfuseOne
+    :: HList (Append (UnfuseOne g x q) rest)
+    -> (HList (UnfuseOne g x q), HList rest)
+
+instance SplitUnfuseOne U1 x '[] rest where
+  splitUnfuseOne xs = (HNil, xs)
+
+instance SplitUnfuseOne SU2 x '[] rest where
+  splitUnfuseOne xs = (HNil, xs)
+
+instance
+  ( SplitUnfuseOne U1 x qs rest
+  , UnfuseOne U1 x ('(j, n) ': qs)
+      ~ (UnfusePair U1 x '(j, n) ': UnfuseOne U1 x qs)
+  ) =>
+  SplitUnfuseOne U1 x ('(j, n) ': qs) rest
+  where
+  splitUnfuseOne (t :& xs) =
+    let (here, rest') = splitUnfuseOne @U1 @x @qs @rest xs
+    in (t :& here, rest')
+
+instance
+  ( SplitUnfuseOne SU2 x qs rest
+  , UnfuseOne SU2 x ('(j, n) ': qs)
+      ~ (UnfusePair SU2 x '(j, n) ': UnfuseOne SU2 x qs)
+  ) =>
+  SplitUnfuseOne SU2 x ('(j, n) ': qs) rest
+  where
+  splitUnfuseOne (t :& xs) =
+    let (here, rest') = splitUnfuseOne @SU2 @x @qs @rest xs
+    in (t :& here, rest')
+
+class UnfuseToArray g r q where
+  unfuseToArray :: Unfuse g r q -> VS.Vector (Complex Double)
+
+instance UnfuseToArray U1 '[] q where
+  unfuseToArray HNil = VS.empty
+
+instance UnfuseToArray SU2 '[] q where
+  unfuseToArray HNil = VS.empty
+
+instance
+  ( UnfuseOneToArray U1 '(i, m) q
+  , UnfuseToArray U1 rs q
+  , UnfuseRaw U1 ('(i, m) ': rs) q
+      ~ Append (UnfuseOne U1 '(i, m) q) (UnfuseRaw U1 rs q)
+  , SplitUnfuseOne U1 '(i, m) q (UnfuseRaw U1 rs q)
+  ) =>
+  UnfuseToArray U1 ('(i, m) ': rs) q
+  where
+  unfuseToArray hs =
+    let (here, rest) = splitUnfuseOne @U1 @'(i, m) @q @(UnfuseRaw U1 rs q) hs
+    in VS.concat
+         [ unfuseOneToArray @U1 @'(i, m) @q here
+         , unfuseToArray @U1 @rs @q rest
+         ]
+
+instance
+  ( UnfuseOneToArray SU2 '(i, m) q
+  , UnfuseToArray SU2 rs q
+  , UnfuseRaw SU2 ('(i, m) ': rs) q
+      ~ Append (UnfuseOne SU2 '(i, m) q) (UnfuseRaw SU2 rs q)
+  , SplitUnfuseOne SU2 '(i, m) q (UnfuseRaw SU2 rs q)
+  ) =>
+  UnfuseToArray SU2 ('(i, m) ': rs) q
+  where
+  unfuseToArray hs =
+    let (here, rest) = splitUnfuseOne @SU2 @'(i, m) @q @(UnfuseRaw SU2 rs q) hs
+    in VS.concat
+         [ unfuseOneToArray @SU2 @'(i, m) @q here
+         , unfuseToArray @SU2 @rs @q rest
+         ]
 
 --------------------------------------------------------------------------------
--- fuseMN = recompose . f . decompose
+-- fuse = recompose . f . decompose
 --------------------------------------------------------------------------------
 
 -- | Unpack flat fused buffer into typed sectors (mult slow, irrep fast).
@@ -446,8 +569,8 @@ instance
     in  unsafeFromArray here :& unpackFusedFlat @SU2 @rs rest
 
 -- | Fusion intertwiner @Φ : unfused → fused@ via @recompose . f . decompose@.
-class CanFuseMN g x y where
-  fuseMN :: UnfuseMN g x y -> FuseMN g x y
+class CanFuse g r q where
+  fuse :: Unfuse g r q -> Fuse g r q
 
 instance
   ( KnownNat a
@@ -458,34 +581,33 @@ instance
   , KnownNat (IrrepDim SU2 b)
   , KnownRep SG.SU2 '[ '(a, m) ]
   , KnownRep SG.SU2 '[ '(b, n) ]
-  , UnpackFusedFlat SU2 (FuseSectors SU2 '(a, m) '(b, n))
-  , Sector SU2 a m ~ (C m ⊗ C (IrrepDim SU2 a))
-  , Sector SU2 b n ~ (C n ⊗ C (IrrepDim SU2 b))
-  , HasBasis (UnfuseMN SU2 '(a, m) '(b, n))
-  , HasBasis (FuseMN SU2 '(a, m) '(b, n))
-  , Scalar (UnfuseMN SU2 '(a, m) '(b, n)) ~ Complex Double
-  , Scalar (FuseMN SU2 '(a, m) '(b, n)) ~ Complex Double
+  , UnpackFusedFlat SU2 (Tensor SU2 '[ '(a, m)] '[ '(b, n)])
+  , UnfuseToArray SU2 '[ '(a, m)] '[ '(b, n)]
+  , HasBasis (Unfuse SU2 '[ '(a, m)] '[ '(b, n)])
+  , HasBasis (Fuse SU2 '[ '(a, m)] '[ '(b, n)])
+  , Scalar (Unfuse SU2 '[ '(a, m)] '[ '(b, n)]) ~ Complex Double
+  , Scalar (Fuse SU2 '[ '(a, m)] '[ '(b, n)]) ~ Complex Double
   ) =>
-  CanFuseMN SU2 '(a, m) '(b, n)
+  CanFuse SU2 '[ '(a, m)] '[ '(b, n)]
   where
-  fuseMN =
-    recompose @(FuseMN SU2 '(a, m) '(b, n))
+  fuse =
+    recompose @(Fuse SU2 '[ '(a, m)] '[ '(b, n)])
       . f
-      . decompose @(UnfuseMN SU2 '(a, m) '(b, n))
+      . decompose @(Unfuse SU2 '[ '(a, m)] '[ '(b, n)])
     where
       flatFuse t =
-        unpackFusedFlat @SU2 @(FuseSectors SU2 '(a, m) '(b, n)) $
+        unpackFusedFlat @SU2 @(Tensor SU2 '[ '(a, m)] '[ '(b, n)]) $
           fuseSU2Flat
             (repSing @SG.SU2 @'[ '(a, m) ])
             (repSing @SG.SU2 @'[ '(b, n) ])
-            (toArray t)
+            (unfuseToArray @SU2 @'[ '(a, m)] @'[ '(b, n)] t)
       f =
         concatMap
           ( \(b, c) ->
               [ (b', c * coeff)
               | (b', coeff) <-
-                  decompose @(FuseMN SU2 '(a, m) '(b, n))
-                    (flatFuse (basisValue @(UnfuseMN SU2 '(a, m) '(b, n)) b))
+                  decompose @(Fuse SU2 '[ '(a, m)] '[ '(b, n)])
+                    (flatFuse (basisValue @(Unfuse SU2 '[ '(a, m)] '[ '(b, n)]) b))
               ]
           )
 
@@ -498,39 +620,38 @@ instance
   , SingI b
   , KnownRep SG.U1 '[ '(a, m) ]
   , KnownRep SG.U1 '[ '(b, n) ]
-  , UnpackFusedFlat U1 (FuseSectors U1 '(a, m) '(b, n))
-  , Sector U1 a m ~ (C m ⊗ C (IrrepDim U1 a))
-  , Sector U1 b n ~ (C n ⊗ C (IrrepDim U1 b))
-  , HasBasis (UnfuseMN U1 '(a, m) '(b, n))
-  , HasBasis (FuseMN U1 '(a, m) '(b, n))
-  , Scalar (UnfuseMN U1 '(a, m) '(b, n)) ~ Complex Double
-  , Scalar (FuseMN U1 '(a, m) '(b, n)) ~ Complex Double
+  , UnpackFusedFlat U1 (Tensor U1 '[ '(a, m)] '[ '(b, n)])
+  , UnfuseToArray U1 '[ '(a, m)] '[ '(b, n)]
+  , HasBasis (Unfuse U1 '[ '(a, m)] '[ '(b, n)])
+  , HasBasis (Fuse U1 '[ '(a, m)] '[ '(b, n)])
+  , Scalar (Unfuse U1 '[ '(a, m)] '[ '(b, n)]) ~ Complex Double
+  , Scalar (Fuse U1 '[ '(a, m)] '[ '(b, n)]) ~ Complex Double
   ) =>
-  CanFuseMN U1 '(a, m) '(b, n)
+  CanFuse U1 '[ '(a, m)] '[ '(b, n)]
   where
-  fuseMN =
-    recompose @(FuseMN U1 '(a, m) '(b, n))
+  fuse =
+    recompose @(Fuse U1 '[ '(a, m)] '[ '(b, n)])
       . f
-      . decompose @(UnfuseMN U1 '(a, m) '(b, n))
+      . decompose @(Unfuse U1 '[ '(a, m)] '[ '(b, n)])
     where
       flatFuse t =
-        unpackFusedFlat @U1 @(FuseSectors U1 '(a, m) '(b, n)) $
+        unpackFusedFlat @U1 @(Tensor U1 '[ '(a, m)] '[ '(b, n)]) $
           fuseU1Flat
             (repSing @SG.U1 @'[ '(a, m) ])
             (repSing @SG.U1 @'[ '(b, n) ])
-            (toArray t)
+            (unfuseToArray @U1 @'[ '(a, m)] @'[ '(b, n)] t)
       f =
         concatMap
           ( \(b, c) ->
               [ (b', c * coeff)
               | (b', coeff) <-
-                  decompose @(FuseMN U1 '(a, m) '(b, n))
-                    (flatFuse (basisValue @(UnfuseMN U1 '(a, m) '(b, n)) b))
+                  decompose @(Fuse U1 '[ '(a, m)] '[ '(b, n)])
+                    (flatFuse (basisValue @(Unfuse U1 '[ '(a, m)] '[ '(b, n)]) b))
               ]
           )
 
 --------------------------------------------------------------------------------
--- rmoveMN
+-- rmove
 --------------------------------------------------------------------------------
 
 rPhaseScalar
@@ -555,11 +676,11 @@ rPhaseSector
 rPhaseSector = (rPhaseScalar @j1 @j2 @j *^)
 
 -- | Transpose @m × n@ copy indices on @ℂ^{m·n}@.
-swapCopyGridMN
+swapCopyGrid
   :: forall m n. (KnownNat m, KnownNat n, KnownNat (Scale m n))
   => C (Scale m n)
   -> C (Scale m n)
-swapCopyGridMN c =
+swapCopyGrid c =
   sumV
     [ (c <.> stdBasisC @(Scale m n) idxIn)
         *^ stdBasisC @(Scale m n) idxOut
@@ -588,30 +709,30 @@ swapCopyGridSector
   => C (Scale m n) ⊗ C d
   -> C (Scale m n) ⊗ C d
 swapCopyGridSector sec =
-  (arr (linearFunction (swapCopyGridMN @m @n)) ⊗^ (id :: C d +> C d)) $ sec
+  (arr (linearFunction (swapCopyGrid @m @n)) ⊗^ (id :: C d +> C d)) $ sec
 
--- | Braiding on fused @m·V_a ⊗ n·V_b@ (spine walk; U(1) identity, SU(2) R-phase + copy swap).
-class CanRmoveMN g x y rs where
-  rmoveMN :: HList (RepToVectors g rs) -> HList (RepToVectors g rs)
+-- | Braiding on fused @r ⊗ q@ (spine walk; U(1) identity, SU(2) R-phase + copy swap).
+class CanRmove g r q rs where
+  rmove :: HList (RepToVectors g rs) -> HList (RepToVectors g rs)
 
-instance CanRmoveMN U1 x y '[] where
-  rmoveMN HNil = HNil
+instance CanRmove U1 r q '[] where
+  rmove HNil = HNil
 
-instance CanRmoveMN SU2 x y '[] where
-  rmoveMN HNil = HNil
+instance CanRmove SU2 r q '[] where
+  rmove HNil = HNil
 
 instance
   ( RepToVectors U1 ('(j, m) ': rs)
       ~ (Sector U1 j m ': RepToVectors U1 rs)
-  , CanRmoveMN U1 x y rs
+  , CanRmove U1 r q rs
   ) =>
-  CanRmoveMN U1 x y ('(j, m) ': rs)
+  CanRmove U1 r q ('(j, m) ': rs)
   where
-  rmoveMN (sec :& rest) = sec :& rmoveMN @U1 @x @y @rs rest
+  rmove = id
 
 instance
-  ( x ~ '(a, m)
-  , y ~ '(b, n)
+  ( r ~ '[ '(a, m)]
+  , q ~ '[ '(b, n)]
   , KnownNat a
   , KnownNat b
   , KnownNat m
@@ -622,11 +743,11 @@ instance
   , KnownNat (IrrepDim SU2 j)
   , RepToVectors SU2 ('(j, k) ': rs)
       ~ (Sector SU2 j k ': RepToVectors SU2 rs)
-  , CanRmoveMN SU2 x y rs
+  , CanRmove SU2 r q rs
   ) =>
-  CanRmoveMN SU2 x y ('(j, k) ': rs)
+  CanRmove SU2 r q ('(j, k) ': rs)
   where
-  rmoveMN (sec :& rest) =
+  rmove (sec :& rest) =
     swapCopyGridSector @m @n @(IrrepDim SU2 j)
       (rPhaseSector @a @b @j @k sec)
-      :& rmoveMN @SU2 @x @y @rs rest
+      :& rmove @SU2 @r @q @rs rest

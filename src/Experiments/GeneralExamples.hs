@@ -16,7 +16,7 @@ import Experiments.General
 import GHC.TypeLits (KnownNat)
 import Math.LinearMap.Category (type (⊗))
 import Numeric.LinearAlgebra.Static (C, Sized (fromList))
-import Symmetry.Utils (Z (..))
+import Symmetry.Utils (HList (..), Z (..))
 
 --------------------------------------------------------------------------------
 -- Coefficient comparison via 'HasBasis'
@@ -27,7 +27,6 @@ approxEqCoeffs xs ys =
   length xs == length ys
     && and (zipWith (\x y -> Complex.magnitude (x - y) < 1e-9) xs ys)
 
--- | Compare two vectors by their 'decompose' coefficient lists (stable basis order).
 approxEqHasBasis
   :: (HasBasis v, Scalar v ~ Complex Double)
   => v
@@ -37,28 +36,34 @@ approxEqHasBasis u v =
   approxEqCoeffs (map snd (decompose u)) (map snd (decompose v))
 
 --------------------------------------------------------------------------------
--- Smoke examples
+-- Smoke examples (singleton spines)
 --------------------------------------------------------------------------------
 
-fooMN :: FuseMN U1 '(Pos 2, 2) '(Pos 2, 2)
+fooMN :: Fuse U1 '[ '(Pos 2, 2)] '[ '(Pos 2, 2)]
 fooMN =
-  fuseMN @U1 @'(Pos 2, 2) @'(Pos 2, 2) $
+  fuse @U1 @'[ '(Pos 2, 2)] @'[ '(Pos 2, 2)] $
     tensorSectors @U1 @(Pos 2) @2 @(Pos 2) @2
       (packMultIrrep @2 @1 [fromList [3], fromList [5]])
       (packMultIrrep @2 @1 [fromList [4], fromList [6]])
 
-exRmoveMN_U1 :: FuseMN U1 '(Pos 1, 2) '(Pos 2, 3)
+exRmoveMN_U1 :: Fuse U1 '[ '(Pos 1, 2)] '[ '(Pos 2, 3)]
 exRmoveMN_U1 =
-  rmoveMN @U1 @'(Pos 2, 3) @'(Pos 1, 2) @(FuseSectors U1 '(Pos 2, 3) '(Pos 1, 2)) $
-    fuseMN @U1 @'(Pos 2, 3) @'(Pos 1, 2) $
+  rmove @U1
+    @'[ '(Pos 2, 3)]
+    @'[ '(Pos 1, 2)]
+    @(Tensor U1 '[ '(Pos 2, 3)] '[ '(Pos 1, 2)]) $
+    fuse @U1 @'[ '(Pos 2, 3)] @'[ '(Pos 1, 2)] $
       tensorSectors @U1 @(Pos 2) @3 @(Pos 1) @2
         (packMultIrrep @3 @1 [fromList [3], fromList [3], fromList [3]])
         (packMultIrrep @2 @1 [fromList [1], fromList [1]])
 
-exRmoveMN_SU2 :: FuseMN SU2 '(2, 3) '(4, 2)
+exRmoveMN_SU2 :: Fuse SU2 '[ '(2, 3)] '[ '(4, 2)]
 exRmoveMN_SU2 =
-  rmoveMN @SU2 @'(4, 2) @'(2, 3) @(FuseSectors SU2 '(4, 2) '(2, 3)) $
-    fuseMN @SU2 @'(4, 2) @'(2, 3) $
+  rmove @SU2
+    @'[ '(4, 2)]
+    @'[ '(2, 3)]
+    @(Tensor SU2 '[ '(4, 2)] '[ '(2, 3)]) $
+    fuse @SU2 @'[ '(4, 2)] @'[ '(2, 3)] $
       tensorSectors @SU2 @4 @2 @2 @3
         (packMultIrrep @2 @5
           [ fromList [1, 0, 0, 0, 0]
@@ -71,7 +76,7 @@ exRmoveMN_SU2 =
           ])
 
 --------------------------------------------------------------------------------
--- Coherence: fuseMN ∘ swap ≅ rmoveMN ∘ fuseMN
+-- Coherence: fuse ∘ swap ≅ rmove ∘ fuse
 --------------------------------------------------------------------------------
 
 coherentRmoveMN
@@ -82,20 +87,35 @@ coherentRmoveMN
      , KnownNat (IrrepDim g b)
      , Sector g a m ~ (C m ⊗ C (IrrepDim g a))
      , Sector g b n ~ (C n ⊗ C (IrrepDim g b))
-     , CanFuseMN g '(a, m) '(b, n)
-     , CanFuseMN g '(b, n) '(a, m)
-     , CanRmoveMN g '(a, m) '(b, n) (FuseSectors g '(a, m) '(b, n))
-     , FuseSectors g '(a, m) '(b, n) ~ FuseSectors g '(b, n) '(a, m)
-     , HasBasis (FuseMN g '(b, n) '(a, m))
-     , Scalar (FuseMN g '(b, n) '(a, m)) ~ Complex Double
+     , UnfuseRaw g '[ '(a, m)] '[ '(b, n)]
+         ~ '[UnfusePair g '(a, m) '(b, n)]
+     , UnfuseRaw g '[ '(b, n)] '[ '(a, m)]
+         ~ '[UnfusePair g '(b, n) '(a, m)]
+     , CanFuse g '[ '(a, m)] '[ '(b, n)]
+     , CanFuse g '[ '(b, n)] '[ '(a, m)]
+     , CanRmove
+         g
+         '[ '(a, m)]
+         '[ '(b, n)]
+         (Tensor g '[ '(a, m)] '[ '(b, n)])
+     , Tensor g '[ '(a, m)] '[ '(b, n)]
+         ~ Tensor g '[ '(b, n)] '[ '(a, m)]
+     , HasBasis (Fuse g '[ '(b, n)] '[ '(a, m)])
+     , Scalar (Fuse g '[ '(b, n)] '[ '(a, m)]) ~ Complex Double
      )
-  => UnfuseMN g '(a, m) '(b, n)
+  => Unfuse g '[ '(a, m)] '[ '(b, n)]
   -> Bool
 coherentRmoveMN unfused =
   approxEqHasBasis
-    (fuseMN @g @'(b, n) @'(a, m) (swapUnfuseMN @g @a @m @b @n unfused))
-    (rmoveMN @g @'(a, m) @'(b, n) @(FuseSectors g '(a, m) '(b, n))
-      (fuseMN @g @'(a, m) @'(b, n) unfused))
+    ( fuse @g @'[ '(b, n)] @'[ '(a, m)]
+        (swapUnfuse @g @a @m @b @n unfused)
+    )
+    ( rmove @g
+        @'[ '(a, m)]
+        @'[ '(b, n)]
+        @(Tensor g '[ '(a, m)] '[ '(b, n)])
+        (fuse @g @'[ '(a, m)] @'[ '(b, n)] unfused)
+    )
 
 exCoherenceRmoveMN_U1 :: Bool
 exCoherenceRmoveMN_U1 =

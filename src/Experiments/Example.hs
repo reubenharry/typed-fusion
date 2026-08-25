@@ -78,19 +78,14 @@ example4' :: Irrep U1 (Pos 2) -- j = 1/2
 example4' = Irrep 1
 
 
-example5 :: Fuse SU2 1 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
-example5 = Fuse $ Representation (
-    asSector1 (Irrep (vec (1,2,3)) :: Irrep SU2 2)
-      :& asSector1 (Irrep (vec (4,5,6,7,8)) :: Irrep SU2 4)
-      :& HNil
-    )
+example5 :: Fuse SU2 '[ '(1, 1)] '[ '(3, 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example5 = undefined
 
-example6 :: Fuse SU2 1 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
-example6 = Fuse (Representation undefined)
+example6 :: Fuse SU2 '[ '(1, 1)] '[ '(3, 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example6 = undefined
 
-
-example7 :: Fuse U1 (Pos 1) (Pos 1)
-example7 = Fuse (Representation undefined)
+example7 :: Fuse U1 '[ '(Pos 1, 1)] '[ '(Pos 1, 1)]
+example7 = undefined
 
 
 example8 :: Representation U1 '[ '(Pos 1, 1)]
