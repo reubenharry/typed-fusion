@@ -17,6 +17,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+{- HLINT ignore "Eta reduce" -}
 
 -- | Leaf / multiplicity-block fusion experiments.
 --
@@ -27,8 +29,11 @@
 -- so 'FuseMN' carries @RepToVectors g (Tensor g '[x] '[y])@. Hom packing is
 -- @FilterNonTrivial (Tensor (DualRep r) q)@.
 --
--- Term-level: 'fuseMN' = @recompose . f . decompose@ with flat CG as the matrix;
--- 'rmoveMN' / 'swapUnfuseMN' braid fused / unfused sides.
+-- Term-level: 'fuseMN' = @recompose . f . decompose@ (flat CG supplies columns of
+-- @f@ on unfused basis vectors). 'rmoveMN' / 'swapUnfuseMN' braid fused /
+-- unfused sides. 'UnfuseMN' / 'FuseMN' are type synonyms; call sites usually
+-- need visible type applications because 'Sector' is a type family (indices are
+-- not inferred from the payload alone).
 --
 -- Examples: 'Experiments.GeneralExamples'.
 module Experiments.General where
@@ -69,9 +74,6 @@ import Symmetry.Utils
   ( Add
   , Append
   , HList (..)
-  , HMap (..)
-  , HPure (..)
-  , HZipWith (..)
   , Negate
   , Scale
   , Z (..)
@@ -129,7 +131,9 @@ type family ScaleRep (s :: Multiplicity) (xs :: [(k, Multiplicity)])
 --------------------------------------------------------------------------------
 -- Type-level Tensor: Coalesce ∘ TensorRaw (Distribute + leaf CG + scale)
 --
--- This is the fusion spine used by 'FuseMN', Hom packing, etc.
+-- Call sites use group-indexed 'Coalesce' / 'Tensor' / …. Workers stay
+-- U1-/SU2-specialized: GHC rejects closed-TF equations with polymorphic @g@
+-- when an argument kind mentions @Irreps g@ (@Irreps@ is a type family).
 --------------------------------------------------------------------------------
 
 type DualIrrep :: forall (g :: Group) -> Irreps g -> Irreps g
@@ -265,134 +269,82 @@ type family Snd (p :: (k, l)) :: l where
   Snd '(_, b) = b
 
 --------------------------------------------------------------------------------
--- HList vector-space / basis (direct sum)
+-- Direct-sum basis for sector HLists
 --------------------------------------------------------------------------------
 
-class (VectorSpace v, Scalar v ~ Complex Double) => VsC v
-instance (VectorSpace v, Scalar v ~ Complex Double) => VsC v
+-- | Nested @Either@ basis of an HList of 'HasBasis' sectors.
+type family RepBasis (xs :: [Type]) :: Type where
+  RepBasis '[] = Void
+  RepBasis (x ': xs) = Either (Basis x) (RepBasis xs)
 
-class HHasBasis (xs :: [Type]) where
-  type HBasis xs :: Type
-  hBasisValue :: HBasis xs -> HList xs
-  hDecompose :: HList xs -> [(HBasis xs, Complex Double)]
-  hDecompose' :: HList xs -> HBasis xs -> Complex Double
+instance AdditiveGroup (HList '[]) where
+  zeroV = HNil
+  HNil ^+^ HNil = HNil
+  negateV HNil = HNil
 
-instance HHasBasis '[] where
-  type HBasis '[] = Void
-  hBasisValue = absurd
-  hDecompose HNil = []
-  hDecompose' HNil = absurd
+instance
+  ( AdditiveGroup x
+  , AdditiveGroup (HList xs)
+  ) =>
+  AdditiveGroup (HList (x ': xs))
+  where
+  zeroV = zeroV :& zeroV
+  (x :& xs) ^+^ (y :& ys) = (x ^+^ y) :& (xs ^+^ ys)
+  negateV (x :& xs) = negateV x :& negateV xs
+
+instance VectorSpace (HList '[]) where
+  type Scalar (HList '[]) = Complex Double
+  _ *^ v = v
+
+instance
+  ( VectorSpace x
+  , Scalar x ~ Complex Double
+  , VectorSpace (HList xs)
+  , Scalar (HList xs) ~ Complex Double
+  , AdditiveGroup (HList (x ': xs))
+  ) =>
+  VectorSpace (HList (x ': xs))
+  where
+  type Scalar (HList (x ': xs)) = Complex Double
+  μ *^ (x :& xs) = (μ *^ x) :& (μ *^ xs)
+
+instance HasBasis (HList '[]) where
+  type Basis (HList '[]) = RepBasis '[]
+  basisValue = absurd
+  decompose HNil = []
+  decompose' HNil = absurd
 
 instance
   ( HasBasis x
   , Scalar x ~ Complex Double
   , AdditiveGroup x
-  , HHasBasis xs
-  , HPure AdditiveGroup xs
+  , HasBasis (HList xs)
+  , Scalar (HList xs) ~ Complex Double
+  , AdditiveGroup (HList xs)
+  , Basis (HList xs) ~ RepBasis xs
   ) =>
-  HHasBasis (x ': xs)
+  HasBasis (HList (x ': xs))
   where
-  type HBasis (x ': xs) = Either (Basis x) (HBasis xs)
-  hBasisValue (Left b) =
-    basisValue b :& hpureC (Proxy @AdditiveGroup) zeroV
-  hBasisValue (Right b) =
-    zeroV :& hBasisValue b
-  hDecompose (x :& xs) =
+  type Basis (HList (x ': xs)) = RepBasis (x ': xs)
+  basisValue (Left b) = basisValue b :& zeroV
+  basisValue (Right b) = zeroV :& basisValue b
+  decompose (x :& xs) =
     map (first Left) (decompose x)
-      ++ map (first Right) (hDecompose xs)
-  hDecompose' (x :& xs) =
-    either (decompose' x) (hDecompose' xs)
+      ++ map (first Right) (decompose xs)
+  decompose' (x :& xs) =
+    either (decompose' x) (decompose' xs)
 
 --------------------------------------------------------------------------------
--- UnfuseMN / FuseMN
+-- UnfuseMN / FuseMN (aliases over sector tensor / fused spine HList)
 --------------------------------------------------------------------------------
 
 -- | Unfused @m·V_a ⊗ n·V_b@.
-newtype UnfuseMN g x y =
-  UnfuseMN
-    { unUnfuseMN :: Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y)
-    }
+type UnfuseMN g x y =
+  Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y)
 
-instance
-  ( AdditiveGroup
-      (Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y))
-  ) =>
-  AdditiveGroup (UnfuseMN g x y)
-  where
-  zeroV = UnfuseMN zeroV
-  UnfuseMN a ^+^ UnfuseMN b = UnfuseMN (a ^+^ b)
-  negateV (UnfuseMN a) = UnfuseMN (negateV a)
-
-instance
-  ( VectorSpace
-      (Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y))
-  , Scalar (Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y))
-      ~ Complex Double
-  ) =>
-  VectorSpace (UnfuseMN g x y)
-  where
-  type Scalar (UnfuseMN g x y) = Complex Double
-  μ *^ UnfuseMN a = UnfuseMN (μ *^ a)
-
-instance
-  ( HasBasis
-      (Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y))
-  , Scalar (Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y))
-      ~ Complex Double
-  ) =>
-  HasBasis (UnfuseMN g x y)
-  where
-  type Basis (UnfuseMN g x y) =
-    Basis (Sector g (Fst x) (Snd x) ⊗ Sector g (Fst y) (Snd y))
-  basisValue b = UnfuseMN (basisValue b)
-  decompose (UnfuseMN t) = decompose t
-  decompose' (UnfuseMN t) = decompose' t
-
--- | Fused @m·V_a ⊗ n·V_b@: payload @RepToVectors g (Tensor g '[x] '[y])@.
-newtype FuseMN g x y =
-  FuseMN { unFuseMN :: HList (RepToVectors g (FuseSectors g x y)) }
-
-instance
-  ( HPure AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  , HMap AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  , HZipWith AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  ) =>
-  AdditiveGroup (FuseMN g x y)
-  where
-  zeroV = FuseMN $ hpureC (Proxy @AdditiveGroup) zeroV
-  FuseMN xs ^+^ FuseMN ys =
-    FuseMN $ hzipWithC (Proxy @AdditiveGroup) (^+^) xs ys
-  negateV (FuseMN xs) =
-    FuseMN $ hmapC (Proxy @AdditiveGroup) negateV xs
-
-instance
-  ( HPure VsC (RepToVectors g (FuseSectors g x y))
-  , HMap VsC (RepToVectors g (FuseSectors g x y))
-  , HZipWith VsC (RepToVectors g (FuseSectors g x y))
-  , HPure AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  , HMap AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  , HZipWith AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  ) =>
-  VectorSpace (FuseMN g x y)
-  where
-  type Scalar (FuseMN g x y) = Complex Double
-  μ *^ FuseMN xs = FuseMN $ hmapC (Proxy @VsC) (μ *^) xs
-
-instance
-  ( HHasBasis (RepToVectors g (FuseSectors g x y))
-  , HPure VsC (RepToVectors g (FuseSectors g x y))
-  , HMap VsC (RepToVectors g (FuseSectors g x y))
-  , HZipWith VsC (RepToVectors g (FuseSectors g x y))
-  , HPure AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  , HMap AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  , HZipWith AdditiveGroup (RepToVectors g (FuseSectors g x y))
-  ) =>
-  HasBasis (FuseMN g x y)
-  where
-  type Basis (FuseMN g x y) = HBasis (RepToVectors g (FuseSectors g x y))
-  basisValue b = FuseMN (hBasisValue b)
-  decompose (FuseMN xs) = hDecompose xs
-  decompose' (FuseMN xs) = hDecompose' xs
+-- | Fused @m·V_a ⊗ n·V_b@: @RepToVectors g (Tensor g '[x] '[y])@.
+type FuseMN g x y =
+  HList (RepToVectors g (FuseSectors g x y))
 
 --------------------------------------------------------------------------------
 -- Constructors / helpers
@@ -431,7 +383,7 @@ tensorSectors
   => Sector g a m
   -> Sector g b n
   -> UnfuseMN g '(a, m) '(b, n)
-tensorSectors ua vb = UnfuseMN (ua ⊗ vb)
+tensorSectors ua vb = ua ⊗ vb
 
 swapUnfuseMN
   :: forall g a m b n.
@@ -444,7 +396,7 @@ swapUnfuseMN
      )
   => UnfuseMN g '(a, m) '(b, n)
   -> UnfuseMN g '(b, n) '(a, m)
-swapUnfuseMN (UnfuseMN t) = UnfuseMN (swapMap $ t)
+swapUnfuseMN t = swapMap $ t
 
 --------------------------------------------------------------------------------
 -- fuseMN = recompose . f . decompose
@@ -493,9 +445,8 @@ instance
         (here, rest) = VS.splitAt d flat
     in  unsafeFromArray here :& unpackFusedFlat @SU2 @rs rest
 
--- | Flat CG matrix on coefficient buffers (the intertwiner Φ).
+-- | Fusion intertwiner @Φ : unfused → fused@ via @recompose . f . decompose@.
 class CanFuseMN g x y where
-  fuseMNFlat :: UnfuseMN g x y -> FuseMN g x y
   fuseMN :: UnfuseMN g x y -> FuseMN g x y
 
 instance
@@ -517,26 +468,26 @@ instance
   ) =>
   CanFuseMN SU2 '(a, m) '(b, n)
   where
-  fuseMNFlat (UnfuseMN t) =
-    FuseMN $
-      unpackFusedFlat @SU2 @(FuseSectors SU2 '(a, m) '(b, n)) $
-        fuseSU2Flat
-          (repSing @SG.SU2 @'[ '(a, m) ])
-          (repSing @SG.SU2 @'[ '(b, n) ])
-          (toArray t)
-  fuseMN u =
-    (recompose . f . decompose) u
+  fuseMN =
+    recompose @(FuseMN SU2 '(a, m) '(b, n))
+      . f
+      . decompose @(UnfuseMN SU2 '(a, m) '(b, n))
     where
-      f coeffs =
+      flatFuse t =
+        unpackFusedFlat @SU2 @(FuseSectors SU2 '(a, m) '(b, n)) $
+          fuseSU2Flat
+            (repSing @SG.SU2 @'[ '(a, m) ])
+            (repSing @SG.SU2 @'[ '(b, n) ])
+            (toArray t)
+      f =
         concatMap
           ( \(b, c) ->
-              [ (b', c * a)
-              | (b', a) <-
+              [ (b', c * coeff)
+              | (b', coeff) <-
                   decompose @(FuseMN SU2 '(a, m) '(b, n))
-                    (fuseMNFlat (basisValue b))
+                    (flatFuse (basisValue @(UnfuseMN SU2 '(a, m) '(b, n)) b))
               ]
           )
-          coeffs
 
 instance
   ( KnownNat m
@@ -557,26 +508,26 @@ instance
   ) =>
   CanFuseMN U1 '(a, m) '(b, n)
   where
-  fuseMNFlat (UnfuseMN t) =
-    FuseMN $
-      unpackFusedFlat @U1 @(FuseSectors U1 '(a, m) '(b, n)) $
-        fuseU1Flat
-          (repSing @SG.U1 @'[ '(a, m) ])
-          (repSing @SG.U1 @'[ '(b, n) ])
-          (toArray t)
-  fuseMN u =
-    (recompose . f . decompose) u
+  fuseMN =
+    recompose @(FuseMN U1 '(a, m) '(b, n))
+      . f
+      . decompose @(UnfuseMN U1 '(a, m) '(b, n))
     where
-      f coeffs =
+      flatFuse t =
+        unpackFusedFlat @U1 @(FuseSectors U1 '(a, m) '(b, n)) $
+          fuseU1Flat
+            (repSing @SG.U1 @'[ '(a, m) ])
+            (repSing @SG.U1 @'[ '(b, n) ])
+            (toArray t)
+      f =
         concatMap
           ( \(b, c) ->
-              [ (b', c * a)
-              | (b', a) <-
+              [ (b', c * coeff)
+              | (b', coeff) <-
                   decompose @(FuseMN U1 '(a, m) '(b, n))
-                    (fuseMNFlat (basisValue b))
+                    (flatFuse (basisValue @(UnfuseMN U1 '(a, m) '(b, n)) b))
               ]
           )
-          coeffs
 
 --------------------------------------------------------------------------------
 -- rmoveMN
@@ -639,54 +590,43 @@ swapCopyGridSector
 swapCopyGridSector sec =
   (arr (linearFunction (swapCopyGridMN @m @n)) ⊗^ (id :: C d +> C d)) $ sec
 
--- | Per-channel R-phase + copy-grid swap (SU(2) fused braiding).
-class MapRmoveSU2 m n j1 j2 (chs :: [(Nat, Multiplicity)]) where
-  mapRmoveSU2 :: HList (RepToVectors SU2 chs) -> HList (RepToVectors SU2 chs)
+-- | Braiding on fused @m·V_a ⊗ n·V_b@ (spine walk; U(1) identity, SU(2) R-phase + copy swap).
+class CanRmoveMN g x y rs where
+  rmoveMN :: HList (RepToVectors g rs) -> HList (RepToVectors g rs)
 
-instance MapRmoveSU2 m n j1 j2 '[] where
-  mapRmoveSU2 HNil = HNil
+instance CanRmoveMN U1 x y '[] where
+  rmoveMN HNil = HNil
+
+instance CanRmoveMN SU2 x y '[] where
+  rmoveMN HNil = HNil
 
 instance
-  ( KnownNat m
+  ( RepToVectors U1 ('(j, m) ': rs)
+      ~ (Sector U1 j m ': RepToVectors U1 rs)
+  , CanRmoveMN U1 x y rs
+  ) =>
+  CanRmoveMN U1 x y ('(j, m) ': rs)
+  where
+  rmoveMN (sec :& rest) = sec :& rmoveMN @U1 @x @y @rs rest
+
+instance
+  ( x ~ '(a, m)
+  , y ~ '(b, n)
+  , KnownNat a
+  , KnownNat b
+  , KnownNat m
   , KnownNat n
-  , KnownNat j1
-  , KnownNat j2
   , KnownNat j
   , KnownNat k
   , k ~ Scale m n
   , KnownNat (IrrepDim SU2 j)
-  , MapRmoveSU2 m n j1 j2 rs
   , RepToVectors SU2 ('(j, k) ': rs)
       ~ (Sector SU2 j k ': RepToVectors SU2 rs)
+  , CanRmoveMN SU2 x y rs
   ) =>
-  MapRmoveSU2 m n j1 j2 ('(j, k) ': rs)
+  CanRmoveMN SU2 x y ('(j, k) ': rs)
   where
-  mapRmoveSU2 (sec :& rest) =
+  rmoveMN (sec :& rest) =
     swapCopyGridSector @m @n @(IrrepDim SU2 j)
-      (rPhaseSector @j1 @j2 @j @k sec)
-      :& mapRmoveSU2 @m @n @j1 @j2 @rs rest
-
-class CanRmoveMN g x y where
-  rmoveMN :: FuseMN g x y -> FuseMN g y x
-
-instance
-  ( Scale m n ~ Scale n m
-  , FuseSectors U1 '(a, m) '(b, n) ~ FuseSectors U1 '(b, n) '(a, m)
-  ) =>
-  CanRmoveMN U1 '(a, m) '(b, n)
-  where
-  rmoveMN (FuseMN hs) = FuseMN hs
-
-instance
-  ( KnownNat a
-  , KnownNat b
-  , KnownNat m
-  , KnownNat n
-  , Scale m n ~ Scale n m
-  , FuseSectors SU2 '(a, m) '(b, n) ~ FuseSectors SU2 '(b, n) '(a, m)
-  , MapRmoveSU2 m n a b (FuseSectors SU2 '(a, m) '(b, n))
-  ) =>
-  CanRmoveMN SU2 '(a, m) '(b, n)
-  where
-  rmoveMN (FuseMN hs) =
-    FuseMN (mapRmoveSU2 @m @n @a @b @(FuseSectors SU2 '(a, m) '(b, n)) hs)
+      (rPhaseSector @a @b @j @k sec)
+      :& rmoveMN @SU2 @x @y @rs rest
