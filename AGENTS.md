@@ -67,8 +67,11 @@ Notes and next deepenings: skill `haskell-canon`
 Use the compiler as a design partner ([Haskell Guide](https://haskell-docs.netlify.app/)):
 outer shape + honest `undefined` stubs, infer stub types, fill gaps; localize
 type errors by substituting `undefined`. Prefer folds over hand-rolled
-recursion; prefer existing typeclasses + `newtype` over DIY classes. Custom
-types keep conceptual distinctions (bond/site/morphism ≠ raw arrays/tuples).
+recursion. **Type classes sparingly** — only for type-level recursion or
+overload that cannot be a plain function / shared composition; they are a code
+stain when reached for by OO/traits analogy. Prefer existing classes +
+`newtype`, or one scheme class with rank-2 algebras. Custom types keep
+conceptual distinctions (bond/site/morphism ≠ raw arrays/tuples).
 
 ### Small increments
 

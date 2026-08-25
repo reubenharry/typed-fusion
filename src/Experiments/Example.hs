@@ -78,24 +78,27 @@ example4' :: Irrep U1 (Pos 2) -- j = 1/2
 example4' = Irrep 1
 
 
-example5 :: Irrep SU2 1 :⊗: Irrep SU2 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
-example5 = Representation (
-    toV (V1 (Irrep (vec (1,2,3)))) :& toV (V1 (Irrep (vec (4,5,6,7,8)))) :& HNil
+example5 :: Fuse SU2 1 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example5 = Fuse $ Representation (
+    asSector1 (Irrep (vec (1,2,3)) :: Irrep SU2 2)
+      :& asSector1 (Irrep (vec (4,5,6,7,8)) :: Irrep SU2 4)
+      :& HNil
     )
 
-example6 :: Irrep SU2 1 :⊗: Irrep SU2 3 -- 1/2 :⊗: 3/2 = 1 ⊕ 2
-example6 = Representation undefined
+example6 :: Fuse SU2 1 3 -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example6 = Fuse (Representation undefined)
 
 
-example7 :: Irrep U1 (Pos 1) :⊗: Irrep U1 (Pos 1) -- 1/2 ⊗ 3/2 = 1 ⊕ 2
-example7 = Representation undefined
+example7 :: Fuse U1 (Pos 1) (Pos 1)
+example7 = Fuse (Representation undefined)
 
 
-example8 :: Representation U1 '[ '(Pos 1, 1)] --> Representation U1 '[ '(Pos 2, 1)] 
-example8 =  HNil
+example8 :: Representation U1 '[ '(Pos 1, 1)]
+example8 = Representation undefined
 
-example8' :: Representation SU2 '[ '(3, 1)] --> Representation SU2 '[ '(2, 1)] 
-example8' =  HNil
+example8' :: Representation SU2 '[ '(3, 1)]
+example8' = Representation undefined
+
 
 
 
@@ -121,7 +124,7 @@ example8' =  HNil
 check :: VS.Vector 2 (Complex Double)
 check = VS.fromTuple (1,2)
 
-type a --> b = Intertwiner a b
+type a --> b = (a, b)  -- placeholder; was Intertwiner
 
 foo :: C 2
 foo = fromList $ VS.toList check

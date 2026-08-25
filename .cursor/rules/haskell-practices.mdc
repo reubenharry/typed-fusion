@@ -1,5 +1,5 @@
 ---
-description: Parse-don't-validate, anti-boilerplate, schemes, and small incremental Haskell edits
+description: Parse-don't-validate, sparse type classes, anti-boilerplate, schemes, small increments
 alwaysApply: true
 ---
 
@@ -53,6 +53,30 @@ recursion scheme once and write a non-recursive algebra. Do not hand-roll
 - Do not invent parallel APIs that duplicate Fixed / General / Reference with
   slight renames.
 
+## Type classes (use sparingly)
+
+Type classes are a **code stain** unless they earn their keep. Reach for them
+only when necessary, for example:
+
+- **Type-level recursion** on spines / HLists / type families (one scheme class;
+  pass rank-2 algebras as ordinary functions — do not invent a class per walk)
+- **Genuine overload** that cannot be a plain function or a shared composition
+  (e.g. group-indexed `fuse` when U(1) and SU(2) share a caller API)
+
+Do **not** add a class because OO / traits / interfaces would, or to name an
+operation that has a single implementation. Prefer plain functions, rank-2
+arguments, existing schemes (`HMap` / `MapSU2Mult1`-style walkers), and
+`newtype` wrappers. Prefer **reusing** an existing class over inventing a new
+one.
+
+```haskell
+-- BAD: new class for one algebra on an HList walk
+class RPhase j1 j2 x where applyRPhase :: x -> x
+
+-- GOOD: one spine walker + a plain function
+mapSU2Mult1 (rPhaseOn @j1 @j2) hs
+```
+
 ## Type-driven process ([Haskell Guide](https://haskell-docs.netlify.app/))
 
 - Grow features top-down with honest `undefined` stubs; let the compiler infer
@@ -61,7 +85,8 @@ recursion scheme once and write a non-recursive algebra. Do not hand-roll
   for its type (`cabal repl` / `:t` / HLS).
 - Prefer folds / named schemes over hand-rolled recursion and imperative
   `State` loops when the problem is a fold.
-- Prefer existing typeclasses + `newtype` wrappers over inventing new classes.
+- Prefer existing typeclasses + `newtype` wrappers over inventing new classes
+  (see **Type classes** above).
 - Custom types enforce conceptual distinctions (`ChessSquare` ≠ `(Int,Int)`);
   keep that discipline for bonds / sites / morphisms.
 

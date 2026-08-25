@@ -347,7 +347,9 @@ theory and more as **process**: how to use the typechecker day-to-day.
 - Prefer fold algebras for N-site / env accumulation over hand-rolled workers
   (ties to recursion-schemes section).
 - Don’t invent a new typeclass for every TN notion; extend existing categorical
-  / linearmap classes or use plain functions + newtypes.
+  / linearmap classes or use plain functions + newtypes. Type classes are for
+  type-level recursion or necessary overload — not OO/traits analogy; prefer
+  one spine walker + rank-2 algebras over a class per operation.
 - Probe scripts: REPL/`tricorder` + `undefined` holes beat print-driven debugging
   in pure numeric cores; use probes when measuring runtime.
 
@@ -363,6 +365,7 @@ theory and more as **process**: how to use the typechecker day-to-day.
 
 | Date | Promoted into harness | From |
 | --- | --- | --- |
+| 2026-08-20 | haskell-practices / AGENTS: type classes sparingly (stain; scheme+algebra) | Experiments.General fuse/commute |
 | 2026-08-02 | haskell-practices: schemes, API families, branding, power-to-weight | cross-cutting |
 | 2026-08-02 | AGENTS.md pointer + haskell-canon skill | scaffold |
 | 2026-08-02 | haskell-practices / AGENTS: King parse-don’t-validate checklist | essay |

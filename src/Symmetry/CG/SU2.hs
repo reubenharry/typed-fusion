@@ -21,6 +21,7 @@
 module Symmetry.CG.SU2
   ( fuseSU2Flat
   , cgMatrixTwoIrreps
+  , cgChannel
   , fusionChannels
   , sectorsSU2
   , repDimOf
@@ -136,6 +137,17 @@ cgMatrixTwoIrreps j1 j2 =
                             raw = applyJminus tj1 tj2 d1' d2' v'
                         in  if c < 1e-14 then [] else go (tm - 2) (map (/ c) raw)
               in  v' : rest
+
+-- | Product-basis bras @⟨j m_k|@ for a single total-@tj@ channel (Condon–Shortley).
+-- Each inner list has length @(j1+1)*(j2+1)@, column order @k2@-fast — same as
+-- 'cgMatrixTwoIrreps'.  Apply by pairing with a separable amplitude list
+-- @[u_k1 * v_k2]@.
+cgChannel :: Int -> Int -> Int -> [[Double]]
+cgChannel j1 j2 tj =
+  let mat = cgMatrixTwoIrreps j1 j2
+      chans = fusionChannels j1 j2
+      row0 = sum [c + 1 | c <- takeWhile (/= tj) chans]
+  in  take (tj + 1) (drop row0 mat)
 
 -- | @(tj, multiplicity, flat offset)@ for an SU(2) spine.
 sectorsSU2 :: SRep SU2 r -> [(Int, Int, Int)]

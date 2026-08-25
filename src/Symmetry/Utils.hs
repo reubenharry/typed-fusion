@@ -214,6 +214,22 @@ instance (c x, HZipWith c xs) => HZipWith c (x ': xs) where
   hzipWithC p f (x :& xs) (y :& ys) =
     f x y :& hzipWithC p f xs ys
 
+-- | Zip two HLists with a binary predicate and @&&@ the results.
+class HAllZip c xs where
+  hallZipC
+    :: proxy c
+    -> (forall x. c x => x -> x -> Bool)
+    -> HList xs
+    -> HList xs
+    -> Bool
+
+instance HAllZip c '[] where
+  hallZipC _ _ HNil HNil = True
+
+instance (c x, HAllZip c xs) => HAllZip c (x ': xs) where
+  hallZipC p f (x :& xs) (y :& ys) =
+    f x y && hallZipC p f xs ys
+
 type family Append
   (a :: [k])
   (b :: [k])
@@ -224,6 +240,28 @@ type family Append
 
   Append (x ': xs) b =
     x ': Append xs b
+
+-- | Term-level counterpart of 'Append'.
+class HAppend (xs :: [Type]) (ys :: [Type]) where
+  happend :: HList xs -> HList ys -> HList (Append xs ys)
+
+instance HAppend '[] ys where
+  happend HNil ys = ys
+
+instance HAppend xs ys => HAppend (x ': xs) ys where
+  happend (x :& xs) ys = x :& happend xs ys
+
+-- | Split an HList at a type-level prefix ('Append' inverse).
+class HSplit (xs :: [Type]) (ys :: [Type]) where
+  hsplit :: HList (Append xs ys) -> (HList xs, HList ys)
+
+instance HSplit '[] ys where
+  hsplit hs = (HNil, hs)
+
+instance HSplit xs ys => HSplit (x ': xs) ys where
+  hsplit (x :& rest) =
+    let (xs, ys) = hsplit rest
+    in  (x :& xs, ys)
 
 
 
