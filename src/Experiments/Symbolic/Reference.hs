@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoStarIsType #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Flat-buffer oracles for 'Experiments.Symbolic' (CG fuse, unpack).
@@ -21,10 +22,16 @@ module Experiments.Symbolic.Reference
   , sectorFlatDim
   , TensorFusedFlat
   , fuseOneSectorTensorReference
+  , fuseTensorSectorReference
   , fuseTensorReference
+  , RepVFlat
+  , repVFlat
+  , repVApproxEq
+  , exCoherenceRmove12
+  , exCoherenceRmove11
   ) where
 
-import Data.Complex (Complex)
+import Data.Complex (Complex, magnitude)
 import Data.Proxy (Proxy (..))
 import Experiments.Symbolic
 import GHC.TypeLits (KnownNat, Nat, natVal, type (*))
@@ -109,6 +116,29 @@ fuseOneSectorTensorReference sec =
       (repSing @SG.SU2 @'[ '(j2, n)])
       (toArray sec)
 
+-- | CG fuse a single @'Tensor'@ sector (@'Prod'@ copy) via the flat oracle.
+fuseTensorSectorReference
+  :: forall j1 j2 m n
+   . ( KnownNat j1
+     , KnownNat j2
+     , KnownNat m
+     , KnownNat n
+     , KnownNat (IrrepDim j1)
+     , KnownNat (IrrepDim j2)
+     , KnownRep SG.SU2 '[ '(j1, m)]
+     , KnownRep SG.SU2 '[ '(j2, n)]
+     , KnownSymbolicRep (TensorFusedFlat j1 j2 m n)
+     , KnownNat (m * n)
+     , UnpackFusedRep (TensorFusedFlat j1 j2 m n)
+     )
+  => RepV '[ '( 'Tensor j1 j2, 'Prod m n)]
+  -> RepV (Coalesce (TensorFusedFlat j1 j2 m n))
+fuseTensorSectorReference (RConsTensorProd sv RNil) =
+  coalesce @(TensorFusedFlat j1 j2 m n) $
+    fuseOneSectorTensorReference @j1 @j2 @m @n sv
+fuseTensorSectorReference _ =
+  error "fuseTensorSectorReference: expected single-sector Tensor spine"
+
 -- | CG fuse a single-sector @'Tensor'@ via the flat oracle.
 fuseTensorReference
   :: forall j1 m1 j2 m2
@@ -120,11 +150,6 @@ fuseTensorReference
      , KnownNat (IrrepDim j2)
      , KnownRep SG.SU2 '[ '(j1, m1)]
      , KnownRep SG.SU2 '[ '(j2, m2)]
-     , KnownSymbolicRep
-         ( Tensor
-             '[ '( 'Atom j1, 'AtomM m1)]
-             '[ '( 'Atom j2, 'AtomM m2)]
-         )
      , KnownSymbolicRep (TensorFusedFlat j1 j2 m1 m2)
      , KnownSymbolicRep (Coalesce (TensorFusedFlat j1 j2 m1 m2))
      , KnownNat (m1 * m2)
@@ -137,7 +162,114 @@ fuseTensorReference
        )
   -> RepV (Coalesce (TensorFusedFlat j1 j2 m1 m2))
 fuseTensorReference (RConsTensorProd sv RNil) =
-  coalesce @(TensorFusedFlat j1 j2 m1 m2) $
-    fuseOneSectorTensorReference @j1 @j2 @m1 @m2 sv
+  fuseTensorSectorReference @j1 @j2 @m1 @m2 (RConsTensorProd sv RNil)
 fuseTensorReference _ =
   error "fuseTensorReference: expected single-sector Tensor spine"
+
+--------------------------------------------------------------------------------
+-- Flatten / compare (Reference boundary)
+--------------------------------------------------------------------------------
+
+class RepVFlat (rs :: Rep) where
+  repVFlat :: RepV rs -> VS.Vector (Complex Double)
+
+instance RepVFlat '[] where
+  repVFlat RNil = VS.empty
+
+instance
+  ( KnownNat j
+  , KnownNat m
+  , KnownNat (IrrepDim j)
+  , KnownNat (SectorFlatDim '( 'Atom j, 'AtomM m))
+  , RepVFlat rest
+  ) =>
+  RepVFlat ('( 'Atom j, 'AtomM m) ': rest)
+  where
+  repVFlat (RConsAtomAtomM v rs) = toArray v VS.++ repVFlat rs
+  repVFlat _ = error "repVFlat: spine / constructor mismatch"
+
+instance
+  ( KnownNat j
+  , KnownNat m
+  , KnownNat n
+  , KnownNat (IrrepDim j)
+  , KnownNat (SectorFlatDim '( 'Atom j, 'Prod m n))
+  , RepVFlat rest
+  ) =>
+  RepVFlat ('( 'Atom j, 'Prod m n) ': rest)
+  where
+  repVFlat (RConsAtomProd v rs) = toArray v VS.++ repVFlat rs
+  repVFlat _ = error "repVFlat: spine / constructor mismatch"
+
+repVApproxEq
+  :: (RepVFlat rsL, RepVFlat rsR) => RepV rsL -> RepV rsR -> Double -> Bool
+repVApproxEq x y tol =
+  let a = repVFlat x
+      b = repVFlat y
+   in VS.length a == VS.length b
+        && all (\(u, v) -> magnitude (u - v) <= tol) (zip (VS.toList a) (VS.toList b))
+
+--------------------------------------------------------------------------------
+-- R-move coherence (@fuse ∘ braid ≅ rmove ∘ fuse@)
+--------------------------------------------------------------------------------
+
+-- | @rmoveSpine @1 @2@ with @rs@ inferred (avoids overlap with 'rmove' type apps).
+rmoveSpine12
+  :: forall rs
+   . ( RmoveSpine 1 2 rs
+     , RepVFlat rs
+     , RmoveTarget 1 2 rs ~ rs
+     )
+  => RepV rs
+  -> RepV rs
+rmoveSpine12 = rmoveSpine @1 @2
+
+rmoveSpine11
+  :: forall rs
+   . ( RmoveSpine 1 1 rs
+     , RepVFlat rs
+     , RmoveTarget 1 1 rs ~ rs
+     )
+  => RepV rs
+  -> RepV rs
+rmoveSpine11 = rmoveSpine @1 @1
+
+-- | Reference-path hexagon for @1 ⊗ 2@ (@'AtomM'@ copy tags from flat CG).
+exCoherenceRmove12 :: Bool
+exCoherenceRmove12 =
+  repVApproxEq
+    ( fuseTensorSectorReference @2 @1 @1 @1
+        ( braidTensor
+            @'[ '( 'Atom 1, 'AtomM 1)]
+            @'[ '( 'Atom 2, 'AtomM 1)]
+            unfused
+        )
+    )
+    ( rmoveSpine12 (fuseTensorReference @1 @1 @2 @1 unfused)
+    )
+    1e-10
+  where
+    unfused =
+      tensorAtoms @1 @1 @2 @1
+        (unsafeFromArray (VS.fromList [1, 0]))
+        (unsafeFromArray (VS.fromList [1, 0, 0]))
+
+-- | Reference-path hexagon for @1 ⊗ 1@ (identity R-phase on all channels).
+exCoherenceRmove11 :: Bool
+exCoherenceRmove11 =
+  repVApproxEq
+    ( fuseTensorSectorReference @1 @1 @1 @1
+        ( braidTensor
+            @'[ '( 'Atom 1, 'AtomM 1)]
+            @'[ '( 'Atom 1, 'AtomM 1)]
+            unfused
+        )
+    )
+    ( rmoveSpine11 (fuseTensorReference @1 @1 @1 @1 unfused)
+    )
+    1e-10
+  where
+    unfused =
+      tensorAtoms @1 @1 @1 @1
+        (unsafeFromArray (VS.fromList [1, 0]))
+        (unsafeFromArray (VS.fromList [0, 1]))

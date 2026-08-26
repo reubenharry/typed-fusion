@@ -8,9 +8,20 @@ module Experiments.SymbolicExamples where
 
 import Data.Proxy (Proxy (..))
 import Experiments.Symbolic
-import Experiments.Symbolic.Reference (sectorFlatDim)
+import Experiments.Symbolic.Reference
+  ( exCoherenceRmove11
+  , exCoherenceRmove12
+  , sectorFlatDim
+  )
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import qualified Data.Vector.Storable as VS
+
+-- | Hexagon coherence via Reference CG fuse (see 'Experiments.Symbolic.Reference').
+coherenceRmoveLeafOk :: Bool
+coherenceRmoveLeafOk = exCoherenceRmove12
+
+coherenceRmoveLeaf11Ok :: Bool
+coherenceRmoveLeaf11Ok = exCoherenceRmove11
 
 --------------------------------------------------------------------------------
 -- Coalesce merge (direct-sum layout)
@@ -65,7 +76,9 @@ coalescePreservesFlatDimOk =
 symbolicExamplesOk :: Bool
 symbolicExamplesOk =
   and
-    [ coalesceMergeFlatDimOk
+    [ coherenceRmoveLeafOk
+    , coherenceRmoveLeaf11Ok
+    , coalesceMergeFlatDimOk
     , coalesceMergeDirectSumOk
     , coalescePreservesFlatDimOk
     ]

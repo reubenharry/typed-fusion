@@ -33,11 +33,11 @@
 -- Examples: 'Experiments.SymbolicExamples'.
 module Experiments.Symbolic where
 
-import Data.Complex (Complex)
+import Data.Complex (Complex ((:+)))
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
-import Data.VectorSpace (Scalar)
-import GHC.TypeLits (CmpNat, KnownNat, Nat, type (*), type (+))
+import Data.VectorSpace (Scalar, VectorSpace, (*^))
+import GHC.TypeLits (CmpNat, KnownNat, Nat, natVal, type (*), type (+))
 import Control.Arrow.Constrained (($))
 import Control.Category.Constrained.Prelude (Category (..))
 import Experiments.SU2 (TensorIrrepRepSU2)
@@ -1087,6 +1087,119 @@ braidTensor
 braidTensor = braid
 
 --------------------------------------------------------------------------------
+-- rmove (R-matrix on fused tensor)
+--------------------------------------------------------------------------------
+
+-- | SU(2) R-phase @(-1)^((j₁+j₂-j)/2)@ on one fused atom sector.
+rPhaseSector
+  :: forall j1 j2 j μ
+   . ( KnownNat j1
+     , KnownNat j2
+     , KnownNat j
+     , VectorSpace (ToVSector ('Atom j) μ)
+     , Scalar (ToVSector ('Atom j) μ) ~ Complex Double
+     )
+  => ToVSector ('Atom j) μ
+  -> ToVSector ('Atom j) μ
+rPhaseSector v = (phase :+ 0) *^ v
+  where
+    phase = (-1) ^ ((tj1 + tj2 - tj) `div` 2)
+    tj1 = fromIntegral (natVal (Proxy @j1)) :: Int
+    tj2 = fromIntegral (natVal (Proxy @j2)) :: Int
+    tj = fromIntegral (natVal (Proxy @j)) :: Int
+
+-- | Fused spine after R-move: @'Prod m n'@ copy legs swap to @'Prod n m'@.
+type family RmoveTarget (j1 :: Nat) (j2 :: Nat) (rs :: Rep) :: Rep where
+  RmoveTarget j1 j2 '[] = '[]
+  RmoveTarget j1 j2 ('( 'Atom j, 'AtomM m) ': rest) =
+    '( 'Atom j, 'AtomM m) ': RmoveTarget j1 j2 rest
+  RmoveTarget j1 j2 ('( 'Atom j, 'Prod m n) ': rest) =
+    '( 'Atom j, 'Prod n m) ': RmoveTarget j1 j2 rest
+  RmoveTarget j1 j2 ('( 'Tensor j1' j2', 'AtomM m) ': rest) =
+    '( 'Tensor j1' j2', 'AtomM m) ': RmoveTarget j1 j2 rest
+  RmoveTarget j1 j2 ('( 'Tensor j1' j2', 'Prod m n) ': rest) =
+    '( 'Tensor j1' j2', 'Prod n m) ': RmoveTarget j1 j2 rest
+
+-- | Constraints for R-moving every sector in a fused spine.
+type family RmoveSpine (j1 :: Nat) (j2 :: Nat) (rs :: Rep) :: Constraint where
+  RmoveSpine j1 j2 '[] = ()
+  RmoveSpine j1 j2 ('( 'Atom j, 'AtomM m) ': rest) =
+    ( KnownNat j1
+    , KnownNat j2
+    , KnownNat j
+    , KnownNat m
+    , KnownNat (IrrepDim j)
+    , VectorSpace (ToVSector ('Atom j) ('AtomM m))
+    , Scalar (ToVSector ('Atom j) ('AtomM m)) ~ Complex Double
+    , RmoveSpine j1 j2 rest
+    )
+  RmoveSpine j1 j2 ('( 'Atom j, 'Prod m n) ': rest) =
+    ( KnownNat j1
+    , KnownNat j2
+    , KnownNat j
+    , KnownNat m
+    , KnownNat n
+    , KnownNat (IrrepDim j)
+    , VectorSpace (ToVSector ('Atom j) ('Prod m n))
+    , Scalar (ToVSector ('Atom j) ('Prod m n)) ~ Complex Double
+    , LSpace (C m)
+    , LSpace (C n)
+    , LSpace (C (IrrepDim j))
+    , LSpace (C m ⊗ C n)
+    , LSpace (C n ⊗ C m)
+    , LSpace (C m ⊗ C n ⊗ C (IrrepDim j))
+    , LSpace (C n ⊗ C m ⊗ C (IrrepDim j))
+    , TensorSpace (C m ⊗ C n ⊗ C (IrrepDim j))
+    , Scalar (C m) ~ Complex Double
+    , Scalar (C n) ~ Complex Double
+    , Scalar (C (IrrepDim j)) ~ Complex Double
+    , ToVSector ('Atom j) ('Prod m n) ~ (C m ⊗ C n) ⊗ C (IrrepDim j)
+    , RmoveSpine j1 j2 rest
+    )
+
+-- | R-move every sector in a fused 'RepV' spine (R-phase, then copy swap on @'Prod'@).
+rmoveSpine
+  :: forall j1 j2 rs
+   . RmoveSpine j1 j2 rs
+  => RepV rs
+  -> RepV (RmoveTarget j1 j2 rs)
+rmoveSpine RNil = RNil
+rmoveSpine (RConsAtomAtomM @j @m v rs) =
+  RConsAtomAtomM (rPhaseSector @j1 @j2 @j @('AtomM m) v) (rmoveSpine @j1 @j2 rs)
+rmoveSpine (RConsAtomProd @j @m @n v rs) =
+  RConsAtomProd
+    ( swapCopyProductSector @m @n @(IrrepDim j)
+        (rPhaseSector @j1 @j2 @j @('Prod m n) v)
+    )
+    (rmoveSpine @j1 @j2 rs)
+
+-- Fused spines should not retain unfused @'Tensor'@ heads; keep total.
+rmoveSpine (RConsTensorAtomM _ _) =
+  error "rmoveSpine: fused spine should not contain Tensor sectors"
+rmoveSpine (RConsTensorProd _ _) =
+  error "rmoveSpine: fused spine should not contain Tensor sectors"
+
+-- | Leaf braiding @r ⊗ s → s ⊗ r@ on a fused pair (@fuse ∘ braid ≅ rmove ∘ fuse@).
+rmove
+  :: forall j1 j2 r s
+   . ( RmoveSpine j1 j2 (Fuse (Tensor r s))
+     , RmoveTarget j1 j2 (Fuse (Tensor r s)) ~ Fuse (Braid (Tensor r s))
+     )
+  => RepV (Fuse (Tensor r s))
+  -> RepV (Fuse (Braid (Tensor r s)))
+rmove = rmoveSpine @j1 @j2 @(Fuse (Tensor r s))
+
+-- | Same as 'rmove' on a distributed tensor rep (@'Tensor'@).
+rmoveTensor
+  :: forall j1 j2 r s
+   . ( RmoveSpine j1 j2 (Fuse (Tensor r s))
+     , RmoveTarget j1 j2 (Fuse (Tensor r s)) ~ Fuse (Braid (Tensor r s))
+     )
+  => RepV (Fuse (Tensor r s))
+  -> RepV (Fuse (Braid (Tensor r s)))
+rmoveTensor = rmove @j1 @j2 @r @s
+
+--------------------------------------------------------------------------------
 -- Compile-time smokes (type equalities)
 --------------------------------------------------------------------------------
 
@@ -1213,6 +1326,61 @@ type SmokeFuseTensor =
      , '( 'Atom 3, 'Prod 2 3)
      ]
 
+-- | @Fuse (Braid (Tensor …))@ swaps tensor legs and copy product.
+type SmokeFuseBraidTensor =
+  AssertEqRep
+    ( Fuse
+        ( Braid
+            ( Tensor
+                '[ '( 'Atom 1, 'AtomM 2)]
+                '[ '( 'Atom 2, 'AtomM 3)]
+            )
+        )
+    )
+    '[ '( 'Atom 1, 'Prod 3 2)
+     , '( 'Atom 3, 'Prod 3 2)
+     ]
+
+-- | 'RmoveTarget' on a leaf fused tensor matches @Fuse (Braid (Tensor …))@.
+type SmokeRmoveTarget =
+  AssertEqRep
+    ( RmoveTarget
+        1
+        2
+        ( Fuse
+            ( Tensor
+                '[ '( 'Atom 1, 'AtomM 2)]
+                '[ '( 'Atom 2, 'AtomM 3)]
+            )
+        )
+    )
+    ( Fuse
+        ( Braid
+            ( Tensor
+                '[ '( 'Atom 1, 'AtomM 2)]
+                '[ '( 'Atom 2, 'AtomM 3)]
+            )
+        )
+    )
+
+-- | Swapped tensor legs yield the same fused atom spine (@SU(2)@ CG symmetry).
+type SmokeFusedLeafSym =
+  AssertEqRep
+    ( Coalesce
+        (TagMult ('AtomM 6) (FuseIrrep ('Tensor 2 1)))
+    )
+    ( Coalesce
+        (TagMult ('AtomM 6) (FuseIrrep ('Tensor 1 2)))
+    )
+
+-- | Reference flat fuse layout for @1 ⊗ 2@, @m = 2@, @n = 3@.
+type SmokeFusedLeaf12 =
+  AssertEqRep
+    (Coalesce (TagMult ('AtomM 6) (FuseIrrep ('Tensor 1 2))))
+    '[ '( 'Atom 1, 'AtomM 6)
+     , '( 'Atom 3, 'AtomM 6)
+     ]
+
 -- | 'RepV' spine type is stable under its own index.
 type SmokeRepVSpine =
   AssertEqType
@@ -1254,6 +1422,18 @@ smokeFuseRepAtom = Proxy
 
 smokeFuseTensor :: Proxy SmokeFuseTensor
 smokeFuseTensor = Proxy
+
+smokeFuseBraidTensor :: Proxy SmokeFuseBraidTensor
+smokeFuseBraidTensor = Proxy
+
+smokeRmoveTarget :: Proxy SmokeRmoveTarget
+smokeRmoveTarget = Proxy
+
+smokeFusedLeafSym :: Proxy SmokeFusedLeafSym
+smokeFusedLeafSym = Proxy
+
+smokeFusedLeaf12 :: Proxy SmokeFusedLeaf12
+smokeFusedLeaf12 = Proxy
 
 smokeRepVSpine :: Proxy SmokeRepVSpine
 smokeRepVSpine = Proxy
