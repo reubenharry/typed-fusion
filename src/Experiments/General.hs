@@ -52,19 +52,42 @@ import Math.LinearMap.Category
   , type (⊗)
   , (⊗)
   )
+import Math.LinearMap.Asserted (getLinearFunction, linearFunction)
 import qualified Math.LinearMap.Category as LM (Tensor (..))
 import Math.VectorSpace.DimensionAware
   ( DimensionAware (..)
+  , Dimensional (..)
+  , StaticDimension
   , toArray
   , unsafeFromArray
   )
 import Numeric.LinearAlgebra.Static (C, Sized (fromList))
 import Prelude hiding (id, (.), ($))
 import qualified Symmetry.Group as SG
+import Symmetry.CG.FSymbol
+  ( BuildEyeHomG
+  , PackSchur
+  , fSymbolHomSU2
+  , fSymbolHomSU2Inv
+  , fSymbolHomU1
+  , fSymbolHomU1Inv
+  )
 import Symmetry.CG.SU2 (fuseSU2Flat)
 import Symmetry.CG.U1 (fuseU1Flat)
 import Symmetry.ChargeEq ()
+import Symmetry.FunctorExperiment
+  ( ApplyIntertwinerG
+  , CollectCompiledGo
+  , IntertwinerG (..)
+  , RepListG
+  , RepLookup
+  , ToCG (..)
+  , intertwinerLinearG
+  )
+import Symmetry.Group (IntertwinerHom, RepDimG)
+import Symmetry.HomBlock (HasHomBlock)
 import Symmetry.RepSingleton (KnownRep (..))
+import qualified Symmetry.Tensor as ST
 import Symmetry.Utils
   ( Add
   , Append
@@ -72,7 +95,7 @@ import Symmetry.Utils
   , Negate
   , Z (..)
   )
-import TensorNetwork.Categorical ((⊗^), swapMap)
+import TensorNetwork.Categorical ((⊗^), runit, swapMap)
 import qualified Data.Vector.Storable as VS
 
 --------------------------------------------------------------------------------
@@ -99,6 +122,50 @@ type Atom (m :: Nat) = C m
 -- | Product copy space @C m ⊗ C n@ (concrete 'LM.Tensor' so closed TFs can match;
 -- @⊗@ expands via 'Scalar' and is illegal in TF / instance heads).
 type Prod (m :: Nat) (n :: Nat) = LM.Tensor ℂ (C m) (C n)
+
+-- | Monoidal unit object (trivial irrep, multiplicity 1).
+type Trivial :: forall (g :: Group) -> Irreps g
+type family Trivial g where
+  Trivial U1 = 'Zero
+  Trivial SU2 = 0
+
+type Unit (g :: Group) = '[ '(Trivial g, Atom 1)]
+
+-- | Leaf spine @'[ '(j, Atom m)]@.
+type Leaf (g :: Group) (j :: Irreps g) (m :: Nat) = '[ '(j, Atom m)]
+
+-- | Flat multiplicity rep for CG / F-symbol plumbing.
+type Flat g (rs :: Reps g) = ForgetCopyLabel g rs
+
+type FusedLeft
+  (g :: Group) (a :: Irreps g) (ma :: Nat) (b :: Irreps g) (mb :: Nat)
+  (c :: Irreps g) (mc :: Nat) =
+  Tensor g
+    (FlattenCopies g (Tensor g (Leaf g a ma) (Leaf g b mb)))
+    (Leaf g c mc)
+
+type FusedRight
+  (g :: Group) (a :: Irreps g) (ma :: Nat) (b :: Irreps g) (mb :: Nat)
+  (c :: Irreps g) (mc :: Nat) =
+  Tensor g
+    (Leaf g a ma)
+    (FlattenCopies g (Tensor g (Leaf g b mb) (Leaf g c mc)))
+
+-- | Inner @(r ⊗ q)@ before attaching the third leaf in left parenthesization.
+type MidFuseLeft
+  (g :: Group) (a :: Irreps g) (ma :: Nat) (b :: Irreps g) (mb :: Nat) =
+  FlattenCopies g (Tensor g (Leaf g a ma) (Leaf g b mb))
+
+-- | Replace copy spaces by @Atom (DimOf copy)@ so outer 'TensorOne' (Atom×Atom)
+-- can fire. Flat CG / F-symbol see the same 'ForgetCopyLabel' multiplicities.
+type FlattenCopies :: forall (g :: Group) -> Reps g -> Reps g
+type family FlattenCopies g rs where
+  FlattenCopies U1 '[] = '[]
+  FlattenCopies U1 ('(j, copy) ': rs) =
+    '(j, Atom (DimOf copy)) ': FlattenCopies U1 rs
+  FlattenCopies SU2 '[] = '[]
+  FlattenCopies SU2 ('(j, copy) ': rs) =
+    '(j, Atom (DimOf copy)) ': FlattenCopies SU2 rs
 
 type family FromJust (m :: Maybe Nat) :: Nat where
   FromJust ('Just n) = n
@@ -630,31 +697,94 @@ instance
               ]
           )
 
+-- | Fuse @((r ⊗ q) ⊗ s)@ from three U(1) atomic sectors (left parenthesization).
+fuseFusedLeftU1
+  :: forall a ma b mb c mc j.
+     ( KnownNat ma
+     , KnownNat mb
+     , KnownNat mc
+     , j ~ Add a b
+     , KnownNat (IrrepDim U1 a)
+     , KnownNat (IrrepDim U1 b)
+     , KnownNat (IrrepDim U1 c)
+     , KnownNat (ma * mb)
+     , SingI a
+     , SingI b
+     , SingI c
+     , CanFuse U1 (Leaf U1 a ma) (Leaf U1 b mb)
+     , KnownRep SG.U1 (ForgetCopyLabel U1 (MidFuseLeft U1 a ma b mb))
+     , KnownRep SG.U1 (ForgetCopyLabel U1 (Leaf U1 c mc))
+     , UnpackFusedFlat U1 (FusedLeft U1 a ma b mb c mc)
+     , MidFuseLeft U1 a ma b mb ~ '[ '(j, Atom (ma * mb))]
+     , DimensionAware (Sector U1 j (Atom (ma * mb)) ⊗ Sector U1 c (Atom mc))
+     , (ma * mb) `Dimensional` Sector U1 j (Atom (ma * mb))
+     , KnownNat (DimOf (Atom (ma * mb)) * IrrepDim U1 j)
+     )
+  => Sector U1 a (Atom ma)
+  -> Sector U1 b (Atom mb)
+  -> Sector U1 c (Atom mc)
+  -> FuseSpine U1 (FusedLeft U1 a ma b mb c mc)
+fuseFusedLeftU1 sa sb sc =
+  unpackFusedFlat @U1 @(FusedLeft U1 a ma b mb c mc) $
+    fuseU1Flat
+      (repSing @SG.U1 @(ForgetCopyLabel U1 (MidFuseLeft U1 a ma b mb)))
+      (repSing @SG.U1 @(ForgetCopyLabel U1 (Leaf U1 c mc)))
+      (toArray (sectorFlat ⊗ sc))
+  where
+    (sectorRq :& HNil) =
+      fuse @U1 @(Leaf U1 a ma) @(Leaf U1 b mb) (tensorSectors @U1 @a @ma @b @mb sa sb)
+    sectorFlat :: Sector U1 j (Atom (ma * mb))
+    sectorFlat = unsafeFromArray (toArray sectorRq :: VS.Vector (Complex Double))
+
+-- | Fuse @((r ⊗ q) ⊗ s)@ for @j=0@ SU(2) atoms (left parenthesization).
+fuseFusedLeftSU2
+  :: forall c mc.
+     ( KnownNat mc
+     , KnownNat c
+     , KnownNat (IrrepDim SU2 c)
+     , CanFuse SU2 (Leaf SU2 0 1) (Leaf SU2 0 1)
+     , KnownRep SG.SU2 (ForgetCopyLabel SU2 (MidFuseLeft SU2 0 1 0 1))
+     , KnownRep SG.SU2 (ForgetCopyLabel SU2 (Leaf SU2 c mc))
+     , UnpackFusedFlat SU2 (FusedLeft SU2 0 1 0 1 c mc)
+     , MidFuseLeft SU2 0 1 0 1 ~ '[ '(0, Atom 1)]
+     , DimensionAware (Sector SU2 0 (Atom 1) ⊗ Sector SU2 c (Atom mc))
+     , 1 `Dimensional` Sector SU2 0 (Atom 1)
+     )
+  => Sector SU2 c (Atom mc)
+  -> FuseSpine SU2 (FusedLeft SU2 0 1 0 1 c mc)
+fuseFusedLeftSU2 sc =
+  unpackFusedFlat @SU2 @(FusedLeft SU2 0 1 0 1 c mc) $
+    fuseSU2Flat
+      (repSing @SG.SU2 @(ForgetCopyLabel SU2 (MidFuseLeft SU2 0 1 0 1)))
+      (repSing @SG.SU2 @(ForgetCopyLabel SU2 (Leaf SU2 c mc)))
+      (toArray (sectorFlat ⊗ sc))
+  where
+    sa = asSector1 (Irrep (fromList [1]) :: Irrep SU2 0)
+    sb = asSector1 (Irrep (fromList [1]) :: Irrep SU2 0)
+    (sectorRq :& HNil) =
+      fuse @SU2 @(Leaf SU2 0 1) @(Leaf SU2 0 1) (tensorSectors @SU2 @0 @1 @0 @1 sa sb)
+    sectorFlat :: Sector SU2 0 (Atom 1)
+    sectorFlat = unsafeFromArray (toArray sectorRq :: VS.Vector (Complex Double))
+
 --------------------------------------------------------------------------------
 -- rmove
 --------------------------------------------------------------------------------
 
-rPhaseScalar
-  :: forall j1 j2 j. (KnownNat j1, KnownNat j2, KnownNat j)
-  => Complex Double
-rPhaseScalar =
-  let tj1 = fromIntegral (natVal (Proxy @j1)) :: Int
-      tj2 = fromIntegral (natVal (Proxy @j2))
-      tj = fromIntegral (natVal (Proxy @j))
-  in  ((-1) ^ ((tj1 + tj2 - tj) `div` 2)) :+ 0
 
 rPhaseSector
   :: forall j1 j2 j lbl.
      ( KnownNat j1
      , KnownNat j2
      , KnownNat j
-     , KnownNat (IrrepDim SU2 j)
      , VectorSpace (Sector SU2 j lbl)
      , Scalar (Sector SU2 j lbl) ~ Complex Double
      )
-  => Sector SU2 j lbl
-  -> Sector SU2 j lbl
-rPhaseSector = (rPhaseScalar @j1 @j2 @j *^)
+  => Sector SU2 j lbl -> Sector SU2 j lbl
+rPhaseSector = ((((-1) ^ ((tj1 + tj2 - tj) `div` 2)) :+ 0) *^) where
+
+  tj1 = fromIntegral (natVal (Proxy @j1)) :: Int
+  tj2 = fromIntegral (natVal (Proxy @j2))
+  tj = fromIntegral (natVal (Proxy @j))
 
 -- | Categorical swap of copy factors @C m ⊗ C n@ (irrep leg unchanged).
 swapCopyProductSector
@@ -724,6 +854,7 @@ instance
     swapCopyProductSector @m @n @(IrrepDim U1 j) sec
       :& rmoveSectors @U1 @a @b @rs rest
 
+
 instance
   ( CanRmove SU2 a b rs
   , KnownNat a
@@ -749,3 +880,435 @@ rmove
   -> BraidedFuse g '[ '(a, Atom m)] '[ '(b, Atom n)]
 rmove =
   rmoveSectors @g @a @b @(Tensor g '[ '(a, Atom m)] '[ '(b, Atom n)])
+
+
+--------------------------------------------------------------------------------
+-- Fused unitors (leaf): I ⊗ X ≅ X ≅ X ⊗ I
+--------------------------------------------------------------------------------
+
+-- | @(C m ⊗ C 1) ⊗ C d → C m ⊗ C d@.
+runitCopySector
+  :: forall m d.
+     ( KnownNat m
+     , KnownNat d
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C d)
+     , LSpace (C m ⊗ C 1)
+     , LSpace (C m ⊗ C d)
+     , LSpace (C m ⊗ C 1 ⊗ C d)
+     , TensorSpace (C m ⊗ C 1 ⊗ C d)
+     , TensorSpace (C m ⊗ C d)
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C d) ~ Complex Double
+     )
+  => (C m ⊗ C 1) ⊗ C d
+  -> C m ⊗ C d
+runitCopySector sec = (runit @(C m) ⊗^ id) $ sec
+
+-- | @(C 1 ⊗ C m) ⊗ C d → C m ⊗ C d@ (@swap@ then right unitor).
+lunitCopySector
+  :: forall m d.
+     ( KnownNat m
+     , KnownNat d
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C d)
+     , LSpace (C m ⊗ C 1)
+     , LSpace (C 1 ⊗ C m)
+     , LSpace (C m ⊗ C d)
+     , LSpace (C m ⊗ C 1 ⊗ C d)
+     , LSpace (C 1 ⊗ C m ⊗ C d)
+     , TensorSpace (C m ⊗ C 1 ⊗ C d)
+     , TensorSpace (C 1 ⊗ C m ⊗ C d)
+     , TensorSpace (C m ⊗ C d)
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C d) ~ Complex Double
+     )
+  => (C 1 ⊗ C m) ⊗ C d
+  -> C m ⊗ C d
+lunitCopySector sec =
+  runitCopySector @m @d $ (swapMap ⊗^ id) $ sec
+
+introRight1 :: forall m. (KnownNat m, LSpace (C m), Scalar (C m) ~ Complex Double)
+  => C m +> (C m ⊗ C 1)
+introRight1 = arr (linearFunction (\c -> c ⊗ oneC1))
+
+introLeft1 :: forall m. (KnownNat m, LSpace (C m), Scalar (C m) ~ Complex Double)
+  => C m +> (C 1 ⊗ C m)
+introLeft1 = arr (linearFunction (\c -> oneC1 ⊗ c))
+
+-- | @C m ⊗ C d → (C m ⊗ C 1) ⊗ C d@.
+runitCopySectorInv
+  :: forall m d.
+     ( KnownNat m
+     , KnownNat d
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C d)
+     , LSpace (C m ⊗ C 1)
+     , LSpace (C m ⊗ C d)
+     , LSpace (C m ⊗ C 1 ⊗ C d)
+     , TensorSpace (C m ⊗ C d)
+     , TensorSpace (C m ⊗ C 1 ⊗ C d)
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C d) ~ Complex Double
+     )
+  => C m ⊗ C d
+  -> (C m ⊗ C 1) ⊗ C d
+runitCopySectorInv sec = (introRight1 @m ⊗^ id) $ sec
+
+-- | @C m ⊗ C d → (C 1 ⊗ C m) ⊗ C d@.
+lunitCopySectorInv
+  :: forall m d.
+     ( KnownNat m
+     , KnownNat d
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C d)
+     , LSpace (C 1 ⊗ C m)
+     , LSpace (C m ⊗ C d)
+     , LSpace (C 1 ⊗ C m ⊗ C d)
+     , TensorSpace (C m ⊗ C d)
+     , TensorSpace (C 1 ⊗ C m ⊗ C d)
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C d) ~ Complex Double
+     )
+  => C m ⊗ C d
+  -> (C 1 ⊗ C m) ⊗ C d
+lunitCopySectorInv sec = (introLeft1 @m ⊗^ id) $ sec
+
+-- | Left fused unitor @λ : I ⊗ X → X@ (leaf).
+lunitFuse
+  :: forall g j m.
+     ( Tensor g (Unit g) '[ '(j, Atom m)] ~ '[ '(j, Prod 1 m)]
+     , RepToVectors g '[ '(j, Prod 1 m)] ~ '[Sector g j (Prod 1 m)]
+     , RepToVectors g '[ '(j, Atom m)] ~ '[Sector g j (Atom m)]
+     , KnownNat m
+     , KnownNat (IrrepDim g j)
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C (IrrepDim g j))
+     , LSpace (C m ⊗ C 1)
+     , LSpace (C 1 ⊗ C m)
+     , LSpace (C m ⊗ C (IrrepDim g j))
+     , LSpace (C m ⊗ C 1 ⊗ C (IrrepDim g j))
+     , LSpace (C 1 ⊗ C m ⊗ C (IrrepDim g j))
+     , TensorSpace (C m ⊗ C 1 ⊗ C (IrrepDim g j))
+     , TensorSpace (C 1 ⊗ C m ⊗ C (IrrepDim g j))
+     , TensorSpace (C m ⊗ C (IrrepDim g j))
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C (IrrepDim g j)) ~ Complex Double
+     )
+  => Fuse g (Unit g) '[ '(j, Atom m)]
+  -> HList (RepToVectors g '[ '(j, Atom m)])
+lunitFuse (sec :& HNil) =
+  lunitCopySector @m @(IrrepDim g j) sec :& HNil
+
+-- | Right fused unitor @ρ : X ⊗ I → X@ (leaf).
+runitFuse
+  :: forall g j m.
+     ( Tensor g '[ '(j, Atom m)] (Unit g) ~ '[ '(j, Prod m 1)]
+     , RepToVectors g '[ '(j, Prod m 1)] ~ '[Sector g j (Prod m 1)]
+     , RepToVectors g '[ '(j, Atom m)] ~ '[Sector g j (Atom m)]
+     , KnownNat m
+     , KnownNat (IrrepDim g j)
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C (IrrepDim g j))
+     , LSpace (C m ⊗ C 1)
+     , LSpace (C m ⊗ C (IrrepDim g j))
+     , LSpace (C m ⊗ C 1 ⊗ C (IrrepDim g j))
+     , TensorSpace (C m ⊗ C 1 ⊗ C (IrrepDim g j))
+     , TensorSpace (C m ⊗ C (IrrepDim g j))
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C (IrrepDim g j)) ~ Complex Double
+     )
+  => Fuse g '[ '(j, Atom m)] (Unit g)
+  -> HList (RepToVectors g '[ '(j, Atom m)])
+runitFuse (sec :& HNil) =
+  runitCopySector @m @(IrrepDim g j) sec :& HNil
+
+lunitFuseInv
+  :: forall g j m.
+     ( Tensor g (Unit g) '[ '(j, Atom m)] ~ '[ '(j, Prod 1 m)]
+     , RepToVectors g '[ '(j, Prod 1 m)] ~ '[Sector g j (Prod 1 m)]
+     , RepToVectors g '[ '(j, Atom m)] ~ '[Sector g j (Atom m)]
+     , KnownNat m
+     , KnownNat (IrrepDim g j)
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C (IrrepDim g j))
+     , LSpace (C 1 ⊗ C m)
+     , LSpace (C m ⊗ C (IrrepDim g j))
+     , LSpace (C 1 ⊗ C m ⊗ C (IrrepDim g j))
+     , TensorSpace (C m ⊗ C (IrrepDim g j))
+     , TensorSpace (C 1 ⊗ C m ⊗ C (IrrepDim g j))
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C (IrrepDim g j)) ~ Complex Double
+     )
+  => HList (RepToVectors g '[ '(j, Atom m)])
+  -> Fuse g (Unit g) '[ '(j, Atom m)]
+lunitFuseInv (sec :& HNil) =
+  lunitCopySectorInv @m @(IrrepDim g j) sec :& HNil
+
+runitFuseInv
+  :: forall g j m.
+     ( Tensor g '[ '(j, Atom m)] (Unit g) ~ '[ '(j, Prod m 1)]
+     , RepToVectors g '[ '(j, Prod m 1)] ~ '[Sector g j (Prod m 1)]
+     , RepToVectors g '[ '(j, Atom m)] ~ '[Sector g j (Atom m)]
+     , KnownNat m
+     , KnownNat (IrrepDim g j)
+     , LSpace (C m)
+     , LSpace (C 1)
+     , LSpace (C (IrrepDim g j))
+     , LSpace (C m ⊗ C 1)
+     , LSpace (C m ⊗ C (IrrepDim g j))
+     , LSpace (C m ⊗ C 1 ⊗ C (IrrepDim g j))
+     , TensorSpace (C m ⊗ C (IrrepDim g j))
+     , TensorSpace (C m ⊗ C 1 ⊗ C (IrrepDim g j))
+     , Scalar (C m) ~ Complex Double
+     , Scalar (C (IrrepDim g j)) ~ Complex Double
+     )
+  => HList (RepToVectors g '[ '(j, Atom m)])
+  -> Fuse g '[ '(j, Atom m)] (Unit g)
+runitFuseInv (sec :& HNil) =
+  runitCopySectorInv @m @(IrrepDim g j) sec :& HNil
+
+--------------------------------------------------------------------------------
+-- F-move (leaf): ((r ⊗ q) ⊗ s) → (r ⊗ (q ⊗ s))
+--------------------------------------------------------------------------------
+
+class FusedToArray (xs :: [Type]) where
+  fusedToArray :: HList xs -> VS.Vector (Complex Double)
+
+instance FusedToArray '[] where
+  fusedToArray HNil = VS.empty
+
+instance
+  ( KnownNat n
+  , n `Dimensional` x
+  , Scalar x ~ Complex Double
+  , FusedToArray xs
+  ) =>
+  FusedToArray (x ': xs)
+  where
+  fusedToArray (x :& xs) =
+    VS.concat [toArray x, fusedToArray xs]
+
+type STLeft g r q s = ST.Tensor g (ST.Tensor g r q) s
+type STRight g r q s = ST.Tensor g r (ST.Tensor g q s)
+
+applyFlatInter
+  :: forall g r q.
+     ( RepLookup g
+     , HasHomBlock g
+     , CollectCompiledGo g
+     , KnownRep g r
+     , KnownRep g q
+     , RepListG g r
+     , RepListG g q
+     , ApplyIntertwinerG g r q
+     , KnownNat (RepDimG g r)
+     , KnownNat (RepDimG g q)
+     )
+  => IntertwinerG g r q
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+applyFlatInter mor vin =
+  case getLinearFunction (intertwinerLinearG mor) (ToCG (unsafeFromArray vin)) of
+    ToCG out -> toArray out
+
+type FuseSpine g (rs :: Reps g) = HList (RepToVectors g rs)
+
+type FusedLeftSpine
+  g a ma b mb c mc = RepToVectors g (FusedLeft g a ma b mb c mc)
+
+type FusedRightSpine
+  g a ma b mb c mc = RepToVectors g (FusedRight g a ma b mb c mc)
+
+class CanFmove g (a :: Irreps g) (ma :: Nat) (b :: Irreps g) (mb :: Nat) (c :: Irreps g) (mc :: Nat) where
+  fmove
+    :: FuseSpine g (FusedLeft g a ma b mb c mc)
+    -> FuseSpine g (FusedRight g a ma b mb c mc)
+  fmoveInv
+    :: FuseSpine g (FusedRight g a ma b mb c mc)
+    -> FuseSpine g (FusedLeft g a ma b mb c mc)
+
+instance
+  ( KnownNat ma
+  , KnownNat mb
+  , KnownNat mc
+  , SingI a
+  , SingI b
+  , SingI c
+  , r ~ Flat U1 (Leaf U1 a ma)
+  , q ~ Flat U1 (Leaf U1 b mb)
+  , s ~ Flat U1 (Leaf U1 c mc)
+  , left ~ Flat U1 (FusedLeft U1 a ma b mb c mc)
+  , right ~ Flat U1 (FusedRight U1 a ma b mb c mc)
+  , stLeft ~ STLeft SG.U1 r q s
+  , stRight ~ STRight SG.U1 r q s
+  , KnownRep SG.U1 r
+  , KnownRep SG.U1 q
+  , KnownRep SG.U1 s
+  , KnownRep SG.U1 (ST.Tensor SG.U1 r q)
+  , KnownRep SG.U1 (ST.Tensor SG.U1 q s)
+  , KnownRep SG.U1 stLeft
+  , KnownRep SG.U1 stRight
+  , UnpackFusedFlat U1 (FusedLeft U1 a ma b mb c mc)
+  , UnpackFusedFlat U1 (FusedRight U1 a ma b mb c mc)
+  , FusedToArray (FusedLeftSpine U1 a ma b mb c mc)
+  , FusedToArray (FusedRightSpine U1 a ma b mb c mc)
+  , BuildEyeHomG SG.U1 (IntertwinerHom SG.U1 stLeft stRight)
+  , BuildEyeHomG SG.U1 (IntertwinerHom SG.U1 stRight stLeft)
+  , Add (Add a b) c ~ Add a (Add b c)
+  , (ma * mb) * mc ~ ma * (mb * mc)
+  , RepListG SG.U1 stLeft
+  , RepListG SG.U1 stRight
+  , KnownNat (RepDimG SG.U1 stLeft)
+  , KnownNat (RepDimG SG.U1 stRight)
+  , RepDimG SG.U1 left ~ RepDimG SG.U1 stLeft
+  , RepDimG SG.U1 right ~ RepDimG SG.U1 stRight
+  , HasBasis (FuseSpine U1 (FusedLeft U1 a ma b mb c mc))
+  , HasBasis (FuseSpine U1 (FusedRight U1 a ma b mb c mc))
+  , Scalar (FuseSpine U1 (FusedLeft U1 a ma b mb c mc)) ~ Complex Double
+  , Scalar (FuseSpine U1 (FusedRight U1 a ma b mb c mc)) ~ Complex Double
+  ) =>
+  CanFmove U1 a ma b mb c mc
+  where
+  fmove =
+    recompose @(FuseSpine U1 (FusedRight U1 a ma b mb c mc))
+      . f
+      . decompose @(FuseSpine U1 (FusedLeft U1 a ma b mb c mc))
+    where
+      mor = fSymbolHomU1 (Proxy @r) (Proxy @q) (Proxy @s)
+      flatF t =
+        unpackFusedFlat @U1 @(FusedRight U1 a ma b mb c mc) $
+          applyFlatInter @SG.U1 @stLeft @stRight mor (fusedToArray t)
+      f =
+        concatMap
+          ( \(b0, c0) ->
+              [ (b1, c0 * coeff)
+              | (b1, coeff) <-
+                  decompose @(FuseSpine U1 (FusedRight U1 a ma b mb c mc))
+                    ( flatF
+                        ( basisValue
+                            @(FuseSpine U1 (FusedLeft U1 a ma b mb c mc))
+                            b0
+                        )
+                    )
+              ]
+          )
+
+  fmoveInv =
+    recompose @(FuseSpine U1 (FusedLeft U1 a ma b mb c mc))
+      . f
+      . decompose @(FuseSpine U1 (FusedRight U1 a ma b mb c mc))
+    where
+      mor = fSymbolHomU1Inv (Proxy @r) (Proxy @q) (Proxy @s)
+      flatF t =
+        unpackFusedFlat @U1 @(FusedLeft U1 a ma b mb c mc) $
+          applyFlatInter @SG.U1 @stRight @stLeft mor (fusedToArray t)
+      f =
+        concatMap
+          ( \(b0, c0) ->
+              [ (b1, c0 * coeff)
+              | (b1, coeff) <-
+                  decompose @(FuseSpine U1 (FusedLeft U1 a ma b mb c mc))
+                    ( flatF
+                        ( basisValue
+                            @(FuseSpine U1 (FusedRight U1 a ma b mb c mc))
+                            b0
+                        )
+                    )
+              ]
+          )
+
+instance
+  ( KnownNat a
+  , KnownNat b
+  , KnownNat c
+  , KnownNat ma
+  , KnownNat mb
+  , KnownNat mc
+  , r ~ Flat SU2 (Leaf SU2 a ma)
+  , q ~ Flat SU2 (Leaf SU2 b mb)
+  , s ~ Flat SU2 (Leaf SU2 c mc)
+  , left ~ Flat SU2 (FusedLeft SU2 a ma b mb c mc)
+  , right ~ Flat SU2 (FusedRight SU2 a ma b mb c mc)
+  , stLeft ~ STLeft SG.SU2 r q s
+  , stRight ~ STRight SG.SU2 r q s
+  , KnownRep SG.SU2 r
+  , KnownRep SG.SU2 q
+  , KnownRep SG.SU2 s
+  , KnownRep SG.SU2 (ST.Tensor SG.SU2 r q)
+  , KnownRep SG.SU2 (ST.Tensor SG.SU2 q s)
+  , KnownRep SG.SU2 stLeft
+  , KnownRep SG.SU2 stRight
+  , UnpackFusedFlat SU2 (FusedLeft SU2 a ma b mb c mc)
+  , UnpackFusedFlat SU2 (FusedRight SU2 a ma b mb c mc)
+  , FusedToArray (FusedLeftSpine SU2 a ma b mb c mc)
+  , FusedToArray (FusedRightSpine SU2 a ma b mb c mc)
+  , PackSchur (IntertwinerHom SG.SU2 stLeft stRight)
+  , PackSchur (IntertwinerHom SG.SU2 stRight stLeft)
+  , RepListG SG.SU2 stLeft
+  , RepListG SG.SU2 stRight
+  , KnownNat (RepDimG SG.SU2 stLeft)
+  , KnownNat (RepDimG SG.SU2 stRight)
+  , RepDimG SG.SU2 left ~ RepDimG SG.SU2 stLeft
+  , RepDimG SG.SU2 right ~ RepDimG SG.SU2 stRight
+  , HasBasis (FuseSpine SU2 (FusedLeft SU2 a ma b mb c mc))
+  , HasBasis (FuseSpine SU2 (FusedRight SU2 a ma b mb c mc))
+  , Scalar (FuseSpine SU2 (FusedLeft SU2 a ma b mb c mc)) ~ Complex Double
+  , Scalar (FuseSpine SU2 (FusedRight SU2 a ma b mb c mc)) ~ Complex Double
+  ) =>
+  CanFmove SU2 a ma b mb c mc
+  where
+  fmove =
+    recompose @(FuseSpine SU2 (FusedRight SU2 a ma b mb c mc))
+      . f
+      . decompose @(FuseSpine SU2 (FusedLeft SU2 a ma b mb c mc))
+    where
+      mor = fSymbolHomSU2 (Proxy @r) (Proxy @q) (Proxy @s)
+      flatF t =
+        unpackFusedFlat @SU2 @(FusedRight SU2 a ma b mb c mc) $
+          applyFlatInter @SG.SU2 @stLeft @stRight mor (fusedToArray t)
+      f =
+        concatMap
+          ( \(b0, c0) ->
+              [ (b1, c0 * coeff)
+              | (b1, coeff) <-
+                  decompose @(FuseSpine SU2 (FusedRight SU2 a ma b mb c mc))
+                    ( flatF
+                        ( basisValue
+                            @(FuseSpine SU2 (FusedLeft SU2 a ma b mb c mc))
+                            b0
+                        )
+                    )
+              ]
+          )
+
+  fmoveInv =
+    recompose @(FuseSpine SU2 (FusedLeft SU2 a ma b mb c mc))
+      . f
+      . decompose @(FuseSpine SU2 (FusedRight SU2 a ma b mb c mc))
+    where
+      mor = fSymbolHomSU2Inv (Proxy @r) (Proxy @q) (Proxy @s)
+      flatF t =
+        unpackFusedFlat @SU2 @(FusedLeft SU2 a ma b mb c mc) $
+          applyFlatInter @SG.SU2 @stRight @stLeft mor (fusedToArray t)
+      f =
+        concatMap
+          ( \(b0, c0) ->
+              [ (b1, c0 * coeff)
+              | (b1, coeff) <-
+                  decompose @(FuseSpine SU2 (FusedLeft SU2 a ma b mb c mc))
+                    ( flatF
+                        ( basisValue
+                            @(FuseSpine SU2 (FusedRight SU2 a ma b mb c mc))
+                            b0
+                        )
+                    )
+              ]
+          )

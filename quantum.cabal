@@ -101,6 +101,7 @@ library
         -- Off-roadmap experiments / scratch (kept building, see src/Experiments/)
         Experiments.General
         Experiments.GeneralExamples
+        Experiments.Symbolic
         Experiments.SU2
         Experiments.Experiment
         Experiments.Experiment2
