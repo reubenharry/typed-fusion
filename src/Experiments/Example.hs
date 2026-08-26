@@ -78,20 +78,20 @@ example4' :: Irrep U1 (Pos 2) -- j = 1/2
 example4' = Irrep 1
 
 
-example5 :: Fuse SU2 '[ '(1, 1)] '[ '(3, 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example5 :: Fuse SU2 '[ '(1, Atom 1)] '[ '(3, Atom 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
 example5 = undefined
 
-example6 :: Fuse SU2 '[ '(1, 1)] '[ '(3, 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
+example6 :: Fuse SU2 '[ '(1, Atom 1)] '[ '(3, Atom 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
 example6 = undefined
 
-example7 :: Fuse U1 '[ '(Pos 1, 1)] '[ '(Pos 1, 1)]
+example7 :: Fuse U1 '[ '(Pos 1, Atom 1)] '[ '(Pos 1, Atom 1)]
 example7 = undefined
 
 
-example8 :: Representation U1 '[ '(Pos 1, 1)]
+example8 :: Representation U1 '[ '(Pos 1, Atom 1)]
 example8 = Representation undefined
 
-example8' :: Representation SU2 '[ '(3, 1)]
+example8' :: Representation SU2 '[ '(3, Atom 1)]
 example8' = Representation undefined
 
 
