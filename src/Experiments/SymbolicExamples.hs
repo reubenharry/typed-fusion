@@ -31,19 +31,19 @@ sCoalesce2 =
 exCoalesceMerge :: RepV '[ '( 'Atom 1, 'AtomM 5)]
 exCoalesceMerge =
   coalesce @'[ '( 'Atom 1, 'AtomM 2), '( 'Atom 1, 'AtomM 3)] $
-    RCons sCoalesce1 (RCons sCoalesce2 RNil)
+    RConsAtomAtomM sCoalesce1 (RConsAtomAtomM sCoalesce2 RNil)
 
 -- | Merged sector flat length matches coalesced multiplicity × irrep dim.
 coalesceMergeFlatDimOk :: Bool
 coalesceMergeFlatDimOk =
-  let RCons v RNil = exCoalesceMerge
+  let RConsAtomAtomM v RNil = exCoalesceMerge
    in VS.length (toArray v)
         == sectorFlatDim (Proxy @'( 'Atom 1, 'AtomM 5))
 
 -- | Merge stacks copy slots (via 'TensorNetwork.Categorical.mergeCopyAxis').
 coalesceMergeDirectSumOk :: Bool
 coalesceMergeDirectSumOk =
-  let RCons v RNil = exCoalesceMerge
+  let RConsAtomAtomM v RNil = exCoalesceMerge
    in toArray v
         == VS.fromList [1, 0, 0, 1, 2, 0, 0, 2, 3, 0]
 
@@ -52,12 +52,12 @@ coalescePreservesFlatDimOk :: Bool
 coalescePreservesFlatDimOk =
   let v1 = sCoalesce1
       v2 = sCoalesce2
-      RCons vMerged RNil =
+      RConsAtomAtomM vMerged RNil =
         coalesce
           @'[ '( 'Atom 1, 'AtomM 2)
              , '( 'Atom 1, 'AtomM 3)
              ]
-          (RCons sCoalesce1 (RCons sCoalesce2 RNil))
+          (RConsAtomAtomM sCoalesce1 (RConsAtomAtomM sCoalesce2 RNil))
    in VS.length (toArray v1) + VS.length (toArray v2)
         == VS.length (toArray vMerged)
 

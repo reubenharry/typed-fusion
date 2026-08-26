@@ -69,7 +69,7 @@ instance
   unpackFusedRep flat =
     let d = sectorFlatDim (Proxy @'( 'Atom j, 'AtomM m))
         (here, restFlat) = VS.splitAt d flat
-    in RCons (unsafeFromArray here) (unpackFusedRep @rest restFlat)
+    in RConsAtomAtomM (unsafeFromArray here) (unpackFusedRep @rest restFlat)
 
 instance
   ( KnownNat j
@@ -84,7 +84,7 @@ instance
   unpackFusedRep flat =
     let d = sectorFlatDim (Proxy @'( 'Atom j, 'Prod m n))
         (here, restFlat) = VS.splitAt d flat
-    in RCons (unsafeFromArray here) (unpackFusedRep @rest restFlat)
+    in RConsAtomProd (unsafeFromArray here) (unpackFusedRep @rest restFlat)
 
 -- | Flat @fuseSU2Flat@ oracle for one tensor sector.
 fuseOneSectorTensorReference
@@ -136,7 +136,7 @@ fuseTensorReference
            '[ '( 'Atom j2, 'AtomM m2)]
        )
   -> RepV (Coalesce (TensorFusedFlat j1 j2 m1 m2))
-fuseTensorReference (RCons sv RNil) =
+fuseTensorReference (RConsTensorProd sv RNil) =
   coalesce @(TensorFusedFlat j1 j2 m1 m2) $
     fuseOneSectorTensorReference @j1 @j2 @m1 @m2 sv
 fuseTensorReference _ =
