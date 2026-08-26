@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -33,7 +34,7 @@
 module Experiments.Symbolic where
 
 import Data.Complex (Complex)
-import Data.Kind (Type)
+import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
 import Data.VectorSpace (Scalar)
 import GHC.TypeLits (CmpNat, KnownNat, Nat, type (*), type (+))
@@ -156,12 +157,12 @@ type family IrrepDim (j :: Nat) :: Nat where
   IrrepDim j = j + 1
 
 -- | Sector space from irrep expression + multiplicity.
-type family ToVSectorE (e :: IrrepExpr) (μ :: MultExpr) :: Type where
-  ToVSectorE ('Atom j) ('AtomM m) = C m ⊗ C (IrrepDim j)
-  ToVSectorE ('Atom j) ('Prod m n) = (C m ⊗ C n) ⊗ C (IrrepDim j)
-  ToVSectorE ('Tensor j1 j2) ('AtomM m) =
+type family ToVSector (e :: IrrepExpr) (μ :: MultExpr) :: Type where
+  ToVSector ('Atom j) ('AtomM m) = C m ⊗ C (IrrepDim j)
+  ToVSector ('Atom j) ('Prod m n) = (C m ⊗ C n) ⊗ C (IrrepDim j)
+  ToVSector ('Tensor j1 j2) ('AtomM m) =
     C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2)
-  ToVSectorE ('Tensor j1 j2) ('Prod m n) =
+  ToVSector ('Tensor j1 j2) ('Prod m n) =
     (C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2))
 
 --------------------------------------------------------------------------------
@@ -214,14 +215,10 @@ type family Tensor (r :: Rep) (q :: Rep) :: Rep where
 -- Term-level spine ('RepV') and fusion
 --------------------------------------------------------------------------------
 
--- | One sector, indexed by irrep key and multiplicity.
-data SectorV (e :: IrrepExpr) (μ :: MultExpr) where
-  SV :: ToVSectorE e μ -> SectorV e μ
-
 -- | Spine of sectors, indexed by type-level 'Rep'.
 data RepV (rs :: Rep) where
   RNil :: RepV '[]
-  RCons :: SectorV e μ -> RepV rest -> RepV ('(e, μ) ': rest)
+  RCons :: ToVSector e μ -> RepV rest -> RepV ('(e, μ) ': rest)
 
 -- | Link @'Rep'@ to fuse / coalesce on the term-level spine.
 class KnownSymbolicRep (rs :: Rep) where
@@ -240,8 +237,8 @@ instance
   KnownSymbolicRep ('(e, μ) ': rest)
   where
   fuseRaw (RCons sv rs) =
-    appendRepV (fuseOneSector sv) (fuseRaw rs)
-  coalesce (RCons sv rs) = insertSpine sv (coalesce rs)
+    appendRepV (fuseOneSector @e @μ sv) (fuseRaw rs)
+  coalesce (RCons sv rs) = insertSpine @e @μ sv (coalesce rs)
 
 -- | Append two spines (@'Append'@ on keys).
 appendRepV
@@ -253,7 +250,7 @@ appendRepV (RCons sv rest) r2 = RCons sv (appendRepV rest r2)
 
 -- | CG-fuse one sector to a (possibly longer) atom spine.
 class FuseOneSector (e :: IrrepExpr) (μ :: MultExpr) where
-  fuseOneSector :: SectorV e μ -> RepV (FuseSector '(e, μ))
+  fuseOneSector :: ToVSector e μ -> RepV (FuseSector '(e, μ))
 
 instance
   ( KnownNat j
@@ -263,7 +260,7 @@ instance
   ) =>
   FuseOneSector ('Atom j) ('AtomM m)
   where
-  fuseOneSector (SV v) = RCons (SV v) RNil
+  fuseOneSector v = RCons v RNil
 
 instance
   ( KnownNat j
@@ -274,7 +271,7 @@ instance
   ) =>
   FuseOneSector ('Atom j) ('Prod m n)
   where
-  fuseOneSector (SV v) = RCons (SV v) RNil
+  fuseOneSector v = RCons v RNil
 
 instance
   ( KnownNat j1
@@ -287,13 +284,13 @@ instance
   where
   fuseOneSector _ =
     undefined
-      -- Blocker: typed SU(2) CG fuse on @ToVSectorE@ (no flat buffer).
+      -- Blocker: typed SU(2) CG fuse on @ToVSector@ (no flat buffer).
       -- Oracle: 'Experiments.Symbolic.Reference.fuseOneSectorTensorReference'.
 
 -- | Insert one sector into a coalesced spine (sort + merge on equal keys).
 class InsertSpine (e :: IrrepExpr) (μ :: MultExpr) (rs :: Rep) where
   insertSpine
-    :: SectorV e μ
+    :: ToVSector e μ
     -> RepV rs
     -> RepV (InsertSector e μ rs)
 
@@ -306,7 +303,8 @@ instance
   ) =>
   InsertSpine e μ ('(e2, μ2) ': rest)
   where
-  insertSpine sv (RCons sv2 restR) = insertCompared @ord sv sv2 restR
+  insertSpine sv (RCons sv2 restR) =
+    insertCompared @ord @e @μ @e2 @μ2 sv sv2 restR
 
 -- | Compare incoming sector @e@ against spine head @e2@ (@ord ~ CmpIrrep e e2@).
 class InsertCompared
@@ -316,16 +314,16 @@ class InsertCompared
   (rest :: Rep)
  where
   insertCompared
-    :: SectorV e μ
-    -> SectorV e2 μ2
+    :: ToVSector e μ
+    -> ToVSector e2 μ2
     -> RepV rest
     -> RepV (InsertSectorOrd ord e μ e2 μ2 rest)
 
 class MergeSector (j :: Nat) (μ1 :: MultExpr) (μ2 :: MultExpr) (μOut :: MultExpr) where
   mergeSector
-    :: SectorV ('Atom j) μ1
-    -> SectorV ('Atom j) μ2
-    -> SectorV ('Atom j) μOut
+    :: ToVSector ('Atom j) μ1
+    -> ToVSector ('Atom j) μ2
+    -> ToVSector ('Atom j) μOut
 
 instance
   ( KnownNat j
@@ -350,8 +348,8 @@ instance
   ) =>
   MergeSector j ('AtomM m1) ('AtomM m2) ('AtomM mOut)
   where
-  mergeSector (SV v1) (SV v2) =
-    SV (mergeCopyAxis @m1 @m2 @(IrrepDim j) v1 v2)
+  mergeSector v1 v2 =
+    mergeCopyAxis @m1 @m2 @(IrrepDim j) v1 v2
 
 instance
   ( KnownNat j
@@ -398,12 +396,10 @@ instance
   ) =>
   MergeSector j ('Prod m1 n1) ('Prod m2 n2) ('AtomM mOut)
   where
-  mergeSector (SV v1) (SV v2) =
-    SV
-      ( mergeCopyAxis @ma @mb @(IrrepDim j)
-          (flattenCopyProd @m1 @n1 @(IrrepDim j) v1)
-          (flattenCopyProd @m2 @n2 @(IrrepDim j) v2)
-      )
+  mergeSector v1 v2 =
+    mergeCopyAxis @ma @mb @(IrrepDim j)
+      (flattenCopyProd @m1 @n1 @(IrrepDim j) v1)
+      (flattenCopyProd @m2 @n2 @(IrrepDim j) v2)
 
 instance
   ( KnownNat j
@@ -439,11 +435,9 @@ instance
   ) =>
   MergeSector j ('AtomM m1) ('Prod m2 n2) ('AtomM mOut)
   where
-  mergeSector (SV v1) (SV v2) =
-    SV
-      ( mergeCopyAxis @m1 @mb @(IrrepDim j) v1
-          (flattenCopyProd @m2 @n2 @(IrrepDim j) v2)
-      )
+  mergeSector v1 v2 =
+    mergeCopyAxis @m1 @mb @(IrrepDim j) v1
+      (flattenCopyProd @m2 @n2 @(IrrepDim j) v2)
 
 instance
   ( KnownNat j
@@ -479,20 +473,18 @@ instance
   ) =>
   MergeSector j ('Prod m1 n1) ('AtomM m2) ('AtomM mOut)
   where
-  mergeSector (SV v1) (SV v2) =
-    SV
-      ( mergeCopyAxis @ma @m2 @(IrrepDim j)
-          (flattenCopyProd @m1 @n1 @(IrrepDim j) v1)
-          v2
-      )
+  mergeSector v1 v2 =
+    mergeCopyAxis @ma @m2 @(IrrepDim j)
+      (flattenCopyProd @m1 @n1 @(IrrepDim j) v1)
+      v2
 
 class MergeTensorSector
   (j1 :: Nat) (j2 :: Nat) (μ1 :: MultExpr) (μ2 :: MultExpr) (μOut :: MultExpr)
  where
   mergeTensorSector
-    :: SectorV ('Tensor j1 j2) μ1
-    -> SectorV ('Tensor j1 j2) μ2
-    -> SectorV ('Tensor j1 j2) μOut
+    :: ToVSector ('Tensor j1 j2) μ1
+    -> ToVSector ('Tensor j1 j2) μ2
+    -> ToVSector ('Tensor j1 j2) μOut
 
 instance
   ( KnownNat j1
@@ -523,8 +515,8 @@ instance
   ) =>
   MergeTensorSector j1 j2 ('AtomM m1) ('AtomM m2) ('AtomM mOut)
   where
-  mergeTensorSector (SV v1) (SV v2) =
-    SV (mergeCopyAxisTensorLeft @m1 @m2 @(IrrepDim j1) @(IrrepDim j2) v1 v2)
+  mergeTensorSector v1 v2 =
+    mergeCopyAxisTensorLeft @m1 @m2 @(IrrepDim j1) @(IrrepDim j2) v1 v2
 
 instance
   ( KnownNat j1
@@ -575,12 +567,10 @@ instance
   ) =>
   MergeTensorSector j1 j2 ('Prod m1 n1) ('Prod m2 n2) ('AtomM mOut)
   where
-  mergeTensorSector (SV v1) (SV v2) =
-    SV
-      ( mergeCopyAxisTensorLeft @ma @mb @(IrrepDim j1) @(IrrepDim j2)
-          (tensorProdLeft (flattenTensorProdCopy @m1 @n1 @(IrrepDim j1) @(IrrepDim j2) v1))
-          (tensorProdLeft (flattenTensorProdCopy @m2 @n2 @(IrrepDim j1) @(IrrepDim j2) v2))
-      )
+  mergeTensorSector v1 v2 =
+    mergeCopyAxisTensorLeft @ma @mb @(IrrepDim j1) @(IrrepDim j2)
+      (tensorProdLeft (flattenTensorProdCopy @m1 @n1 @(IrrepDim j1) @(IrrepDim j2) v1))
+      (tensorProdLeft (flattenTensorProdCopy @m2 @n2 @(IrrepDim j1) @(IrrepDim j2) v2))
 
 instance
   ( KnownNat j1
@@ -621,11 +611,9 @@ instance
   ) =>
   MergeTensorSector j1 j2 ('AtomM m1) ('Prod m2 n2) ('AtomM mOut)
   where
-  mergeTensorSector (SV v1) (SV v2) =
-    SV
-      ( mergeCopyAxisTensorLeft @m1 @mb @(IrrepDim j1) @(IrrepDim j2) v1
-          (tensorProdLeft (flattenTensorProdCopy @m2 @n2 @(IrrepDim j1) @(IrrepDim j2) v2))
-      )
+  mergeTensorSector v1 v2 =
+    mergeCopyAxisTensorLeft @m1 @mb @(IrrepDim j1) @(IrrepDim j2) v1
+      (tensorProdLeft (flattenTensorProdCopy @m2 @n2 @(IrrepDim j1) @(IrrepDim j2) v2))
 
 instance
   ( KnownNat j1
@@ -666,12 +654,10 @@ instance
   ) =>
   MergeTensorSector j1 j2 ('Prod m1 n1) ('AtomM m2) ('AtomM mOut)
   where
-  mergeTensorSector (SV v1) (SV v2) =
-    SV
-      ( mergeCopyAxisTensorLeft @ma @m2 @(IrrepDim j1) @(IrrepDim j2)
-          (tensorProdLeft (flattenTensorProdCopy @m1 @n1 @(IrrepDim j1) @(IrrepDim j2) v1))
-          v2
-      )
+  mergeTensorSector v1 v2 =
+    mergeCopyAxisTensorLeft @ma @m2 @(IrrepDim j1) @(IrrepDim j2)
+      (tensorProdLeft (flattenTensorProdCopy @m1 @n1 @(IrrepDim j1) @(IrrepDim j2) v1))
+      v2
 
 instance
   ( j ~ k
@@ -692,7 +678,7 @@ instance
   ) =>
   InsertCompared 'GT ('Atom j) μ ('Atom k) μ2 rest
   where
-  insertCompared sv sv2 restR = RCons sv2 (insertSpine sv restR)
+  insertCompared sv sv2 restR = RCons sv2 (insertSpine @('Atom j) @μ sv restR)
 
 instance InsertCompared 'LT ('Atom j) μ ('Tensor k1 k2) μ2 rest where
   insertCompared sv sv2 restR = RCons sv (RCons sv2 restR)
@@ -703,7 +689,8 @@ instance
   ) =>
   InsertCompared 'GT ('Tensor j1 j2) μ ('Atom k) μ2 rest
   where
-  insertCompared sv sv2 restR = RCons sv2 (insertSpine sv restR)
+  insertCompared sv sv2 restR =
+    RCons sv2 (insertSpine @('Tensor j1 j2) @μ sv restR)
 
 instance InsertCompared 'LT ('Tensor j1 j2) μ ('Tensor k1 k2) μ2 rest where
   insertCompared sv sv2 restR = RCons sv (RCons sv2 restR)
@@ -714,7 +701,8 @@ instance
   ) =>
   InsertCompared 'GT ('Tensor j1 j2) μ ('Tensor k1 k2) μ2 rest
   where
-  insertCompared sv sv2 restR = RCons sv2 (insertSpine sv restR)
+  insertCompared sv sv2 restR =
+    RCons sv2 (insertSpine @('Tensor j1 j2) @μ sv restR)
 
 instance
   ( j1 ~ k1
@@ -771,7 +759,7 @@ tensorAtoms
            '[ '( 'Atom j1, 'AtomM m1)]
            '[ '( 'Atom j2, 'AtomM m2)]
        )
-tensorAtoms s1 s2 = RCons (SV (s1 ⊗ s2)) RNil
+tensorAtoms s1 s2 = RCons (s1 ⊗ s2) RNil
 
 -- | Categorical swap of copy factors @C m ⊗ C n@ (irrep leg unchanged).
 swapCopyProductSector
@@ -850,21 +838,19 @@ swapTensorProductSector
   -> (C n ⊗ C (IrrepDim j2)) ⊗ (C m ⊗ C (IrrepDim j1))
 swapTensorProductSector sec = swapMap $ sec
 
--- | Categorical braid on one sector (@'swapMap'@ / copy swap as appropriate).
-class BraidSectorV (e :: IrrepExpr) (μ :: MultExpr) where
-  braidSectorV
-    :: SectorV e μ
-    -> SectorV (BraidIrrep e) (BraidMult μ)
+-- | Per-sector braid (type-indexed dispatch on @e@ / @μ@).
+class BraidHead (e :: IrrepExpr) (μ :: MultExpr) where
+  braidHead :: ToVSector e μ -> ToVSector (BraidIrrep e) (BraidMult μ)
 
 instance
   ( KnownNat j
   , KnownNat m
   , KnownNat (IrrepDim j)
-  , Scalar (ToVSectorE ('Atom j) ('AtomM m)) ~ Complex Double
+  , Scalar (ToVSector ('Atom j) ('AtomM m)) ~ Complex Double
   ) =>
-  BraidSectorV ('Atom j) ('AtomM m)
+  BraidHead ('Atom j) ('AtomM m)
   where
-  braidSectorV (SV v) = SV v
+  braidHead v = v
 
 instance
   ( KnownNat j
@@ -882,11 +868,11 @@ instance
   , Scalar (C m) ~ Complex Double
   , Scalar (C n) ~ Complex Double
   , Scalar (C (IrrepDim j)) ~ Complex Double
-  , ToVSectorE ('Atom j) ('Prod m n) ~ (C m ⊗ C n) ⊗ C (IrrepDim j)
+  , ToVSector ('Atom j) ('Prod m n) ~ (C m ⊗ C n) ⊗ C (IrrepDim j)
   ) =>
-  BraidSectorV ('Atom j) ('Prod m n)
+  BraidHead ('Atom j) ('Prod m n)
   where
-  braidSectorV (SV v) = SV (swapCopyProductSector @m @n @(IrrepDim j) v)
+  braidHead v = swapCopyProductSector @m @n @(IrrepDim j) v
 
 instance
   ( KnownNat j1
@@ -905,12 +891,12 @@ instance
   , Scalar (C m) ~ Complex Double
   , Scalar (C (IrrepDim j1)) ~ Complex Double
   , Scalar (C (IrrepDim j2)) ~ Complex Double
-  , ToVSectorE ('Tensor j1 j2) ('AtomM m)
+  , ToVSector ('Tensor j1 j2) ('AtomM m)
       ~ C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2)
   ) =>
-  BraidSectorV ('Tensor j1 j2) ('AtomM m)
+  BraidHead ('Tensor j1 j2) ('AtomM m)
   where
-  braidSectorV (SV v) = SV (swapIrrepTensorSector @m @j1 @j2 v)
+  braidHead v = swapIrrepTensorSector @m @j1 @j2 v
 
 instance
   ( KnownNat j1
@@ -932,32 +918,32 @@ instance
   , Scalar (C n) ~ Complex Double
   , Scalar (C (IrrepDim j1)) ~ Complex Double
   , Scalar (C (IrrepDim j2)) ~ Complex Double
-  , ToVSectorE ('Tensor j1 j2) ('Prod m n)
+  , ToVSector ('Tensor j1 j2) ('Prod m n)
       ~ (C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2))
   ) =>
-  BraidSectorV ('Tensor j1 j2) ('Prod m n)
+  BraidHead ('Tensor j1 j2) ('Prod m n)
   where
-  braidSectorV (SV v) = SV (swapTensorProductSector @m @n @j1 @j2 v)
+  braidHead v = swapTensorProductSector @m @n @j1 @j2 v
 
-class Braidable (rs :: Rep) where
-  braid :: RepV rs -> RepV (Braid rs)
+-- | Constraints for braiding every sector in a spine.
+type family BraidSpine (rs :: Rep) :: Constraint where
+  BraidSpine '[] = ()
+  BraidSpine ('(e, μ) ': rest) = (BraidHead e μ, BraidSpine rest)
 
-instance Braidable '[] where
-  braid RNil = RNil
+-- | Braid every sector in a 'RepV' spine (plain recursion on @RCons@).
+braid
+  :: forall rs
+   . BraidSpine rs
+  => RepV rs
+  -> RepV (Braid rs)
+braid RNil = RNil
+braid (RCons @e @μ v rs) =
+  RCons (braidHead @e @μ v) (braid rs)
 
-instance
-  ( Braidable rest
-  , BraidSectorV e μ
-  ) =>
-  Braidable ('(e, μ) ': rest)
-  where
-  braid (RCons sv rs) =
-    RCons (braidSectorV @e @μ sv) (braid rs)
-
--- | Braid a distributed tensor rep (@'RepV'@ spine — the concrete @ToVSectorE@ vectors).
+-- | Braid a distributed tensor rep (@'Tensor'@).
 braidTensor
   :: forall r s
-   . Braidable (Tensor r s)
+   . BraidSpine (Tensor r s)
   => RepV (Tensor r s)
   -> RepV (Braid (Tensor r s))
 braidTensor = braid
@@ -1046,12 +1032,12 @@ type SmokeCoalesceSort =
 -- | Leaf sector @('Atom 1, 'AtomM 3)@ → @C 3 ⊗ C 2@.
 type SmokeSectorAtom =
   AssertEqType
-    (ToVSectorE ('Atom 1) ('AtomM 3))
+    (ToVSector ('Atom 1) ('AtomM 3))
     (C 3 ⊗ C 2)
 
 type SmokeSectorTensor =
   AssertEqType
-    (ToVSectorE ('Tensor 1 2) ('Prod 2 3))
+    (ToVSector ('Tensor 1 2) ('Prod 2 3))
     ((C 2 ⊗ C 2) ⊗ (C 3 ⊗ C 3))
 
 -- | @1 ⊗ 2@ (SU2) → @j = 1, 3@ channels.
