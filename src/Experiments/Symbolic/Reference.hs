@@ -50,9 +50,9 @@ import qualified Data.Vector.Storable as VS
 -- | Flat @toArray@ length of one sector (Reference / buffer boundary only).
 type family SectorFlatDim (s :: Sector) :: Nat where
   SectorFlatDim '( 'Atom j, μ) = EvalMult μ * IrrepDim j
-  SectorFlatDim '( 'Tensor j1 j2, 'AtomM m) =
+  SectorFlatDim '( 'Tensor ('Atom j1) ('Atom j2), 'AtomM m) =
     m * IrrepDim j1 * IrrepDim j2
-  SectorFlatDim '( 'Tensor j1 j2, 'Prod m n) =
+  SectorFlatDim '( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n)) =
     m * IrrepDim j1 * n * IrrepDim j2
 
 sectorFlatDim :: forall s. KnownNat (SectorFlatDim s) => Proxy s -> Int
@@ -61,7 +61,7 @@ sectorFlatDim _ =
 
 -- | Post-'fuseSU2Flat' atom spine (@'AtomM'@ on each CG channel).
 type TensorFusedFlat (j1 :: Nat) (j2 :: Nat) (m :: Nat) (n :: Nat) =
-  TagMult ('AtomM (m * n)) (FuseIrrep ('Tensor j1 j2))
+  TagMult ('AtomM (m * n)) (FuseIrrep ('Tensor ('Atom j1) ('Atom j2)))
 
 -- | Split a flat CG buffer into an atom 'RepV' spine (Reference boundary).
 class UnpackFusedRep (rs :: Rep) where
@@ -89,13 +89,13 @@ instance
   , KnownNat m
   , KnownNat n
   , KnownNat (IrrepDim j)
-  , KnownNat (SectorFlatDim '( 'Atom j, 'Prod m n))
+  , KnownNat (SectorFlatDim '( 'Atom j, 'Prod ('AtomM m) ('AtomM n)))
   , UnpackFusedRep rest
   ) =>
-  UnpackFusedRep ('( 'Atom j, 'Prod m n) ': rest)
+  UnpackFusedRep ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
   unpackFusedRep flat =
-    let d = sectorFlatDim (Proxy @'( 'Atom j, 'Prod m n))
+    let d = sectorFlatDim (Proxy @'( 'Atom j, 'Prod ('AtomM m) ('AtomM n)))
         (here, restFlat) = VS.splitAt d flat
     in RConsAtomProd (unsafeFromArray here) (unpackFusedRep @rest restFlat)
 
@@ -113,7 +113,7 @@ fuseOneSectorTensorReference
      , KnownNat (m * n)
      , UnpackFusedRep (TensorFusedFlat j1 j2 m n)
      )
-  => ToVSector ('Tensor j1 j2) ('Prod m n)
+  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n))
   -> RepV (TensorFusedFlat j1 j2 m n)
 fuseOneSectorTensorReference sec =
   unpackFusedRep @(TensorFusedFlat j1 j2 m n) $
@@ -133,14 +133,14 @@ fuseTensorSectorReference
      , KnownNat (IrrepDim j2)
      , KnownRep SG.SU2 '[ '(j1, m)]
      , KnownRep SG.SU2 '[ '(j2, n)]
-     , KnownSymbolicRep (TensorFusedFlat j1 j2 m n)
      , KnownNat (m * n)
+     , CoalesceSpine (TensorFusedFlat j1 j2 m n)
      , UnpackFusedRep (TensorFusedFlat j1 j2 m n)
      )
-  => RepV '[ '( 'Tensor j1 j2, 'Prod m n)]
+  => RepV '[ '( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n))]
   -> RepV (Coalesce (TensorFusedFlat j1 j2 m n))
 fuseTensorSectorReference (RConsTensorProd sv RNil) =
-  coalesce @(TensorFusedFlat j1 j2 m n) $
+  coalesce $
     fuseOneSectorTensorReference @j1 @j2 @m @n sv
 fuseTensorSectorReference _ =
   error "fuseTensorSectorReference: expected single-sector Tensor spine"
@@ -156,9 +156,8 @@ fuseTensorReference
      , KnownNat (IrrepDim j2)
      , KnownRep SG.SU2 '[ '(j1, m1)]
      , KnownRep SG.SU2 '[ '(j2, m2)]
-     , KnownSymbolicRep (TensorFusedFlat j1 j2 m1 m2)
-     , KnownSymbolicRep (Coalesce (TensorFusedFlat j1 j2 m1 m2))
      , KnownNat (m1 * m2)
+     , CoalesceSpine (TensorFusedFlat j1 j2 m1 m2)
      , UnpackFusedRep (TensorFusedFlat j1 j2 m1 m2)
      )
   => RepV
@@ -199,10 +198,10 @@ instance
   , KnownNat m
   , KnownNat n
   , KnownNat (IrrepDim j)
-  , KnownNat (SectorFlatDim '( 'Atom j, 'Prod m n))
+  , KnownNat (SectorFlatDim '( 'Atom j, 'Prod ('AtomM m) ('AtomM n)))
   , RepVFlat rest
   ) =>
-  RepVFlat ('( 'Atom j, 'Prod m n) ': rest)
+  RepVFlat ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
   repVFlat (RConsAtomProd v rs) = toArray v VS.++ repVFlat rs
   repVFlat _ = error "repVFlat: spine / constructor mismatch"
@@ -237,7 +236,7 @@ instance
   , Scalar (C (m * n) ⊗ C (IrrepDim j)) ~ Complex Double
   , RepVFlatProdToAtomM rest
   ) =>
-  RepVFlatProdToAtomM ('( 'Atom j, 'Prod m n) ': rest)
+  RepVFlatProdToAtomM ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
   repVFlatProdToAtomM (RConsAtomProd v rs) =
     toArray (flattenCopyProd v) VS.++ repVFlatProdToAtomM rs
@@ -269,12 +268,12 @@ exFuseOneSectorProd12 =
     (repVFlat ref)
     1e-10
   where
-    sec :: ToVSector ('Tensor 1 2) ('Prod 2 3)
+    sec :: ToVSector ('Tensor ('Atom 1) ('Atom 2)) ('Prod ('AtomM 2) ('AtomM 3))
     sec =
       unsafeFromArray $
         VS.generate 36 $ \i -> (1 / 36) :+ 0 * fromIntegral i
-    prod :: RepV (FuseSector '( 'Tensor 1 2, 'Prod 2 3))
-    prod = fuseOneSector @('Tensor 1 2) @('Prod 2 3) sec
+    prod :: RepV (FuseSector '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 2) ('AtomM 3)))
+    prod = fuseOneSectorTensorProd @1 @2 @2 @3 sec
     ref = fuseOneSectorTensorReference @1 @2 @2 @3 sec
 
 --------------------------------------------------------------------------------
