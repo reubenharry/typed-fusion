@@ -124,22 +124,25 @@ type family Braid (rs :: Rep) :: Rep where
 --------------------------------------------------------------------------------
 -- Dual (compact closed)
 --
--- Unfused duals are real @'Dual@ constructors; 'ToVSector' maps them to
--- 'DualVector'. The SU(2) CS / U(1) charge-flip identification into ordinary
--- @'Atom@ spines is a later Fuse (or undual) step — not a silent type equality.
+-- Unfused duals are real @'Dual@ / @'DualM@ on leaves; 'DualIrrep' / 'DualMult'
+-- distribute over @'Tensor@ / @'Prod@ (reverse factors) so dual is involutive.
+-- 'ToVSector' on a dual leaf is 'DualVector'; on a dualized tensor it becomes
+-- @DualVector ⊗ DualVector@ via the recursive tensor rule (≅ linearmap
+-- @DualVector (u ⊗ v)@). SU(2) CS / U(1) charge-flip into ordinary @'Atom@
+-- spines is a later Fuse (or undual) step — not a silent type equality.
 --------------------------------------------------------------------------------
 
 -- | Dual of an irrep expression (involutive; reverses tensor factors).
 type family DualIrrep (e :: IrrepExpr) :: IrrepExpr where
   DualIrrep ('Dual e) = e
   DualIrrep ('Atom j) = 'Dual ('Atom j)
-  DualIrrep ('Tensor e1 e2) = 'Dual ('Tensor e2 e1)
+  DualIrrep ('Tensor e1 e2) = 'Tensor (DualIrrep e2) (DualIrrep e1)
 
 -- | Dual of a multiplicity expression (involutive; reverses products).
 type family DualMult (μ :: MultExpr) :: MultExpr where
   DualMult ('DualM μ) = μ
   DualMult ('AtomM m) = 'DualM ('AtomM m)
-  DualMult ('Prod μ1 μ2) = 'DualM ('Prod μ2 μ1)
+  DualMult ('Prod μ1 μ2) = 'Prod (DualMult μ2) (DualMult μ1)
 
 -- | Dual of one sector: dualize irrep and multiplicity together.
 type family DualSector (s :: Sector) :: Sector where
@@ -1932,11 +1935,23 @@ type SmokeDualAtom =
     (DualSector '( 'Atom 1, 'AtomM 3))
     '( 'Dual ('Atom 1), 'DualM ('AtomM 3))
 
--- | @(j₁ ⊗ j₂)* ≅ Dual (j₂ ⊗ j₁)@ with copy product reversed under @'DualM@.
+-- | @(j₁ ⊗ j₂)* ≅ Dual j₂ ⊗ Dual j₁@ with copy @'Prod@ reversed (distributed dual).
 type SmokeDualTensor =
   AssertEqSector
     (DualSector '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 3) ('AtomM 5)))
-    '( 'Dual ('Tensor ('Atom 2) ('Atom 1)), 'DualM ('Prod ('AtomM 5) ('AtomM 3)))
+    '( 'Tensor ('Dual ('Atom 2)) ('Dual ('Atom 1))
+     , 'Prod ('DualM ('AtomM 5)) ('DualM ('AtomM 3))
+     )
+
+-- | Dual is involutive on a tensor sector (@Dual ∘ Dual = id@).
+type SmokeDualInvolutive =
+  AssertEqSector
+    ( DualSector
+        ( DualSector
+            '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 3) ('AtomM 5))
+        )
+    )
+    '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 3) ('AtomM 5))
 
 -- | Dual of a leaf spine wraps each sector in @'Dual@ / @'DualM@.
 type SmokeDualRep =
@@ -2137,6 +2152,9 @@ smokeDualAtom = Proxy
 
 smokeDualTensor :: Proxy SmokeDualTensor
 smokeDualTensor = Proxy
+
+smokeDualInvolutive :: Proxy SmokeDualInvolutive
+smokeDualInvolutive = Proxy
 
 smokeDualRep :: Proxy SmokeDualRep
 smokeDualRep = Proxy
