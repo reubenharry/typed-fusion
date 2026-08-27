@@ -134,6 +134,7 @@ fuseTensorSectorReference
      , KnownRep SG.SU2 '[ '(j1, m)]
      , KnownRep SG.SU2 '[ '(j2, n)]
      , KnownNat (m * n)
+     , KnownSymRep (TensorFusedFlat j1 j2 m n)
      , CoalesceSpine (TensorFusedFlat j1 j2 m n)
      , UnpackFusedRep (TensorFusedFlat j1 j2 m n)
      )
@@ -157,6 +158,7 @@ fuseTensorReference
      , KnownRep SG.SU2 '[ '(j1, m1)]
      , KnownRep SG.SU2 '[ '(j2, m2)]
      , KnownNat (m1 * m2)
+     , KnownSymRep (TensorFusedFlat j1 j2 m1 m2)
      , CoalesceSpine (TensorFusedFlat j1 j2 m1 m2)
      , UnpackFusedRep (TensorFusedFlat j1 j2 m1 m2)
      )
@@ -283,7 +285,7 @@ exFuseOneSectorProd12 =
 -- | @rmoveSpine @1 @2@ with @rs@ inferred (avoids overlap with 'rmove' type apps).
 rmoveSpine12
   :: forall rs
-   . ( RmoveSpine 1 2 rs
+   . ( KnownSymRep rs
      , RepVFlat rs
      , RmoveTarget 1 2 rs ~ rs
      )
@@ -293,7 +295,7 @@ rmoveSpine12 = rmoveSpine @1 @2
 
 rmoveSpine11
   :: forall rs
-   . ( RmoveSpine 1 1 rs
+   . ( KnownSymRep rs
      , RepVFlat rs
      , RmoveTarget 1 1 rs ~ rs
      )

@@ -6,16 +6,23 @@
 -- | Term-level smokes for 'Experiments.Symbolic' (merge layout, fuse pipeline).
 module Experiments.SymbolicExamples where
 
-import Data.Complex (Complex ((:+)), realPart)
+import Data.Complex (Complex ((:+)), magnitude, realPart)
+import Data.Maybe (fromJust)
 import Data.Proxy (Proxy (..))
 import Experiments.Symbolic
 import Experiments.Symbolic.Reference
   ( exCoherenceRmove11
   , exCoherenceRmove12
   , exFuseOneSectorProd12
+  , repVApproxEq
   , sectorFlatDim
   )
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
+import Symmetry.SU2
+  ( SU2Element
+  , su2FromQuaternion
+  , su2Ident
+  )
 import qualified Data.Vector.Storable as VS
 
 -- | Hexagon coherence via Reference CG fuse (see 'Experiments.Symbolic.Reference').
@@ -27,6 +34,65 @@ coherenceRmoveLeaf11Ok = exCoherenceRmove11
 
 fuseOneSectorProdOk :: Bool
 fuseOneSectorProdOk = exFuseOneSectorProd12
+
+--------------------------------------------------------------------------------
+-- SU(2) action on irreps / tensors
+--------------------------------------------------------------------------------
+
+-- | Active rotation by @π@ about @z@: @α = -i@, @β = 0@.
+exRzPi :: SU2Element
+exRzPi = fromJust (su2FromQuaternion 0 0 0 1)
+
+-- | Spin-½, @m = 1@: @|↑⟩@.
+sSpinHalfUp :: ToVSector ('Atom 1) ('AtomM 1)
+sSpinHalfUp =
+  unsafeFromArray $
+    VS.fromList [1, 0]
+
+-- | Identity acts as @id@ on a single irrep sector.
+actRepIdentAtomOk :: Bool
+actRepIdentAtomOk =
+  let r = RConsAtomAtomM sSpinHalfUp RNil
+            :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      RConsAtomAtomM v RNil = actRep su2Ident r
+   in toArray v == (toArray sSpinHalfUp :: VS.Vector (Complex Double))
+
+-- | @R_z(π)@ on spin-½: @|↑⟩ ↦ (-i)|↑⟩@.
+actRepRzPiSpinHalfOk :: Bool
+actRepRzPiSpinHalfOk =
+  let r = RConsAtomAtomM sSpinHalfUp RNil
+            :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      RConsAtomAtomM v RNil = actRep exRzPi r
+      expected = VS.fromList [0 :+ (-1), 0]
+   in all (\(a, b) -> magnitude (a - b) < 1e-9)
+        (zip (VS.toList (toArray v)) (VS.toList expected))
+
+-- | Unfused @½ ⊗ ½@ product state @|↑↑⟩@ (@'AtomM 1@ layout).
+sHalfHalfUpUp :: ToVSector ('Tensor ('Atom 1) ('Atom 1)) ('AtomM 1)
+sHalfHalfUpUp =
+  unsafeFromArray $
+    VS.fromList [1, 0, 0, 0]
+
+-- | Kronecker action on an unfused tensor sector: @R_z(π)⊗R_z(π)@ on @|↑↑⟩@.
+-- Each factor picks @(-i)@, so overall phase @(-i)² = -1@.
+actRepRzPiTensorOk :: Bool
+actRepRzPiTensorOk =
+  let r = RConsTensorAtomM sHalfHalfUpUp RNil
+            :: RepV '[ '( 'Tensor ('Atom 1) ('Atom 1), 'AtomM 1)]
+      RConsTensorAtomM v RNil = actRep exRzPi r
+      expected = VS.fromList [-1, 0, 0, 0]
+   in all (\(a, b) -> magnitude (a - b) < 1e-9)
+        (zip (VS.toList (toArray v)) (VS.toList expected))
+
+-- | CG intertwiner: @fuse ∘ act g ≅ act g ∘ fuse@ on @½ ⊗ ½@.
+actRepFuseIntertwinesOk :: Bool
+actRepFuseIntertwinesOk =
+  let unfused =
+        RConsTensorAtomM sHalfHalfUpUp RNil
+          :: RepV '[ '( 'Tensor ('Atom 1) ('Atom 1), 'AtomM 1)]
+      actThenFuse = fuse (actRep exRzPi unfused)
+      fuseThenAct = actRep exRzPi (fuse unfused)
+   in repVApproxEq actThenFuse fuseThenAct 1e-9
 
 --------------------------------------------------------------------------------
 -- Atom-spine tensor
@@ -120,6 +186,57 @@ cupUnfusedSpinHalfProductOk =
           tensorAtomDual (RConsAtomAtomM up RNil) (dual (RConsAtomAtomM up RNil))
    in abs (unitAmp u - 1) < 1e-9
 
+-- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ id on spin-½.
+undualDualRoundtripOk :: Bool
+undualDualRoundtripOk =
+  let v :: ToVSector ('Atom 1) ('AtomM 1)
+      v = unsafeFromArray (VS.fromList [0.6, 0.8])
+      v' = undualAtomAtomM @1 @1 (dualAtomAtomM @1 @1 v)
+   in VS.and $
+        VS.zipWith
+          (\a b -> magnitude (a - b) < 1e-9)
+          (toArray v)
+          (toArray v')
+
+-- | Fused cup on @j = 0@: agrees with unfused (trivial irrep; no CS needed).
+cupFusedTrivialOk :: Bool
+cupFusedTrivialOk =
+  let x :: ToVSector ('Atom 0) ('AtomM 1)
+      x = unsafeFromArray (VS.fromList [3 :+ 4])
+      r = RConsAtomAtomM x RNil :: RepV '[ '( 'Atom 0, 'AtomM 1)]
+      td = tensorAtomDual r (dual r)
+      RConsAtomAtomM uUnf RNil = cupUnfused @0 @1 td
+      RConsAtomAtomM uFus RNil = cup @'[ '( 'Atom 0, 'AtomM 1)] (fuse td)
+   in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
+
+-- | Probe: fused vs unfused cup on spin-½. Currently @False@ — CG singlet after
+-- Riesz undual ≠ DualVector Hilbert pairing until Condon–Shortley is in undual.
+-- Not part of 'symbolicExamplesOk'.
+cupFusedSpinHalfCoherent :: Bool
+cupFusedSpinHalfCoherent =
+  let v :: ToVSector ('Atom 1) ('AtomM 1)
+      v = unsafeFromArray (VS.fromList [1, 0])
+      r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      td = tensorAtomDual r (dual r)
+      RConsAtomAtomM uUnf RNil = cupUnfused @1 @1 td
+      RConsAtomAtomM uFus RNil = cup @'[ '( 'Atom 1, 'AtomM 1)] (fuse td)
+   in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
+
+-- | Two-sector spine: cup sums diagonal leaf cups (@‖x‖² + ‖y‖²@).
+cupUnfusedRepTwoSectorOk :: Bool
+cupUnfusedRepTwoSectorOk =
+  let x :: ToVSector ('Atom 0) ('AtomM 1)
+      x = unsafeFromArray (VS.fromList [3 :+ 4])
+      y :: ToVSector ('Atom 1) ('AtomM 1)
+      y = unsafeFromArray (VS.fromList [1, 0])
+      r =
+        RConsAtomAtomM x (RConsAtomAtomM y RNil)
+          :: RepV '[ '( 'Atom 0, 'AtomM 1), '( 'Atom 1, 'AtomM 1)]
+      RConsAtomAtomM u RNil =
+        cupUnfusedRep @'[ '( 'Atom 0, 'AtomM 1), '( 'Atom 1, 'AtomM 1)]
+          (tensorAtomDual r (dual r))
+   in abs (unitAmp u - 26) < 1e-9
+
 --------------------------------------------------------------------------------
 -- Coalesce merge (direct-sum layout)
 --------------------------------------------------------------------------------
@@ -195,6 +312,10 @@ symbolicExamplesOk =
     [ coherenceRmoveLeafOk
     , coherenceRmoveLeaf11Ok
     , fuseOneSectorProdOk
+    , actRepIdentAtomOk
+    , actRepRzPiSpinHalfOk
+    , actRepRzPiTensorOk
+    , actRepFuseIntertwinesOk
     , tensorAtomsMatchesTensorOk
     , tensorSpineDistributeOk
     , lunitApplyOk
@@ -202,6 +323,9 @@ symbolicExamplesOk =
     , cupUnfusedTrivialOk
     , cupUnfusedMultOk
     , cupUnfusedSpinHalfProductOk
+    , undualDualRoundtripOk
+    , cupFusedTrivialOk
+    , cupUnfusedRepTwoSectorOk
     , coalesceMergeFlatDimOk
     , coalesceMergeDirectSumOk
     , coalescePreservesFlatDimOk
