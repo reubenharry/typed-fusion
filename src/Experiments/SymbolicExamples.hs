@@ -11,6 +11,7 @@ import Experiments.Symbolic
 import Experiments.Symbolic.Reference
   ( exCoherenceRmove11
   , exCoherenceRmove12
+  , exFuseOneSectorProd12
   , sectorFlatDim
   )
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
@@ -22,6 +23,9 @@ coherenceRmoveLeafOk = exCoherenceRmove12
 
 coherenceRmoveLeaf11Ok :: Bool
 coherenceRmoveLeaf11Ok = exCoherenceRmove11
+
+fuseOneSectorProdOk :: Bool
+fuseOneSectorProdOk = exFuseOneSectorProd12
 
 --------------------------------------------------------------------------------
 -- Coalesce merge (direct-sum layout)
@@ -72,13 +76,34 @@ coalescePreservesFlatDimOk =
    in VS.length (toArray v1) + VS.length (toArray v2)
         == VS.length (toArray vMerged)
 
+--------------------------------------------------------------------------------
+-- Singlet projection
+--------------------------------------------------------------------------------
+
+-- | @j = 0@, @'AtomM 2@: two copy slots × @C 1@.
+sTrivial :: ToVSector ('Atom 0) ('AtomM 2)
+sTrivial =
+  unsafeFromArray $
+    VS.fromList [4, 5]
+
+-- | Keeps only @'Atom 0@; drops @'Atom 1@.
+projectToSymmetricOk :: Bool
+projectToSymmetricOk =
+  let spine =
+        RConsAtomAtomM sCoalesce1 (RConsAtomAtomM sTrivial RNil)
+          :: RepV '[ '( 'Atom 1, 'AtomM 2), '( 'Atom 0, 'AtomM 2)]
+      RConsAtomAtomM v RNil = projectToSymmetric spine
+   in toArray v == VS.fromList [4, 5]
+
 -- | All symbolic smokes in one place (for REPL / probes).
 symbolicExamplesOk :: Bool
 symbolicExamplesOk =
   and
     [ coherenceRmoveLeafOk
     , coherenceRmoveLeaf11Ok
+    , fuseOneSectorProdOk
     , coalesceMergeFlatDimOk
     , coalesceMergeDirectSumOk
     , coalescePreservesFlatDimOk
+    , projectToSymmetricOk
     ]

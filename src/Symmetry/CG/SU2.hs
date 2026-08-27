@@ -1,8 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | SU(2) Clebsch–Gordan fuse: unfused product basis → fused multiplet layout.
 --
@@ -20,6 +24,7 @@
 -- Built by highest-weight + @J−@ (Condon–Shortley).
 module Symmetry.CG.SU2
   ( fuseSU2Flat
+  , fuseCGChannel
   , cgMatrixTwoIrreps
   , cgChannel
   , fusionChannels
@@ -27,14 +32,25 @@ module Symmetry.CG.SU2
   , repDimOf
   ) where
 
+import Control.Arrow.Constrained (arr)
 import Control.Monad.ST (runST)
 import Data.Complex (Complex (..))
 import Data.Proxy (Proxy (..))
 import Data.Singletons (fromSing)
+import GHC.TypeLits (KnownNat, Nat, natVal, type (+))
+import Data.VectorSpace (Scalar)
+import Math.LinearMap.Category
+  ( type (+>), type (⊗), LSpace, TensorSpace
+  , LinearFunction, pattern LinearFunction
+  )
+import Control.Arrow.Constrained (arr)
+import Math.LinearMap.Category.Backend.HMatrix ()
+import Math.LinearMap.Category.Instances ()
+import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
+import Numeric.LinearAlgebra.Static (C)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
-import GHC.TypeLits (natVal)
 import Symmetry.Group (Group (SU2))
 import Symmetry.RepSingleton (SRep (..))
 
@@ -148,6 +164,44 @@ cgChannel j1 j2 tj =
       chans = fusionChannels j1 j2
       row0 = sum [c + 1 | c <- takeWhile (/= tj) chans]
   in  take (tj + 1) (drop row0 mat)
+
+-- | One total-@j@ CG channel as a typed linear map on irrep legs
+-- (@C (j₁+1) ⊗ C (j₂+1) → C (j+1)@), using the same matrix as 'cgChannel'.
+fuseCGChannel
+  :: forall j1 j2 j
+   . ( KnownNat j1
+     , KnownNat j2
+     , KnownNat j
+     , KnownNat (j1 + 1)
+     , KnownNat (j2 + 1)
+     , KnownNat (j + 1)
+     , LSpace (C (j1 + 1))
+     , LSpace (C (j2 + 1))
+     , LSpace (C (j + 1))
+     , LSpace (C (j1 + 1) ⊗ C (j2 + 1))
+     , TensorSpace (C (j1 + 1) ⊗ C (j2 + 1))
+     , Scalar (C (j1 + 1)) ~ Complex Double
+     , Scalar (C (j2 + 1)) ~ Complex Double
+     , Scalar (C (j + 1)) ~ Complex Double
+     , Scalar (C (j1 + 1) ⊗ C (j2 + 1)) ~ Complex Double
+     )
+  => (C (j1 + 1) ⊗ C (j2 + 1)) +> C (j + 1)
+fuseCGChannel = arr (LinearFunction applyCG)
+  where
+    applyCG :: C (j1 + 1) ⊗ C (j2 + 1) -> C (j + 1)
+    applyCG v =
+      let tj1 = fromIntegral (natVal (Proxy @j1))
+          tj2 = fromIntegral (natVal (Proxy @j2))
+          tj = fromIntegral (natVal (Proxy @j))
+          dIn = (tj1 + 1) * (tj2 + 1)
+          chan = cgChannel tj1 tj2 tj
+          vin = toArray v
+      in unsafeFromArray @(C (j + 1)) $
+        VS.generate (tj + 1) $ \row ->
+          sum
+            [ ((chan !! fromIntegral row !! col) :+ 0) * (vin VS.! col)
+            | col <- [0 .. dIn - 1]
+            ]
 
 -- | @(tj, multiplicity, flat offset)@ for an SU(2) spine.
 sectorsSU2 :: SRep SU2 r -> [(Int, Int, Int)]

@@ -27,16 +27,22 @@ module Experiments.Symbolic.Reference
   , RepVFlat
   , repVFlat
   , repVApproxEq
+  , repVFlatProdToAtomM
+  , exFuseOneSectorProd12
   , exCoherenceRmove12
   , exCoherenceRmove11
   ) where
 
-import Data.Complex (Complex, magnitude)
+import Data.Complex (Complex ((:+)), magnitude)
 import Data.Proxy (Proxy (..))
+import Data.VectorSpace (Scalar)
 import Experiments.Symbolic
 import GHC.TypeLits (KnownNat, Nat, natVal, type (*))
+import Math.LinearMap.Category (type (⊗), LSpace, TensorSpace)
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
+import Numeric.LinearAlgebra.Static (C)
 import Symmetry.CG.SU2 (fuseSU2Flat)
+import TensorNetwork.Categorical (flattenCopyProd)
 import qualified Symmetry.Group as SG
 import Symmetry.RepSingleton (KnownRep (..))
 import qualified Data.Vector.Storable as VS
@@ -201,6 +207,43 @@ instance
   repVFlat (RConsAtomProd v rs) = toArray v VS.++ repVFlat rs
   repVFlat _ = error "repVFlat: spine / constructor mismatch"
 
+-- | Flatten @'Prod'@-tagged fused channels to @'AtomM'@ buffer layout for oracle compare.
+class RepVFlatProdToAtomM (rs :: Rep) where
+  repVFlatProdToAtomM :: RepV rs -> VS.Vector (Complex Double)
+
+instance RepVFlatProdToAtomM '[] where
+  repVFlatProdToAtomM RNil = VS.empty
+
+instance
+  ( KnownNat j
+  , KnownNat m
+  , KnownNat n
+  , KnownNat (IrrepDim j)
+  , KnownNat (m * n)
+  , KnownNat (SectorFlatDim '( 'Atom j, 'AtomM (m * n)))
+  , LSpace (C m)
+  , LSpace (C n)
+  , LSpace (C (IrrepDim j))
+  , LSpace (C m ⊗ C n)
+  , LSpace (C (m * n))
+  , LSpace ((C m ⊗ C n) ⊗ C (IrrepDim j))
+  , LSpace (C (m * n) ⊗ C (IrrepDim j))
+  , TensorSpace ((C m ⊗ C n) ⊗ C (IrrepDim j))
+  , TensorSpace (C (m * n) ⊗ C (IrrepDim j))
+  , Scalar (C m) ~ Complex Double
+  , Scalar (C n) ~ Complex Double
+  , Scalar (C (IrrepDim j)) ~ Complex Double
+  , Scalar ((C m ⊗ C n) ⊗ C (IrrepDim j)) ~ Complex Double
+  , Scalar (C (m * n) ⊗ C (IrrepDim j)) ~ Complex Double
+  , RepVFlatProdToAtomM rest
+  ) =>
+  RepVFlatProdToAtomM ('( 'Atom j, 'Prod m n) ': rest)
+  where
+  repVFlatProdToAtomM (RConsAtomProd v rs) =
+    toArray (flattenCopyProd v) VS.++ repVFlatProdToAtomM rs
+  repVFlatProdToAtomM _ =
+    error "repVFlatProdToAtomM: expected RConsAtomProd spine"
+
 repVApproxEq
   :: (RepVFlat rsL, RepVFlat rsR) => RepV rsL -> RepV rsR -> Double -> Bool
 repVApproxEq x y tol =
@@ -208,6 +251,31 @@ repVApproxEq x y tol =
       b = repVFlat y
    in VS.length a == VS.length b
         && all (\(u, v) -> magnitude (u - v) <= tol) (zip (VS.toList a) (VS.toList b))
+
+repVFlatApproxEq
+  :: VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+  -> Double
+  -> Bool
+repVFlatApproxEq a b tol =
+  VS.length a == VS.length b
+    && all (\(u, v) -> magnitude (u - v) <= tol) (zip (VS.toList a) (VS.toList b))
+
+-- | Production 'fuseOneSector' (@'Prod'@ copy) matches flat CG oracle (@1 ⊗ 2@, @m=2@, @n=3@).
+exFuseOneSectorProd12 :: Bool
+exFuseOneSectorProd12 =
+  repVFlatApproxEq
+    (repVFlatProdToAtomM prod)
+    (repVFlat ref)
+    1e-10
+  where
+    sec :: ToVSector ('Tensor 1 2) ('Prod 2 3)
+    sec =
+      unsafeFromArray $
+        VS.generate 36 $ \i -> (1 / 36) :+ 0 * fromIntegral i
+    prod :: RepV (FuseSector '( 'Tensor 1 2, 'Prod 2 3))
+    prod = fuseOneSector @('Tensor 1 2) @('Prod 2 3) sec
+    ref = fuseOneSectorTensorReference @1 @2 @2 @3 sec
 
 --------------------------------------------------------------------------------
 -- R-move coherence (@fuse ∘ braid ≅ rmove ∘ fuse@)

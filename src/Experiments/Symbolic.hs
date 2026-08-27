@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- | Green-field symbolic SU(2) reps: flat irrep @'Tensor j1 j2@ and flat
 -- multiplicity @'Prod m n@.
@@ -27,8 +28,8 @@
 -- collapse to @'AtomM'@ first). Output multiplicity is always
 -- @'AtomM (EvalMult μ1 + …)@.
 --
--- Tensor CG fuse is not implemented in production here — see
--- 'Experiments.Symbolic.Reference' for the flat @fuseSU2Flat@ oracle.
+-- Tensor CG fuse uses typed 'Symmetry.CG.SU2.fuseCGChannel' per channel; see
+-- 'Experiments.Symbolic.Reference' for flat-buffer oracles.
 --
 -- Examples: 'Experiments.SymbolicExamples'.
 module Experiments.Symbolic where
@@ -46,6 +47,9 @@ import Math.LinearMap.Category.Backend.HMatrix ()
 import Math.LinearMap.Category.Instances ()
 import Numeric.LinearAlgebra.Static (C)
 import Symmetry.Utils (Append)
+import Control.Arrow.Constrained (arr)
+import Math.LinearMap.Category (pattern LinearFunction)
+import Symmetry.CG.SU2 (fuseCGChannel)
 import TensorNetwork.Categorical
   ( flattenCopyProd
   , flattenTensorProdCopy
@@ -53,6 +57,7 @@ import TensorNetwork.Categorical
   , mergeCopyAxis
   , mergeCopyAxisTensorLeft
   , rassocMap
+  , splitBond
   , swapMap
   , tensorProdLeft
   , (⊗^)
@@ -147,6 +152,14 @@ type family InsertSectorOrd
 type family Coalesce (rs :: Rep) :: Rep where
   Coalesce '[] = '[]
   Coalesce ('(e, μ) ': rest) = InsertSector e μ (Coalesce rest)
+
+-- | Keep only the SU(2) trivial irrep (@'Atom 0@); drop everything else.
+-- Typical use: after 'Fuse' \/ 'Coalesce', project to singlets (Hom space).
+type family FilterTrivial (rs :: Rep) :: Rep where
+  FilterTrivial '[] = '[]
+  FilterTrivial ('( 'Atom 0, μ) ': rest) =
+    '( 'Atom 0, μ) ': FilterTrivial rest
+  FilterTrivial ('(e, μ) ': rest) = FilterTrivial rest
 
 --------------------------------------------------------------------------------
 -- Sector spaces (concrete vectors indexed by irrep / multiplicity)
@@ -352,31 +365,143 @@ instance
   where
   fuseOneSector v = RConsAtomProd v RNil
 
+-- | CG one channel on irrep legs, preserving sector copy layout.
+class FuseOneChannel (j1 :: Nat) (j2 :: Nat) (j :: Nat) (μ :: MultExpr) where
+  fuseOneChannel :: ToVSector ('Tensor j1 j2) μ -> ToVSector ('Atom j) μ
+
+instance
+  ( KnownNat j1
+  , KnownNat j2
+  , KnownNat j
+  , KnownNat m
+  , KnownNat n
+  , KnownNat (IrrepDim j1)
+  , KnownNat (IrrepDim j2)
+  , KnownNat (IrrepDim j)
+  , KnownNat (m * n)
+  , LSpace (C m)
+  , LSpace (C n)
+  , LSpace (C (IrrepDim j1))
+  , LSpace (C (IrrepDim j2))
+  , LSpace (C (IrrepDim j))
+  , LSpace (C m ⊗ C (IrrepDim j1))
+  , LSpace (C n ⊗ C (IrrepDim j2))
+  , LSpace (C m ⊗ C n)
+  , LSpace (C (IrrepDim j1) ⊗ C (IrrepDim j2))
+  , LSpace (C m ⊗ C n ⊗ C (IrrepDim j))
+  , LSpace ((C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2)))
+  , LSpace (C (m * n) ⊗ (C (IrrepDim j1) ⊗ C (IrrepDim j2)))
+  , LSpace ((C m ⊗ C n) ⊗ (C (IrrepDim j1) ⊗ C (IrrepDim j2)))
+  , LSpace ((C m ⊗ C n) ⊗ C (IrrepDim j))
+  , TensorSpace ((C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2)))
+  , TensorSpace (C (m * n) ⊗ (C (IrrepDim j1) ⊗ C (IrrepDim j2)))
+  , TensorSpace ((C m ⊗ C n) ⊗ (C (IrrepDim j1) ⊗ C (IrrepDim j2)))
+  , TensorSpace ((C m ⊗ C n) ⊗ C (IrrepDim j))
+  , Scalar (C m) ~ Complex Double
+  , Scalar (C n) ~ Complex Double
+  , Scalar (C (IrrepDim j1)) ~ Complex Double
+  , Scalar (C (IrrepDim j2)) ~ Complex Double
+  , Scalar (C (IrrepDim j)) ~ Complex Double
+  , Scalar ((C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2))) ~ Complex Double
+  , Scalar (C (m * n) ⊗ (C (IrrepDim j1) ⊗ C (IrrepDim j2))) ~ Complex Double
+  , Scalar ((C m ⊗ C n) ⊗ (C (IrrepDim j1) ⊗ C (IrrepDim j2))) ~ Complex Double
+  , Scalar ((C m ⊗ C n) ⊗ C (IrrepDim j)) ~ Complex Double
+  ) =>
+  FuseOneChannel j1 j2 j ('Prod m n)
+  where
+  fuseOneChannel sec =
+    ( (id ⊗^ fuseCGChannel @j1 @j2 @j)
+        . (splitBond @m @n ⊗^ id)
+        . arr (LinearFunction flattenTensorProdCopy)
+    )
+      $ sec
+
+instance
+  ( KnownNat j1
+  , KnownNat j2
+  , KnownNat j
+  , KnownNat m
+  , KnownNat (IrrepDim j1)
+  , KnownNat (IrrepDim j2)
+  , KnownNat (IrrepDim j)
+  , KnownNat (m * n)
+  , LSpace (C m)
+  , LSpace (C (IrrepDim j1))
+  , LSpace (C (IrrepDim j2))
+  , LSpace (C (IrrepDim j))
+  , LSpace (C m ⊗ C (IrrepDim j1))
+  , LSpace (C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2))
+  , LSpace (C m ⊗ C (IrrepDim j))
+  , LSpace ((C m ⊗ C (IrrepDim j1)) ⊗ C (IrrepDim j2))
+  , TensorSpace (C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2))
+  , TensorSpace ((C m ⊗ C (IrrepDim j1)) ⊗ C (IrrepDim j2))
+  , TensorSpace (C m ⊗ C (IrrepDim j))
+  , Scalar (C m) ~ Complex Double
+  , Scalar (C (IrrepDim j1)) ~ Complex Double
+  , Scalar (C (IrrepDim j2)) ~ Complex Double
+  , Scalar (C (IrrepDim j)) ~ Complex Double
+  , Scalar (C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2)) ~ Complex Double
+  , Scalar ((C m ⊗ C (IrrepDim j1)) ⊗ C (IrrepDim j2)) ~ Complex Double
+  , Scalar (C m ⊗ C (IrrepDim j)) ~ Complex Double
+  ) =>
+  FuseOneChannel j1 j2 j ('AtomM m)
+  where
+  fuseOneChannel sec =
+    ((id ⊗^ fuseCGChannel @j1 @j2 @j) . rassocMap) $ sec
+
+-- | Append one fused atom sector onto a CG spine.
+class AppendFusedAtom (j :: Nat) (μ :: MultExpr) (rest :: Rep) where
+  appendFusedAtom
+    :: ToVSector ('Atom j) μ
+    -> RepV rest
+    -> RepV ('( 'Atom j, μ) ': rest)
+
+instance AppendFusedAtom j ('AtomM m) rest where
+  appendFusedAtom v rest = RConsAtomAtomM v rest
+
+instance AppendFusedAtom j ('Prod m n) rest where
+  appendFusedAtom v rest = RConsAtomProd v rest
+
+-- | Walk 'TensorIrrepRepSU2' channels, building a tagged atom spine.
+class FuseTensorSpine (j1 :: Nat) (j2 :: Nat) (μ :: MultExpr) (cg :: [(Nat, Nat)]) where
+  fuseTensorSpine
+    :: ToVSector ('Tensor j1 j2) μ
+    -> RepV (TagMult μ (AtomsFromCG cg))
+
+instance FuseTensorSpine j1 j2 μ '[] where
+  fuseTensorSpine _ = RNil
+
+instance
+  ( FuseTensorSpine j1 j2 μ rest
+  , KnownNat j
+  , FuseOneChannel j1 j2 j μ
+  , AppendFusedAtom j μ (TagMult μ (AtomsFromCG rest))
+  ) =>
+  FuseTensorSpine j1 j2 μ ('(j, m) ': rest)
+  where
+  fuseTensorSpine v =
+    appendFusedAtom @j @μ (fuseOneChannel @j1 @j2 @j @μ v) (fuseTensorSpine @j1 @j2 @μ @rest v)
+
 instance
   ( KnownNat j1
   , KnownNat j2
   , KnownNat m
-  , FuseSector '( 'Tensor j1 j2, 'AtomM m) ~ FuseIrrep ('Tensor j1 j2)
+  , FuseTensorSpine j1 j2 ('AtomM m) (TensorIrrepRepSU2 j1 j2)
   ) =>
   FuseOneSector ('Tensor j1 j2) ('AtomM m)
   where
-  fuseOneSector _ =
-    undefined
-      -- Blocker: CG fuse on coalesced @'Tensor'@ + @'AtomM'@ (same as @'Prod'@ path).
+  fuseOneSector = fuseTensorSpine @j1 @j2 @('AtomM m) @(TensorIrrepRepSU2 j1 j2)
 
 instance
   ( KnownNat j1
   , KnownNat j2
   , KnownNat m
   , KnownNat n
-  , FuseSector '( 'Tensor j1 j2, 'Prod m n) ~ FuseIrrep ('Tensor j1 j2)
+  , FuseTensorSpine j1 j2 ('Prod m n) (TensorIrrepRepSU2 j1 j2)
   ) =>
   FuseOneSector ('Tensor j1 j2) ('Prod m n)
   where
-  fuseOneSector _ =
-    undefined
-      -- Blocker: typed SU(2) CG fuse on @ToVSector@ (no flat buffer).
-      -- Oracle: 'Experiments.Symbolic.Reference.fuseOneSectorTensorReference'.
+  fuseOneSector = fuseTensorSpine @j1 @j2 @('Prod m n) @(TensorIrrepRepSU2 j1 j2)
 
 -- | Insert one sector into a coalesced spine (sort + merge on equal keys).
 class InsertSpine (e :: IrrepExpr) (μ :: MultExpr) (rs :: Rep) where
@@ -1063,6 +1188,81 @@ type family BraidSpine (rs :: Rep) :: Constraint where
     , BraidSpine rest
     )
 
+-- | Project a spine onto its trivial (@'Atom 0@) sectors.
+--
+-- A class is required: @RepV@ existentials do not refine @j ~ 0@, and
+-- 'FilterTrivial' will not reduce on a skolem @j@. Keep vs drop is
+-- @CmpNat j 0@-dispatched ('ProjectAtomOrd'), same pattern as 'InsertCompared'.
+class ProjectToSymmetric (rs :: Rep) where
+  projectToSymmetric :: RepV rs -> RepV (FilterTrivial rs)
+
+instance ProjectToSymmetric '[] where
+  projectToSymmetric RNil = RNil
+
+instance
+  ( CmpNat j 0 ~ ord
+  , ProjectAtomOrd ord j ('AtomM m) rest
+  ) =>
+  ProjectToSymmetric ('( 'Atom j, 'AtomM m) ': rest)
+  where
+  projectToSymmetric (RConsAtomAtomM v rs) =
+    projectAtomOrd @ord @j @('AtomM m) v rs
+
+instance
+  ( CmpNat j 0 ~ ord
+  , ProjectAtomOrd ord j ('Prod m n) rest
+  ) =>
+  ProjectToSymmetric ('( 'Atom j, 'Prod m n) ': rest)
+  where
+  projectToSymmetric (RConsAtomProd v rs) =
+    projectAtomOrd @ord @j @('Prod m n) v rs
+
+instance
+  ( FilterTrivial ('( 'Tensor j1 j2, 'AtomM m) ': rest) ~ FilterTrivial rest
+  , ProjectToSymmetric rest
+  ) =>
+  ProjectToSymmetric ('( 'Tensor j1 j2, 'AtomM m) ': rest)
+  where
+  projectToSymmetric (RConsTensorAtomM _ rs) = projectToSymmetric rs
+
+instance
+  ( FilterTrivial ('( 'Tensor j1 j2, 'Prod m n) ': rest) ~ FilterTrivial rest
+  , ProjectToSymmetric rest
+  ) =>
+  ProjectToSymmetric ('( 'Tensor j1 j2, 'Prod m n) ': rest)
+  where
+  projectToSymmetric (RConsTensorProd _ rs) = projectToSymmetric rs
+
+-- | Keep (@'EQ@ / @j ~ 0@) or drop (@'GT@) an atom sector under 'FilterTrivial'.
+class ProjectAtomOrd
+  (ord :: Ordering)
+  (j :: Nat)
+  (μ :: MultExpr)
+  (rest :: Rep)
+ where
+  projectAtomOrd
+    :: ToVSector ('Atom j) μ
+    -> RepV rest
+    -> RepV (FilterTrivial ('( 'Atom j, μ) ': rest))
+
+instance
+  ( j ~ 0
+  , ProjectToSymmetric rest
+  , RepCons ('Atom 0) μ
+  ) =>
+  ProjectAtomOrd 'EQ j μ rest
+  where
+  projectAtomOrd v rs =
+    repCons @('Atom 0) @μ v (projectToSymmetric rs)
+
+instance
+  ( FilterTrivial ('( 'Atom j, μ) ': rest) ~ FilterTrivial rest
+  , ProjectToSymmetric rest
+  ) =>
+  ProjectAtomOrd 'GT j μ rest
+  where
+  projectAtomOrd _ rs = projectToSymmetric rs
+
 -- | Braid every sector in a 'RepV' spine.
 braid
   :: forall rs
@@ -1381,6 +1581,20 @@ type SmokeFusedLeaf12 =
      , '( 'Atom 3, 'AtomM 6)
      ]
 
+-- | 'FilterTrivial' keeps only @'Atom 0@ sectors.
+type SmokeFilterTrivial =
+  AssertEqRep
+    ( FilterTrivial
+        '[ '( 'Atom 1, 'AtomM 2)
+         , '( 'Atom 0, 'AtomM 3)
+         , '( 'Tensor 1 1, 'Prod 1 1)
+         , '( 'Atom 0, 'Prod 2 2)
+         ]
+    )
+    '[ '( 'Atom 0, 'AtomM 3)
+     , '( 'Atom 0, 'Prod 2 2)
+     ]
+
 -- | 'RepV' spine type is stable under its own index.
 type SmokeRepVSpine =
   AssertEqType
@@ -1434,6 +1648,9 @@ smokeFusedLeafSym = Proxy
 
 smokeFusedLeaf12 :: Proxy SmokeFusedLeaf12
 smokeFusedLeaf12 = Proxy
+
+smokeFilterTrivial :: Proxy SmokeFilterTrivial
+smokeFilterTrivial = Proxy
 
 smokeRepVSpine :: Proxy SmokeRepVSpine
 smokeRepVSpine = Proxy
