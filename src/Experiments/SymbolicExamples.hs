@@ -12,6 +12,7 @@ import Data.Complex (Complex ((:+)), magnitude, realPart)
 import Data.Kind (Type)
 import Data.Maybe (fromJust)
 import Data.Proxy (Proxy (..))
+import Data.VectorSpace ((*^))
 import Experiments.Symbolic
 import Experiments.Symbolic.Reference
   ( exCoherenceRmove11
@@ -20,7 +21,7 @@ import Experiments.Symbolic.Reference
   , repVApproxEq
   , sectorFlatDim
   )
-import Math.LinearMap.Category (type (⊗))
+import Math.LinearMap.Category (type (⊗), (⊗))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Numeric.LinearAlgebra.Static (C)
 import Symmetry.SU2
@@ -230,6 +231,36 @@ cupFusedSpinHalfCoherent =
       RConsAtomAtomM uFus RNil = cup @'[ '( 'Atom 1, 'AtomM 1)] (fuse td)
    in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
 
+-- | @(cup ⊗ id)@ then 'lunitApply' recovers the cup-scale times @q@.
+cupApplyLunitOk :: Bool
+cupApplyLunitOk =
+  let v :: ToVSector ('Atom 1) ('AtomM 1)
+      v = unsafeFromArray (VS.fromList [1, 0])
+      r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      fused = fuse (tensorAtomDual r (dual r))
+      RConsAtomProd h (RConsAtomProd t2 RNil) = fused
+      assoc =
+        RCons (h ⊗ v) (RCons (t2 ⊗ v) RNil)
+          :: RepV
+               ( ApplyAssoc
+                   '[ '( 'Atom 1, 'AtomM 1)]
+                   '[ '( 'Atom 1, 'AtomM 1)]
+               )
+      RConsAtomAtomM recovered RNil =
+        lunitApply
+          @'[ '( 'Atom 1, 'AtomM 1)]
+          @'[ '( 'Atom 1, 'AtomM 1)]
+          ( cupApply
+              @'[ '( 'Atom 1, 'AtomM 1)]
+              @'[ '( 'Atom 1, 'AtomM 1)]
+              assoc
+          )
+      RConsAtomAtomM u RNil = cup @'[ '( 'Atom 1, 'AtomM 1)] fused
+      scale = VS.head (toArray u)
+      expected = scale *^ v
+   in all (\(a, b) -> magnitude (a - b) < 1e-9)
+        (zip (VS.toList (toArray recovered)) (VS.toList (toArray expected)))
+
 -- | Two-sector spine: cup sums diagonal leaf cups (@‖x‖² + ‖y‖²@).
 cupUnfusedRepTwoSectorOk :: Bool
 cupUnfusedRepTwoSectorOk =
@@ -334,6 +365,7 @@ symbolicExamplesOk =
     , undualDualRoundtripOk
     , cupFusedTrivialOk
     , cupFusedSpinHalfCoherent
+    , cupApplyLunitOk
     , cupUnfusedRepTwoSectorOk
     , coalesceMergeFlatDimOk
     , coalesceMergeDirectSumOk
