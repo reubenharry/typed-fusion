@@ -2,11 +2,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
--- | Term-level smokes for 'Experiments.Symbolic' (merge layout, fuse pipeline).
+-- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
 module Experiments.SymbolicExamples where
 
 import Data.Complex (Complex ((:+)), magnitude, realPart)
+import Data.Kind (Type)
 import Data.Maybe (fromJust)
 import Data.Proxy (Proxy (..))
 import Experiments.Symbolic
@@ -17,7 +20,9 @@ import Experiments.Symbolic.Reference
   , repVApproxEq
   , sectorFlatDim
   )
+import Math.LinearMap.Category (type (⊗))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
+import Numeric.LinearAlgebra.Static (C)
 import Symmetry.SU2
   ( SU2Element
   , su2FromQuaternion
@@ -186,19 +191,24 @@ cupUnfusedSpinHalfProductOk =
           tensorAtomDual (RConsAtomAtomM up RNil) (dual (RConsAtomAtomM up RNil))
    in abs (unitAmp u - 1) < 1e-9
 
--- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ id on spin-½.
+-- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ @√(j+1) · CS@ (pivotal Fuse undual).
 undualDualRoundtripOk :: Bool
 undualDualRoundtripOk =
   let v :: ToVSector ('Atom 1) ('AtomM 1)
       v = unsafeFromArray (VS.fromList [0.6, 0.8])
+      -- CS on spin-½: |↑⟩↦|↓⟩, |↓⟩↦−|↑⟩; √2 scale.
+      -- @CS (0.6, 0.8) = (−0.8, 0.6)@.
+      expected =
+        unsafeFromArray (VS.fromList [-(sqrt 2 * 0.8), sqrt 2 * 0.6])
+          :: ToVSector ('Atom 1) ('AtomM 1)
       v' = undualAtomAtomM @1 @1 (dualAtomAtomM @1 @1 v)
    in VS.and $
         VS.zipWith
           (\a b -> magnitude (a - b) < 1e-9)
-          (toArray v)
+          (toArray expected)
           (toArray v')
 
--- | Fused cup on @j = 0@: agrees with unfused (trivial irrep; no CS needed).
+-- | Fused cup on @j = 0@: agrees with unfused (trivial irrep; CS = id, scale 1).
 cupFusedTrivialOk :: Bool
 cupFusedTrivialOk =
   let x :: ToVSector ('Atom 0) ('AtomM 1)
@@ -209,9 +219,7 @@ cupFusedTrivialOk =
       RConsAtomAtomM uFus RNil = cup @'[ '( 'Atom 0, 'AtomM 1)] (fuse td)
    in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
 
--- | Probe: fused vs unfused cup on spin-½. Currently @False@ — CG singlet after
--- Riesz undual ≠ DualVector Hilbert pairing until Condon–Shortley is in undual.
--- Not part of 'symbolicExamplesOk'.
+-- | Fused cup on spin-½ agrees with unfused (CS + @√2@ in undual).
 cupFusedSpinHalfCoherent :: Bool
 cupFusedSpinHalfCoherent =
   let v :: ToVSector ('Atom 1) ('AtomM 1)
@@ -325,9 +333,344 @@ symbolicExamplesOk =
     , cupUnfusedSpinHalfProductOk
     , undualDualRoundtripOk
     , cupFusedTrivialOk
+    , cupFusedSpinHalfCoherent
     , cupUnfusedRepTwoSectorOk
     , coalesceMergeFlatDimOk
     , coalesceMergeDirectSumOk
     , coalescePreservesFlatDimOk
     , projectToSymmetricOk
     ]
+
+
+--------------------------------------------------------------------------------
+-- Compile-time smokes (type equalities)
+--------------------------------------------------------------------------------
+
+type family AssertEqIrrep (a :: IrrepExpr) (b :: IrrepExpr) :: Bool where
+  AssertEqIrrep a a = 'True
+
+type family AssertEqMult (a :: MultExpr) (b :: MultExpr) :: Bool where
+  AssertEqMult a a = 'True
+
+type family AssertEqSector (a :: Sector) (b :: Sector) :: Bool where
+  AssertEqSector a a = 'True
+
+type family AssertEqRep (a :: Rep) (b :: Rep) :: Bool where
+  AssertEqRep a a = 'True
+
+type family AssertEqType (a :: Type) (b :: Type) :: Bool where
+  AssertEqType a a = 'True
+
+type SmokeSector =
+  '( 'Tensor ('Atom 1) ('Atom 2)
+   , 'Prod ('AtomM 3) ('AtomM 5)
+   )
+
+type SmokeRep = '[SmokeSector]
+
+type SmokeBraidSector =
+  AssertEqSector
+    (BraidSector SmokeSector)
+    '( 'Tensor ('Atom 2) ('Atom 1)
+     , 'Prod ('AtomM 5) ('AtomM 3)
+     )
+
+type SmokeBraid =
+  AssertEqRep
+    (Braid SmokeRep)
+    '[ '( 'Tensor ('Atom 2) ('Atom 1)
+        , 'Prod ('AtomM 5) ('AtomM 3)
+        )
+     ]
+
+-- | @Braid (Tensor r s)@ on a leaf × leaf distribute.
+type SmokeBraidTensor =
+  AssertEqRep
+    ( Braid
+        ( Tensor
+            '[ '( 'Atom 1, 'AtomM 2)]
+            '[ '( 'Atom 2, 'AtomM 3)]
+        )
+    )
+    '[ '( 'Tensor ('Atom 2) ('Atom 1), 'Prod ('AtomM 3) ('AtomM 2))]
+
+-- | Dual of an atom is the @'Dual@ / @'DualM@ constructors (not silent self-duality).
+type SmokeDualAtom =
+  AssertEqSector
+    (DualSector '( 'Atom 1, 'AtomM 3))
+    '( 'Dual ('Atom 1), 'DualM ('AtomM 3))
+
+-- | @(j₁ ⊗ j₂)* ≅ Dual j₂ ⊗ Dual j₁@ with copy @'Prod@ reversed (distributed dual).
+type SmokeDualTensor =
+  AssertEqSector
+    (DualSector '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 3) ('AtomM 5)))
+    '( 'Tensor ('Dual ('Atom 2)) ('Dual ('Atom 1))
+     , 'Prod ('DualM ('AtomM 5)) ('DualM ('AtomM 3))
+     )
+
+-- | Dual is involutive on a tensor sector (@Dual ∘ Dual = id@).
+type SmokeDualInvolutive =
+  AssertEqSector
+    ( DualSector
+        ( DualSector
+            '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 3) ('AtomM 5))
+        )
+    )
+    '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 3) ('AtomM 5))
+
+-- | Dual of a leaf spine wraps each sector in @'Dual@ / @'DualM@.
+type SmokeDualRep =
+  AssertEqRep
+    ( Dual
+        '[ '( 'Atom 1, 'AtomM 2)
+         , '( 'Atom 3, 'AtomM 1)
+         ]
+    )
+    '[ '( 'Dual ('Atom 1), 'DualM ('AtomM 2))
+     , '( 'Dual ('Atom 3), 'DualM ('AtomM 1))
+     ]
+
+-- | @Mor r q = Dual r ⊗ q@ on leaf atoms (unfused Dual×Atom distribute).
+type SmokeMor =
+  AssertEqRep
+    ( Mor
+        '[ '( 'Atom 1, 'AtomM 2)]
+        '[ '( 'Atom 2, 'AtomM 3)]
+    )
+    '[ '( 'Tensor ('Dual ('Atom 1)) ('Atom 2)
+        , 'Prod ('DualM ('AtomM 2)) ('AtomM 3)
+        )
+     ]
+
+-- | Multi-sector left spine distributes over right (@Tensor@ Cartesian product).
+type SmokeTensorSpine =
+  AssertEqRep
+    ( Tensor
+        '[ '( 'Atom 1, 'AtomM 2), '( 'Atom 0, 'AtomM 1)]
+        '[ '( 'Atom 2, 'AtomM 3)]
+    )
+    '[ '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 2) ('AtomM 3))
+     , '( 'Tensor ('Atom 0) ('Atom 2), 'Prod ('AtomM 1) ('AtomM 3))
+     ]
+
+-- | Same @'Atom 1@ sectors coalesce by adding multiplicities.
+type SmokeCoalesceAtoms =
+  AssertEqRep
+    (Coalesce
+      '[ '( 'Atom 1, 'AtomM 2)
+       , '( 'Atom 1, 'AtomM 3)
+       ])
+    '[ '( 'Atom 1, 'AtomM 5)]
+
+-- | Same @'Tensor@ with @'Prod@ multiplicities → @'AtomM@ of summed dims.
+type SmokeCoalesceTensors =
+  AssertEqRep
+    (Coalesce
+      '[ '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 2) ('AtomM 3))
+       , '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 1) ('AtomM 4))
+       ])
+    '[ '( 'Tensor ('Atom 1) ('Atom 2), 'AtomM 10)]
+
+-- | Distinct keys stay sorted (@'Atom' < 'Tensor'@).
+type SmokeCoalesceSort =
+  AssertEqRep
+    (Coalesce
+      '[ '( 'Tensor ('Atom 0) ('Atom 1), 'AtomM 1)
+       , '( 'Atom 2, 'AtomM 1)
+       ])
+    '[ '( 'Atom 2, 'AtomM 1)
+     , '( 'Tensor ('Atom 0) ('Atom 1), 'AtomM 1)
+     ]
+
+-- | Leaf sector @('Atom 1, 'AtomM 3)@ → @C 3 ⊗ C 2@.
+type SmokeSectorAtom =
+  AssertEqType
+    (ToVSector ('Atom 1) ('AtomM 3))
+    (C 3 ⊗ C 2)
+
+type SmokeSectorTensor =
+  AssertEqType
+    (ToVSector ('Tensor ('Atom 1) ('Atom 2)) ('Prod ('AtomM 2) ('AtomM 3)))
+    ((C 2 ⊗ C 2) ⊗ (C 3 ⊗ C 3))
+
+-- | @1 ⊗ 2@ (SU2) → @j = 1, 3@ channels.
+type SmokeFuseIrrep =
+  AssertEqRep
+    (FuseIrrep ('Tensor ('Atom 1) ('Atom 2)))
+    '[ '( 'Atom 1, 'AtomM 1)
+     , '( 'Atom 3, 'AtomM 1)
+     ]
+
+-- | Sector fuse tags copy multiplicity onto each CG channel.
+type SmokeFuseSector =
+  AssertEqRep
+    (FuseSector '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 2) ('AtomM 3)))
+    '[ '( 'Atom 1, 'Prod ('AtomM 2) ('AtomM 3))
+     , '( 'Atom 3, 'Prod ('AtomM 2) ('AtomM 3))
+     ]
+
+-- | Atom sector is unchanged (modulo unit mult tag).
+type SmokeFuseRepAtom =
+  AssertEqRep
+    (Fuse '[ '( 'Atom 2, 'AtomM 5)])
+    '[ '( 'Atom 2, 'AtomM 5)]
+
+-- | @Tensor@ then @Fuse@ on two single-sector reps.
+type SmokeFuseTensor =
+  AssertEqRep
+    ( Fuse
+        ( Tensor
+            '[ '( 'Atom 1, 'AtomM 2)]
+            '[ '( 'Atom 2, 'AtomM 3)]
+        )
+    )
+    '[ '( 'Atom 1, 'Prod ('AtomM 2) ('AtomM 3))
+     , '( 'Atom 3, 'Prod ('AtomM 2) ('AtomM 3))
+     ]
+
+-- | @Fuse (Braid (Tensor …))@ swaps tensor legs and copy product.
+type SmokeFuseBraidTensor =
+  AssertEqRep
+    ( Fuse
+        ( Braid
+            ( Tensor
+                '[ '( 'Atom 1, 'AtomM 2)]
+                '[ '( 'Atom 2, 'AtomM 3)]
+            )
+        )
+    )
+    '[ '( 'Atom 1, 'Prod ('AtomM 3) ('AtomM 2))
+     , '( 'Atom 3, 'Prod ('AtomM 3) ('AtomM 2))
+     ]
+
+-- | 'RmoveTarget' on a leaf fused tensor matches @Fuse (Braid (Tensor …))@.
+type SmokeRmoveTarget =
+  AssertEqRep
+    ( RmoveTarget
+        1
+        2
+        ( Fuse
+            ( Tensor
+                '[ '( 'Atom 1, 'AtomM 2)]
+                '[ '( 'Atom 2, 'AtomM 3)]
+            )
+        )
+    )
+    ( Fuse
+        ( Braid
+            ( Tensor
+                '[ '( 'Atom 1, 'AtomM 2)]
+                '[ '( 'Atom 2, 'AtomM 3)]
+            )
+        )
+    )
+
+-- | Swapped tensor legs yield the same fused atom spine (@SU(2)@ CG symmetry).
+type SmokeFusedLeafSym =
+  AssertEqRep
+    ( Coalesce
+        (TagMult ('AtomM 6) (FuseIrrep ('Tensor ('Atom 2) ('Atom 1))))
+    )
+    ( Coalesce
+        (TagMult ('AtomM 6) (FuseIrrep ('Tensor ('Atom 1) ('Atom 2))))
+    )
+
+-- | Reference flat fuse layout for @1 ⊗ 2@, @m = 2@, @n = 3@.
+type SmokeFusedLeaf12 =
+  AssertEqRep
+    (Coalesce (TagMult ('AtomM 6) (FuseIrrep ('Tensor ('Atom 1) ('Atom 2)))))
+    '[ '( 'Atom 1, 'AtomM 6)
+     , '( 'Atom 3, 'AtomM 6)
+     ]
+
+-- | 'FilterTrivial' keeps only @'Atom 0@ sectors.
+type SmokeFilterTrivial =
+  AssertEqRep
+    ( FilterTrivial
+        '[ '( 'Atom 1, 'AtomM 2)
+         , '( 'Atom 0, 'AtomM 3)
+         , '( 'Tensor ('Atom 1) ('Atom 1), 'Prod ('AtomM 1) ('AtomM 1))
+         , '( 'Atom 0, 'Prod ('AtomM 2) ('AtomM 2))
+         ]
+    )
+    '[ '( 'Atom 0, 'AtomM 3)
+     , '( 'Atom 0, 'Prod ('AtomM 2) ('AtomM 2))
+     ]
+
+-- | 'RepV' spine type is stable under its own index.
+type SmokeRepVSpine =
+  AssertEqType
+    (RepV '[ '( 'Atom 1, 'AtomM 2), '( 'Tensor ('Atom 0) ('Atom 1), 'AtomM 1)])
+    (RepV '[ '( 'Atom 1, 'AtomM 2), '( 'Tensor ('Atom 0) ('Atom 1), 'AtomM 1)])
+
+smokeBraidSector :: Proxy SmokeBraidSector
+smokeBraidSector = Proxy
+
+smokeBraid :: Proxy SmokeBraid
+smokeBraid = Proxy
+
+smokeBraidTensor :: Proxy SmokeBraidTensor
+smokeBraidTensor = Proxy
+
+smokeDualAtom :: Proxy SmokeDualAtom
+smokeDualAtom = Proxy
+
+smokeDualTensor :: Proxy SmokeDualTensor
+smokeDualTensor = Proxy
+
+smokeDualInvolutive :: Proxy SmokeDualInvolutive
+smokeDualInvolutive = Proxy
+
+smokeDualRep :: Proxy SmokeDualRep
+smokeDualRep = Proxy
+
+smokeMor :: Proxy SmokeMor
+smokeMor = Proxy
+
+smokeTensorSpine :: Proxy SmokeTensorSpine
+smokeTensorSpine = Proxy
+
+smokeCoalesceAtoms :: Proxy SmokeCoalesceAtoms
+smokeCoalesceAtoms = Proxy
+
+smokeCoalesceTensors :: Proxy SmokeCoalesceTensors
+smokeCoalesceTensors = Proxy
+
+smokeCoalesceSort :: Proxy SmokeCoalesceSort
+smokeCoalesceSort = Proxy
+
+smokeSectorAtom :: Proxy SmokeSectorAtom
+smokeSectorAtom = Proxy
+
+smokeSectorTensor :: Proxy SmokeSectorTensor
+smokeSectorTensor = Proxy
+
+smokeFuseIrrep :: Proxy SmokeFuseIrrep
+smokeFuseIrrep = Proxy
+
+smokeFuseSector :: Proxy SmokeFuseSector
+smokeFuseSector = Proxy
+
+smokeFuseRepAtom :: Proxy SmokeFuseRepAtom
+smokeFuseRepAtom = Proxy
+
+smokeFuseTensor :: Proxy SmokeFuseTensor
+smokeFuseTensor = Proxy
+
+smokeFuseBraidTensor :: Proxy SmokeFuseBraidTensor
+smokeFuseBraidTensor = Proxy
+
+smokeRmoveTarget :: Proxy SmokeRmoveTarget
+smokeRmoveTarget = Proxy
+
+smokeFusedLeafSym :: Proxy SmokeFusedLeafSym
+smokeFusedLeafSym = Proxy
+
+smokeFusedLeaf12 :: Proxy SmokeFusedLeaf12
+smokeFusedLeaf12 = Proxy
+
+smokeFilterTrivial :: Proxy SmokeFilterTrivial
+smokeFilterTrivial = Proxy
+
+smokeRepVSpine :: Proxy SmokeRepVSpine
+smokeRepVSpine = Proxy

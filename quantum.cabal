@@ -102,6 +102,9 @@ library
         Experiments.General
         Experiments.GeneralExamples
         Experiments.Symbolic
+        Experiments.Symbolic.Expr
+        Experiments.Symbolic.TypeLevel
+        Experiments.Symbolic.Core
         Experiments.Symbolic.Reference
         Experiments.SymbolicExamples
         Experiments.SU2
