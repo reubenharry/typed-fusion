@@ -139,7 +139,7 @@ fuseTensorSectorReference
      )
   => RepV '[ '( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n))]
   -> RepV (Coalesce (TensorFusedFlat j1 j2 m n))
-fuseTensorSectorReference (RCons sv RNil) =
+fuseTensorSectorReference (RConsTensorProd sv RNil) =
   coalesce $
     fuseOneSectorTensorReference @j1 @j2 @m @n sv
 fuseTensorSectorReference _ =
@@ -166,8 +166,8 @@ fuseTensorReference
            '[ '( 'Atom j2, 'AtomM m2)]
        )
   -> RepV (Coalesce (TensorFusedFlat j1 j2 m1 m2))
-fuseTensorReference (RCons sv RNil) =
-  fuseTensorSectorReference @j1 @j2 @m1 @m2 (RCons sv RNil)
+fuseTensorReference (RConsTensorProd sv RNil) =
+  fuseTensorSectorReference @j1 @j2 @m1 @m2 (RConsTensorProd sv RNil)
 fuseTensorReference _ =
   error "fuseTensorReference: expected single-sector Tensor spine"
 
@@ -190,7 +190,8 @@ instance
   ) =>
   RepVFlat ('( 'Atom j, 'AtomM m) ': rest)
   where
-  repVFlat (RCons v rs) = toArray v VS.++ repVFlat rs
+  repVFlat (RConsAtomAtomM v rs) = toArray v VS.++ repVFlat rs
+  repVFlat _ = error "repVFlat: spine / constructor mismatch"
 
 instance
   ( KnownNat j
@@ -202,7 +203,8 @@ instance
   ) =>
   RepVFlat ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
-  repVFlat (RCons v rs) = toArray v VS.++ repVFlat rs
+  repVFlat (RConsAtomProd v rs) = toArray v VS.++ repVFlat rs
+  repVFlat _ = error "repVFlat: spine / constructor mismatch"
 
 -- | Flatten @'Prod'@-tagged fused channels to @'AtomM'@ buffer layout for oracle compare.
 class RepVFlatProdToAtomM (rs :: Rep) where
@@ -236,8 +238,10 @@ instance
   ) =>
   RepVFlatProdToAtomM ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
-  repVFlatProdToAtomM (RCons v rs) =
+  repVFlatProdToAtomM (RConsAtomProd v rs) =
     toArray (flattenCopyProd v) VS.++ repVFlatProdToAtomM rs
+  repVFlatProdToAtomM _ =
+    error "repVFlatProdToAtomM: expected RConsAtomProd spine"
 
 repVApproxEq
   :: (RepVFlat rsL, RepVFlat rsR) => RepV rsL -> RepV rsR -> Double -> Bool

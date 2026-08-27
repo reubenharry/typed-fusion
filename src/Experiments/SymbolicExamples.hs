@@ -6,7 +6,7 @@
 -- | Term-level smokes for 'Experiments.Symbolic' (merge layout, fuse pipeline).
 module Experiments.SymbolicExamples where
 
-import Data.Complex (Complex)
+import Data.Complex (Complex ((:+)), realPart)
 import Data.Proxy (Proxy (..))
 import Experiments.Symbolic
 import Experiments.Symbolic.Reference
@@ -75,23 +75,50 @@ lunitApplyOk =
    in VS.length (toArray v) == VS.length (toArray sTensorRight)
 
 --------------------------------------------------------------------------------
--- Dual + unfused cup
---
--- Term-level DualVector dual / cupUnfused stubbed: DualVector (C m ⊗ C j)
--- pairing disagrees with InnerSpace for Complex (see cupUnfused blocker).
+-- Dual + unfused cup (InnerSpace Riesz DualVector; no euclideanNorm coerce)
 --------------------------------------------------------------------------------
 
+unitAmp :: ToVSector ('Atom 0) ('AtomM 1) -> Double
+unitAmp u = abs (realPart (VS.head (toArray u)))
+
+-- | @cup(x ⊗ dual x) = ‖x‖²@ on spin-½.
 dualAtomSpinHalfOk :: Bool
-dualAtomSpinHalfOk = True  -- stub: dualAtomAtomM undefined
+dualAtomSpinHalfOk =
+  let v :: ToVSector ('Atom 1) ('AtomM 1)
+      v = unsafeFromArray (VS.fromList [1, 0])
+      r = RConsAtomAtomM v RNil
+      RConsAtomAtomM u RNil = cupUnfused @1 @1 (tensorAtomDual r (dual r))
+   in abs (unitAmp u - 1) < 1e-9
 
+-- | @j = 0@: @cup(x ⊗ dual x) = |x|²@.
 cupUnfusedTrivialOk :: Bool
-cupUnfusedTrivialOk = True  -- stub: cupUnfused undefined
+cupUnfusedTrivialOk =
+  let x :: ToVSector ('Atom 0) ('AtomM 1)
+      x = unsafeFromArray (VS.fromList [3 :+ 4])
+      r = RConsAtomAtomM x RNil
+      RConsAtomAtomM u RNil =
+        cupUnfused @0 @1 (tensorAtomDual r (dual r))
+   in abs (unitAmp u - 25) < 1e-9
 
+-- | Multiplicity @m = 2@, @j = 0@.
 cupUnfusedMultOk :: Bool
-cupUnfusedMultOk = True  -- stub: cupUnfused undefined
+cupUnfusedMultOk =
+  let x :: ToVSector ('Atom 0) ('AtomM 2)
+      x = unsafeFromArray (VS.fromList [1, 2])
+      r = RConsAtomAtomM x RNil
+      RConsAtomAtomM u RNil =
+        cupUnfused @0 @2 (tensorAtomDual r (dual r))
+   in abs (unitAmp u - 5) < 1e-9
 
+-- | @|↑⟩ ⊗ dual(|↑⟩)@: pairing magnitude 1.
 cupUnfusedSpinHalfProductOk :: Bool
-cupUnfusedSpinHalfProductOk = True  -- stub: cupUnfused undefined
+cupUnfusedSpinHalfProductOk =
+  let up :: ToVSector ('Atom 1) ('AtomM 1)
+      up = unsafeFromArray (VS.fromList [1, 0])
+      RConsAtomAtomM u RNil =
+        cupUnfused @1 @1 $
+          tensorAtomDual (RConsAtomAtomM up RNil) (dual (RConsAtomAtomM up RNil))
+   in abs (unitAmp u - 1) < 1e-9
 
 --------------------------------------------------------------------------------
 -- Coalesce merge (direct-sum layout)
