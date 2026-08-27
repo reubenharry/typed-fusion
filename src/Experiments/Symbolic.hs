@@ -302,6 +302,75 @@ type family AtomSpine (rs :: Rep) :: Constraint where
     )
 
 --------------------------------------------------------------------------------
+-- Atom-spine / dual-atom-spine singletons
+--
+-- Bespoke, like 'Symmetry.RepSingleton.SRep': enough to case on leaf spines and
+-- refine type-family indices (@Tensor Unit q@, @Tensor (Dual r) q@, etc.) without
+-- a walk class per operation. Not full @singletons@ for @IrrepExpr@.
+--
+-- Motivation: @RepV@ constructor explosion if @IrrepExpr@ recursion is mirrored
+-- in the GADT; a spine singleton + uniform sector payload is the long-term exit.
+--------------------------------------------------------------------------------
+
+-- | Runtime witness for an atom-only spine (@'Atom@ / @'AtomM@).
+data SAtomRep (rs :: Rep) where
+  SAtomNil :: SAtomRep '[]
+  SAtomCons
+    :: forall j m rest
+     . ( KnownNat j
+       , KnownNat m
+       , KnownNat (IrrepDim j)
+       )
+    => SAtomRep rest
+    -> SAtomRep ('( 'Atom j, 'AtomM m) ': rest)
+
+-- | Materialize 'SAtomRep' for a statically known atom spine.
+class KnownAtomRep (rs :: Rep) where
+  atomRepSing :: SAtomRep rs
+
+instance KnownAtomRep '[] where
+  atomRepSing = SAtomNil
+
+instance
+  ( KnownNat j
+  , KnownNat m
+  , KnownNat (IrrepDim j)
+  , KnownAtomRep rest
+  ) =>
+  KnownAtomRep ('( 'Atom j, 'AtomM m) ': rest)
+  where
+  atomRepSing = SAtomCons @j @m (atomRepSing @rest)
+
+-- | Runtime witness for a dual-atom spine (@'Dual ('Atom j)@ / @'DualM ('AtomM m)@).
+data SDualAtomRep (rs :: Rep) where
+  SDualAtomNil :: SDualAtomRep '[]
+  SDualAtomCons
+    :: forall j m rest
+     . ( KnownNat j
+       , KnownNat m
+       , KnownNat (IrrepDim j)
+       )
+    => SDualAtomRep rest
+    -> SDualAtomRep ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest)
+
+-- | Materialize 'SDualAtomRep' for a statically known dual-atom spine.
+class KnownDualAtomRep (rs :: Rep) where
+  dualAtomRepSing :: SDualAtomRep rs
+
+instance KnownDualAtomRep '[] where
+  dualAtomRepSing = SDualAtomNil
+
+instance
+  ( KnownNat j
+  , KnownNat m
+  , KnownNat (IrrepDim j)
+  , KnownDualAtomRep rest
+  ) =>
+  KnownDualAtomRep ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest)
+  where
+  dualAtomRepSing = SDualAtomCons @j @m (dualAtomRepSing @rest)
+
+--------------------------------------------------------------------------------
 -- Term-level spine ('RepV') and fusion
 --------------------------------------------------------------------------------
 
@@ -1078,96 +1147,97 @@ tensorAtoms
            '[ '( 'Atom j2, 'AtomM m2)]
        )
 tensorAtoms s1 s2 =
-  tensor
+  tensorAtom
     (RConsAtomAtomM s1 RNil)
     (RConsAtomAtomM s2 RNil)
 
--- | Pair one left atom sector with every sector of a right leaf spine.
-class TensorOneSpine (j :: Nat) (m :: Nat) (q :: Rep) where
-  tensorOne
-    :: ToVSector ('Atom j) ('AtomM m)
-    -> RepV q
-    -> RepV (TensorOne '( 'Atom j, 'AtomM m) q)
-
-instance TensorOneSpine j m '[] where
-  tensorOne _ RNil = RNil
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat j2
-  , KnownNat n
-  , KnownNat (IrrepDim j)
-  , KnownNat (IrrepDim j2)
-  , TensorOneSpine j m rest
-  ) =>
-  TensorOneSpine j m ('( 'Atom j2, 'AtomM n) ': rest)
+-- | Pair one left atom sector with a right atom spine ('SAtomRep').
+tensorOneAtom
+  :: forall j m q
+   . ( KnownNat j
+     , KnownNat m
+     , KnownNat (IrrepDim j)
+     , KnownAtomRep q
+     )
+  => ToVSector ('Atom j) ('AtomM m)
+  -> RepV q
+  -> RepV (TensorOne '( 'Atom j, 'AtomM m) q)
+tensorOneAtom s1 = go (atomRepSing @q)
   where
-  tensorOne s1 (RConsAtomAtomM s2 rest) =
-    RConsTensorProd (s1 ⊗ s2) (tensorOne @j @m s1 rest)
+    go :: forall q'. SAtomRep q' -> RepV q' -> RepV (TensorOne '( 'Atom j, 'AtomM m) q')
+    go SAtomNil RNil = RNil
+    go (SAtomCons @j2 @n rest) (RConsAtomAtomM s2 qRest) =
+      RConsTensorProd (s1 ⊗ s2) (go rest qRest)
 
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat j2
-  , KnownNat n
-  , KnownNat (IrrepDim j)
-  , KnownNat (IrrepDim j2)
-  , TensorOneSpine j m rest
-  ) =>
-  TensorOneSpine j m ('( 'Dual ('Atom j2), 'DualM ('AtomM n)) ': rest)
+-- | Atom×atom Cartesian tensor via 'SAtomRep' (replaces 'TensorOneSpine' on atoms).
+tensorAtom
+  :: forall r q
+   . ( KnownAtomRep r
+     , KnownAtomRep q
+     )
+  => RepV r
+  -> RepV q
+  -> RepV (Tensor r q)
+tensorAtom r q = go (atomRepSing @r) r
   where
-  tensorOne s1 (RConsDualAtomDualAtomM s2 rest) =
-    RConsTensorAtomDualAtom (s1 ⊗ s2) (tensorOne @j @m s1 rest)
+    go :: forall r'. SAtomRep r' -> RepV r' -> RepV (Tensor r' q)
+    go SAtomNil RNil = RNil
+    go (SAtomCons @j @m rest) (RConsAtomAtomM s1 rRest) =
+      appendRepV (tensorOneAtom @j @m s1 q) (go rest rRest)
+
+-- | Pair one left dual-atom sector with a right atom spine.
+tensorOneDualAtom
+  :: forall j m q
+   . ( KnownNat j
+     , KnownNat m
+     , KnownNat (IrrepDim j)
+     , KnownAtomRep q
+     )
+  => ToVSector ('Dual ('Atom j)) ('DualM ('AtomM m))
+  -> RepV q
+  -> RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) q)
+tensorOneDualAtom s1 = go (atomRepSing @q)
+  where
+    go
+      :: forall q'
+       . SAtomRep q'
+      -> RepV q'
+      -> RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) q')
+    go SAtomNil RNil = RNil
+    go (SAtomCons @j2 @n rest) (RConsAtomAtomM s2 qRest) =
+      RConsTensorDualAtomAtom (s1 ⊗ s2) (go rest qRest)
+
+-- | Dual-atom × atom Cartesian tensor via 'SDualAtomRep' / 'SAtomRep'.
+tensorDualAtom
+  :: forall r q
+   . ( KnownDualAtomRep r
+     , KnownAtomRep q
+     )
+  => RepV r
+  -> RepV q
+  -> RepV (Tensor r q)
+tensorDualAtom r q = go (dualAtomRepSing @r) r
+  where
+    go :: forall r'. SDualAtomRep r' -> RepV r' -> RepV (Tensor r' q)
+    go SDualAtomNil RNil = RNil
+    go (SDualAtomCons @j @m rest) (RConsDualAtomDualAtomM s1 rRest) =
+      appendRepV (tensorOneDualAtom @j @m s1 q) (go rest rRest)
 
 -- | Leaf×leaf tensor of two spines ('Tensor' type family).
+-- Atom×atom and dual×atom are singleton-driven; no walk class per side.
 class TensorSpine (r :: Rep) (q :: Rep) where
   tensor :: RepV r -> RepV q -> RepV (Tensor r q)
 
-instance TensorSpine '[] q where
-  tensor RNil _ = RNil
+instance (KnownAtomRep r, KnownAtomRep q) => TensorSpine r q where
+  tensor = tensorAtom
 
 instance
-  ( TensorOneSpine j m q
-  , TensorSpine rest q
-  ) =>
-  TensorSpine ('( 'Atom j, 'AtomM m) ': rest) q
-  where
-  tensor (RConsAtomAtomM s1 rest) q =
-    appendRepV (tensorOne @j @m s1 q) (tensor rest q)
-
-instance
-  ( TensorOneSpineDual j m q
-  , TensorSpine rest q
+  ( KnownDualAtomRep ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest)
+  , KnownAtomRep q
   ) =>
   TensorSpine ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest) q
   where
-  tensor (RConsDualAtomDualAtomM s1 rest) q =
-    appendRepV (tensorOneDual @j @m s1 q) (tensor rest q)
-
--- | Left dual atom × right leaf spine.
-class TensorOneSpineDual (j :: Nat) (m :: Nat) (q :: Rep) where
-  tensorOneDual
-    :: ToVSector ('Dual ('Atom j)) ('DualM ('AtomM m))
-    -> RepV q
-    -> RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) q)
-
-instance TensorOneSpineDual j m '[] where
-  tensorOneDual _ RNil = RNil
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat j2
-  , KnownNat n
-  , KnownNat (IrrepDim j)
-  , KnownNat (IrrepDim j2)
-  , TensorOneSpineDual j m rest
-  ) =>
-  TensorOneSpineDual j m ('( 'Atom j2, 'AtomM n) ': rest)
-  where
-  tensorOneDual s1 (RConsAtomAtomM s2 rest) =
-    RConsTensorDualAtomAtom (s1 ⊗ s2) (tensorOneDual @j @m s1 rest)
+  tensor = tensorDualAtom
 
 --------------------------------------------------------------------------------
 -- Application (compact closed evaluation)
@@ -1262,33 +1332,25 @@ lunitSector sec =
   flattenCopyProd @1 @n @(IrrepDim j)
     (fuseOneChannelProd @0 @j @j @1 @n sec)
 
--- | Left unitor on @Tensor Unit q@.
---
--- A class is required (same stain as 'ProjectToSymmetric' / 'TensorSpine'):
--- matching @RConsTensorProd@ only yields skolems, so a plain fold under
--- @LunitTensorC@ cannot refine @j₁ ~ 0@ / @m ~ 1@ the way instance heads can.
-class LunitSpine (q :: Rep) where
-  lunitSpine :: RepV (Tensor Unit q) -> RepV q
-
-instance LunitSpine '[] where
-  lunitSpine RNil = RNil
-
-instance
-  ( KnownNat j
-  , KnownNat n
-  , KnownNat (IrrepDim j)
-  , KnownNat (1 * n)
-  , LunitSpine rest
-  ) =>
-  LunitSpine ('( 'Atom j, 'AtomM n) ': rest)
+-- | Left unitor on @Tensor Unit q@, driven by 'SAtomRep' (no 'LunitSpine' class).
+-- Matching the singleton refines @q@ so @Tensor Unit q@ reduces; then the
+-- @RConsTensorProd@ payload type-checks against @lunitSector@.
+lunitSpine
+  :: forall q
+   . KnownAtomRep q
+  => RepV (Tensor Unit q)
+  -> RepV q
+lunitSpine = go (atomRepSing @q)
   where
-  lunitSpine (RConsTensorProd v rest) =
-    RConsAtomAtomM (lunitSector @j @n v) (lunitSpine rest)
+    go :: forall q'. SAtomRep q' -> RepV (Tensor Unit q') -> RepV q'
+    go SAtomNil RNil = RNil
+    go (SAtomCons @j @n rest) (RConsTensorProd v tRest) =
+      RConsAtomAtomM (lunitSector @j @n v) (go rest tRest)
 
 -- | Left unitor: @Unit ⊗ q → q@.
 lunitApply
   :: forall r q
-   . LunitSpine q
+   . KnownAtomRep q
   => RepV (ApplyCupped r q)
   -> RepV q
 lunitApply = lunitSpine @q
@@ -1299,7 +1361,7 @@ apply
    . ( FuseRawSpine (Mor r q)
      , CoalesceSpine (FuseRepRaw (Mor r q))
      , TensorSpine r (Fuse (Mor r q))
-     , LunitSpine q
+     , KnownAtomRep q
      )
   => RepV (Mor r q)
   -> RepV r
@@ -1476,30 +1538,18 @@ dualAtomAtomM
   -> ToVSector ('Dual ('Atom j)) ('DualM ('AtomM m))
 dualAtomAtomM = undefined
 
--- | Spine dual: sector-wise 'DualSector' payload.
-class DualSpine (rs :: Rep) where
-  dualSpine :: RepV rs -> RepV (Dual rs)
-
-instance DualSpine '[] where
-  dualSpine RNil = RNil
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat (IrrepDim j)
-  , DualSpine rest
-  ) =>
-  DualSpine ('( 'Atom j, 'AtomM m) ': rest)
-  where
-  dualSpine (RConsAtomAtomM v rs) =
-    RConsDualAtomDualAtomM (dualAtomAtomM @j @m v) (dualSpine rs)
-
--- | Dual of a whole spine (@r ↦ Dual r@).
+-- | Dual of an atom spine (@r ↦ Dual r@), driven by 'SAtomRep'.
 dual
-  :: DualSpine rs
+  :: forall rs
+   . KnownAtomRep rs
   => RepV rs
   -> RepV (Dual rs)
-dual = dualSpine
+dual = go (atomRepSing @rs)
+  where
+    go :: forall rs'. SAtomRep rs' -> RepV rs' -> RepV (Dual rs')
+    go SAtomNil RNil = RNil
+    go (SAtomCons @j @m rest) (RConsAtomAtomM v rs) =
+      RConsDualAtomDualAtomM (dualAtomAtomM @j @m v) (go rest rs)
 
 -- | Constraints for braiding every sector in a spine.
 type family BraidSpine (rs :: Rep) :: Constraint where
