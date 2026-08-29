@@ -22,25 +22,31 @@ module Experiments.Symbolic.Expr
   , MultExpr (..)
   , Sector
   , Rep
+  , RepExpr (..)
   ) where
 
 import GHC.TypeLits (Nat)
 
--- | SU(2) irrep expression: leaf @j@, unfused tensor, or dual.
+-- | SU(2) irrep label: a single leaf @j@.
 --
--- @'Tensor@ is recursive so @'Atom@ ⊗ @'Dual ('Atom …)@ is expressible.
--- Historical leaf pairs @'Tensor ('Atom j1) ('Atom j2)@ become @'Tensor ('Atom j1) ('Atom j2)@.
-data IrrepExpr
-  = Atom Nat
-  | Tensor IrrepExpr IrrepExpr
-  | Dual IrrepExpr
+-- Unfused tensor and dual spaces live on 'RepExpr' (@'RTensor@ / @'RDual@), so
+-- a 'Sector' key is always an atom and sector payloads never carry a formal
+-- tensor / dual constructor.
+data IrrepExpr = Atom Nat
 
--- | Formal multiplicity: leaf @m@, unfused product, or dual.
--- Historical @'Prod ('AtomM m) ('AtomM n)@ becomes @'Prod ('AtomM m) ('AtomM n)@.
+-- | Formal multiplicity: leaf @m@ or an unfused product of copy spaces.
 data MultExpr
   = AtomM Nat
   | Prod MultExpr MultExpr
-  | DualM MultExpr
 
 type Sector = (IrrepExpr, MultExpr)
 type Rep = [Sector]
+
+-- | Expression over coalesced spines: direct sum, unfused tensor, or dual.
+--
+-- Well-formed @'RTensor@: both arguments are atom @'RSum@ spines (no nested
+-- @'RTensor@). Deeper association is temporal (@FuseExpr@ then @'RTensor@ again).
+data RepExpr
+  = RSum Rep
+  | RTensor RepExpr RepExpr
+  | RDual RepExpr

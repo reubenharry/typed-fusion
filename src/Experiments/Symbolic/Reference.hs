@@ -14,19 +14,19 @@
 
 -- | Flat-buffer oracles for 'Experiments.Symbolic' (CG fuse, unpack).
 --
--- Production 'Experiments.Symbolic' keeps merge categorical via
--- 'TensorNetwork.Categorical'; tensor CG fuse remains @undefined@ there until
--- a typed intertwiner exists.
+-- Production 'Experiments.Symbolic' fuses atom pairs through typed CG channels
+-- ('Experiments.Symbolic.Core.fuseOneSectorTensorProd'); the oracles here go
+-- through 'Symmetry.CG.SU2.fuseSU2Flat' on raw buffers instead.
 module Experiments.Symbolic.Reference
   ( SectorFlatDim
   , sectorFlatDim
-  , TensorFusedFlat
-  , fuseOneSectorTensorReference
-  , fuseTensorSectorReference
-  , fuseTensorReference
+  , AtomPairFusedFlat
+  , fuseAtomPairReference
+  , fuseAtomPairCoalescedReference
   , RepVFlat
   , repVFlat
   , repVApproxEq
+  , repVFlatApproxEq
   , repVFlatProdToAtomM
   , exFuseOneSectorProd12
   , exCoherenceRmove12
@@ -38,7 +38,7 @@ import Data.Proxy (Proxy (..))
 import Data.VectorSpace (Scalar)
 import Experiments.Symbolic
 import GHC.TypeLits (KnownNat, Nat, natVal, type (*))
-import Math.LinearMap.Category (type (⊗), LSpace, TensorSpace)
+import Math.LinearMap.Category (type (⊗), (⊗), LSpace, TensorSpace)
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Numeric.LinearAlgebra.Static (C)
 import Symmetry.CG.SU2 (fuseSU2Flat)
@@ -50,18 +50,14 @@ import qualified Data.Vector.Storable as VS
 -- | Flat @toArray@ length of one sector (Reference / buffer boundary only).
 type family SectorFlatDim (s :: Sector) :: Nat where
   SectorFlatDim '( 'Atom j, μ) = EvalMult μ * IrrepDim j
-  SectorFlatDim '( 'Tensor ('Atom j1) ('Atom j2), 'AtomM m) =
-    m * IrrepDim j1 * IrrepDim j2
-  SectorFlatDim '( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n)) =
-    m * IrrepDim j1 * n * IrrepDim j2
 
 sectorFlatDim :: forall s. KnownNat (SectorFlatDim s) => Proxy s -> Int
 sectorFlatDim _ =
   fromIntegral (natVal (Proxy @(SectorFlatDim s)))
 
 -- | Post-'fuseSU2Flat' atom spine (@'AtomM'@ on each CG channel).
-type TensorFusedFlat (j1 :: Nat) (j2 :: Nat) (m :: Nat) (n :: Nat) =
-  TagMult ('AtomM (m * n)) (FuseIrrep ('Tensor ('Atom j1) ('Atom j2)))
+type AtomPairFusedFlat (j1 :: Nat) (j2 :: Nat) (m :: Nat) (n :: Nat) =
+  FuseAtoms j1 j2 ('AtomM (m * n))
 
 -- | Split a flat CG buffer into an atom 'RepV' spine (Reference boundary).
 class UnpackFusedRep (rs :: Rep) where
@@ -99,8 +95,8 @@ instance
         (here, restFlat) = VS.splitAt d flat
     in RConsAtomProd (unsafeFromArray here) (unpackFusedRep @rest restFlat)
 
--- | Flat @fuseSU2Flat@ oracle for one tensor sector.
-fuseOneSectorTensorReference
+-- | Flat @fuseSU2Flat@ oracle for one unfused atom pair.
+fuseAtomPairReference
   :: forall j1 j2 m n
    . ( KnownNat j1
      , KnownNat j2
@@ -111,19 +107,19 @@ fuseOneSectorTensorReference
      , KnownRep SG.SU2 '[ '(j1, m)]
      , KnownRep SG.SU2 '[ '(j2, n)]
      , KnownNat (m * n)
-     , UnpackFusedRep (TensorFusedFlat j1 j2 m n)
+     , UnpackFusedRep (AtomPairFusedFlat j1 j2 m n)
      )
-  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n))
-  -> RepV (TensorFusedFlat j1 j2 m n)
-fuseOneSectorTensorReference sec =
-  unpackFusedRep @(TensorFusedFlat j1 j2 m n) $
+  => AtomPairV j1 j2 m n
+  -> RepV (AtomPairFusedFlat j1 j2 m n)
+fuseAtomPairReference sec =
+  unpackFusedRep @(AtomPairFusedFlat j1 j2 m n) $
     fuseSU2Flat
       (repSing @SG.SU2 @'[ '(j1, m)])
       (repSing @SG.SU2 @'[ '(j2, n)])
       (toArray sec)
 
--- | CG fuse a single @'Tensor'@ sector (@'Prod'@ copy) via the flat oracle.
-fuseTensorSectorReference
+-- | 'fuseAtomPairReference' followed by 'coalesce' (merge repeated CG channels).
+fuseAtomPairCoalescedReference
   :: forall j1 j2 m n
    . ( KnownNat j1
      , KnownNat j2
@@ -134,44 +130,14 @@ fuseTensorSectorReference
      , KnownRep SG.SU2 '[ '(j1, m)]
      , KnownRep SG.SU2 '[ '(j2, n)]
      , KnownNat (m * n)
-     , KnownSymRep (TensorFusedFlat j1 j2 m n)
-     , CoalesceSpine (TensorFusedFlat j1 j2 m n)
-     , UnpackFusedRep (TensorFusedFlat j1 j2 m n)
+     , KnownSymRep (AtomPairFusedFlat j1 j2 m n)
+     , CoalesceSpine (AtomPairFusedFlat j1 j2 m n)
+     , UnpackFusedRep (AtomPairFusedFlat j1 j2 m n)
      )
-  => RepV '[ '( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n))]
-  -> RepV (Coalesce (TensorFusedFlat j1 j2 m n))
-fuseTensorSectorReference (RConsTensorProd sv RNil) =
-  coalesce $
-    fuseOneSectorTensorReference @j1 @j2 @m @n sv
-fuseTensorSectorReference _ =
-  error "fuseTensorSectorReference: expected single-sector Tensor spine"
-
--- | CG fuse a single-sector @'Tensor'@ via the flat oracle.
-fuseTensorReference
-  :: forall j1 m1 j2 m2
-   . ( KnownNat j1
-     , KnownNat m1
-     , KnownNat j2
-     , KnownNat m2
-     , KnownNat (IrrepDim j1)
-     , KnownNat (IrrepDim j2)
-     , KnownRep SG.SU2 '[ '(j1, m1)]
-     , KnownRep SG.SU2 '[ '(j2, m2)]
-     , KnownNat (m1 * m2)
-     , KnownSymRep (TensorFusedFlat j1 j2 m1 m2)
-     , CoalesceSpine (TensorFusedFlat j1 j2 m1 m2)
-     , UnpackFusedRep (TensorFusedFlat j1 j2 m1 m2)
-     )
-  => RepV
-       ( Tensor
-           '[ '( 'Atom j1, 'AtomM m1)]
-           '[ '( 'Atom j2, 'AtomM m2)]
-       )
-  -> RepV (Coalesce (TensorFusedFlat j1 j2 m1 m2))
-fuseTensorReference (RConsTensorProd sv RNil) =
-  fuseTensorSectorReference @j1 @j2 @m1 @m2 (RConsTensorProd sv RNil)
-fuseTensorReference _ =
-  error "fuseTensorReference: expected single-sector Tensor spine"
+  => AtomPairV j1 j2 m n
+  -> RepV (Coalesce (AtomPairFusedFlat j1 j2 m n))
+fuseAtomPairCoalescedReference =
+  coalesce . fuseAtomPairReference @j1 @j2 @m @n
 
 --------------------------------------------------------------------------------
 -- Flatten / compare (Reference boundary)
@@ -262,7 +228,8 @@ repVFlatApproxEq a b tol =
   VS.length a == VS.length b
     && all (\(u, v) -> magnitude (u - v) <= tol) (zip (VS.toList a) (VS.toList b))
 
--- | Production 'fuseOneSector' (@'Prod'@ copy) matches flat CG oracle (@1 ⊗ 2@, @m=2@, @n=3@).
+-- | Production 'fuseOneSectorTensorProd' matches the flat CG oracle
+-- (@1 ⊗ 2@, @m = 2@, @n = 3@).
 exFuseOneSectorProd12 :: Bool
 exFuseOneSectorProd12 =
   repVFlatApproxEq
@@ -270,13 +237,13 @@ exFuseOneSectorProd12 =
     (repVFlat ref)
     1e-10
   where
-    sec :: ToVSector ('Tensor ('Atom 1) ('Atom 2)) ('Prod ('AtomM 2) ('AtomM 3))
+    sec :: AtomPairV 1 2 2 3
     sec =
       unsafeFromArray $
         VS.generate 36 $ \i -> (1 / 36) :+ 0 * fromIntegral i
-    prod :: RepV (FuseSector '( 'Tensor ('Atom 1) ('Atom 2), 'Prod ('AtomM 2) ('AtomM 3)))
+    prod :: RepV (FuseAtoms 1 2 ('Prod ('AtomM 2) ('AtomM 3)))
     prod = fuseOneSectorTensorProd @1 @2 @2 @3 sec
-    ref = fuseOneSectorTensorReference @1 @2 @2 @3 sec
+    ref = fuseAtomPairReference @1 @2 @2 @3 sec
 
 --------------------------------------------------------------------------------
 -- R-move coherence (@fuse ∘ braid ≅ rmove ∘ fuse@)
@@ -307,38 +274,24 @@ rmoveSpine11 = rmoveSpine @1 @1
 exCoherenceRmove12 :: Bool
 exCoherenceRmove12 =
   repVApproxEq
-    ( fuseTensorSectorReference @2 @1 @1 @1
-        ( braidTensor
-            @'[ '( 'Atom 1, 'AtomM 1)]
-            @'[ '( 'Atom 2, 'AtomM 1)]
-            unfused
-        )
-    )
-    ( rmoveSpine12 (fuseTensorReference @1 @1 @2 @1 unfused)
-    )
+    (fuseAtomPairCoalescedReference @2 @1 @1 @1 (swapAtomPair pair))
+    (rmoveSpine12 (fuseAtomPairCoalescedReference @1 @2 @1 @1 pair))
     1e-10
   where
-    unfused =
-      tensorAtoms @1 @1 @2 @1
-        (unsafeFromArray (VS.fromList [1, 0]))
-        (unsafeFromArray (VS.fromList [1, 0, 0]))
+    pair :: AtomPairV 1 2 1 1
+    pair =
+      unsafeFromArray (VS.fromList [1, 0])
+        ⊗ unsafeFromArray (VS.fromList [1, 0, 0])
 
 -- | Reference-path hexagon for @1 ⊗ 1@ (identity R-phase on all channels).
 exCoherenceRmove11 :: Bool
 exCoherenceRmove11 =
   repVApproxEq
-    ( fuseTensorSectorReference @1 @1 @1 @1
-        ( braidTensor
-            @'[ '( 'Atom 1, 'AtomM 1)]
-            @'[ '( 'Atom 1, 'AtomM 1)]
-            unfused
-        )
-    )
-    ( rmoveSpine11 (fuseTensorReference @1 @1 @1 @1 unfused)
-    )
+    (fuseAtomPairCoalescedReference @1 @1 @1 @1 (swapAtomPair pair))
+    (rmoveSpine11 (fuseAtomPairCoalescedReference @1 @1 @1 @1 pair))
     1e-10
   where
-    unfused =
-      tensorAtoms @1 @1 @1 @1
-        (unsafeFromArray (VS.fromList [1, 0]))
-        (unsafeFromArray (VS.fromList [0, 1]))
+    pair :: AtomPairV 1 1 1 1
+    pair =
+      unsafeFromArray (VS.fromList [1, 0])
+        ⊗ unsafeFromArray (VS.fromList [0, 1])

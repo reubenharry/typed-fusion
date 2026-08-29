@@ -107,6 +107,9 @@ library
         Experiments.Symbolic.Core
         Experiments.Symbolic.Reference
         Experiments.SymbolicExamples
+        Experiments.Fibonacci
+        Experiments.Categorical.Bifunctor
+        Experiments.Fusion.Theory
         Experiments.SU2
         Experiments.Experiment
         Experiments.Experiment2

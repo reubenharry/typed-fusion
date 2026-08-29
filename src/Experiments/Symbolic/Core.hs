@@ -21,37 +21,43 @@
 -- Type kinds and families live in 'Experiments.Symbolic.Expr' /
 -- 'Experiments.Symbolic.TypeLevel'. Flat-buffer oracles:
 -- 'Experiments.Symbolic.Reference'. Examples: 'Experiments.SymbolicExamples'.
+--
+-- Sectors are atom-keyed. Unfused tensor / dual spaces are 'RepExpr' values
+-- ('rtensor' / 'rdual' / 'rmor'), reduced by 'fuseExpr' or paired by
+-- 'cupUnfused' / 'cupRdual' (object @r ⊗ r*@); fused 'cupFused' / 'capFused'
+-- on singlets after dual≅primal. 'repVToV' / 'vToRepV' round-trip a
+-- 'KnownSymRep' spine through 'ToVSpine'.
 module Experiments.Symbolic.Core where
 
-import Data.AdditiveGroup (AdditiveGroup ((^+^), zeroV))
 import Data.Complex (Complex ((:+)))
 import Data.Coerce (coerce)
-import Data.Kind (Constraint)
+import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
-import Data.Type.Equality ((:~:) (..))
 import Data.VectorSpace (InnerSpace ((<.>)), Scalar, VectorSpace ((*^)))
 import qualified Data.Vector.Storable as VS
-import GHC.TypeLits (CmpNat, KnownNat, Nat, natVal, sameNat, type (*), type (+))
+import GHC.TypeLits (CmpNat, KnownNat, Nat, natVal, type (*), type (+))
 import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..))
 import Experiments.SU2 (TensorIrrepRepSU2)
 import Experiments.Symbolic.Expr
 import Experiments.Symbolic.TypeLevel
+import Math.LinearMap.Asserted (getLinearFunction)
 import Math.LinearMap.Category
   ( DualVector
   , HilbertSpace
+  , TensorSpace
   , (-+$>)
   , fromLinearForm
+  , idTensor
   , pattern LinearFunction
   , trace
   , type (+>)
   , type (⊗)
   , (⊗)
   )
-import qualified Math.LinearMap.Category as LM (Tensor (Tensor))
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Math.LinearMap.Category.Class (LinearSpace, asTensor, fromTensor)
-import Math.LinearMap.Coercion ((-+$=>))
+import Math.LinearMap.Coercion (uncurryLinearMap, (-+$=>))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Numeric.LinearAlgebra.Static (C, konst)
 import Symmetry.Utils (Append)
@@ -61,13 +67,10 @@ import TensorNetwork.Categorical
   ( flattenCopyProd
   , flattenTensorProdCopy
   , fuseBond
-  , lassocMap
   , mergeCopyAxis
-  , mergeCopyAxisTensorLeft
   , rassocMap
   , splitBond
   , swapMap
-  , tensorProdLeft
   , (⊗^)
   )
 
@@ -81,13 +84,6 @@ data SIrrep (e :: IrrepExpr) where
        , KnownNat (IrrepDim j)
        )
     => SIrrep ('Atom j)
-  STensorI
-    :: SIrrep e1
-    -> SIrrep e2
-    -> SIrrep ('Tensor e1 e2)
-  SDualI
-    :: SIrrep e
-    -> SIrrep ('Dual e)
 
 -- | Singleton for 'MultExpr'.
 data SMult (μ :: MultExpr) where
@@ -99,9 +95,6 @@ data SMult (μ :: MultExpr) where
     :: SMult μ1
     -> SMult μ2
     -> SMult ('Prod μ1 μ2)
-  SMultDual
-    :: SMult μ
-    -> SMult ('DualM μ)
 
 -- | General spine singleton: one 'SIrrep'/'SMult' pair per sector.
 data SRep (rs :: Rep) where
@@ -146,54 +139,7 @@ instance
       (SMultProd (SMultAtom @m) (SMultAtom @n))
       (symRepSing @rest)
 
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , KnownNat (IrrepDim j1)
-  , KnownNat (IrrepDim j2)
-  , KnownSymRep rest
-  ) =>
-  KnownSymRep ('( 'Tensor ('Atom j1) ('Atom j2), 'AtomM m) ': rest)
-  where
-  symRepSing =
-    SRepCons
-      (STensorI (SAtomI @j1) (SAtomI @j2))
-      (SMultAtom @m)
-      (symRepSing @rest)
-
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , KnownNat n
-  , KnownNat (IrrepDim j1)
-  , KnownNat (IrrepDim j2)
-  , KnownSymRep rest
-  ) =>
-  KnownSymRep ('( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n)) ': rest)
-  where
-  symRepSing =
-    SRepCons
-      (STensorI (SAtomI @j1) (SAtomI @j2))
-      (SMultProd (SMultAtom @m) (SMultAtom @n))
-      (symRepSing @rest)
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat (IrrepDim j)
-  , KnownSymRep rest
-  ) =>
-  KnownSymRep ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest)
-  where
-  symRepSing =
-    SRepCons
-      (SDualI (SAtomI @j))
-      (SMultDual (SMultAtom @m))
-      (symRepSing @rest)
-
--- | Atom-only spine (subset of 'KnownSymRep'). Walks use 'symRepSing'.
+-- | Flat-multiplicity atom spine (subset of 'KnownSymRep'). Walks use 'symRepSing'.
 class KnownSymRep rs => KnownAtomRep (rs :: Rep)
 
 instance KnownAtomRep '[]
@@ -205,19 +151,6 @@ instance
   , KnownAtomRep rest
   ) =>
   KnownAtomRep ('( 'Atom j, 'AtomM m) ': rest)
-
--- | Dual-atom-only spine (subset of 'KnownSymRep'). Walks use 'symRepSing'.
-class KnownSymRep rs => KnownDualAtomRep (rs :: Rep)
-
-instance KnownDualAtomRep '[]
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat (IrrepDim j)
-  , KnownDualAtomRep rest
-  ) =>
-  KnownDualAtomRep ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest)
 
 --------------------------------------------------------------------------------
 -- Term-level spine ('RepV') and fusion
@@ -251,74 +184,58 @@ pattern RConsAtomProd
 pattern RConsAtomProd v rs =
   RCons @('Atom j) @('Prod ('AtomM m) ('AtomM n)) v rs
 
-pattern RConsTensorAtomM
-  :: () => (e ~ 'Tensor ('Atom j1) ('Atom j2), μ ~ 'AtomM m)
-  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('AtomM m)
-  -> RepV rest
-  -> RepV ('( 'Tensor ('Atom j1) ('Atom j2), 'AtomM m) ': rest)
-pattern RConsTensorAtomM v rs =
-  RCons @('Tensor ('Atom j1) ('Atom j2)) @('AtomM m) v rs
-
-pattern RConsTensorProd
-  :: () => (e ~ 'Tensor ('Atom j1) ('Atom j2), μ ~ 'Prod ('AtomM m) ('AtomM n))
-  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n))
-  -> RepV rest
-  -> RepV ('( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n)) ': rest)
-pattern RConsTensorProd v rs =
-  RCons @('Tensor ('Atom j1) ('Atom j2)) @('Prod ('AtomM m) ('AtomM n)) v rs
-
-pattern RConsDualAtomDualAtomM
-  :: () => (e ~ 'Dual ('Atom j), μ ~ 'DualM ('AtomM m))
-  => ToVSector ('Dual ('Atom j)) ('DualM ('AtomM m))
-  -> RepV rest
-  -> RepV ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest)
-pattern RConsDualAtomDualAtomM v rs =
-  RCons @('Dual ('Atom j)) @('DualM ('AtomM m)) v rs
-
-pattern RConsTensorAtomDualAtom
-  :: () => ( e ~ 'Tensor ('Atom j1) ('Dual ('Atom j2))
-     , μ ~ 'Prod ('AtomM m) ('DualM ('AtomM n))
-     )
-  => ToVSector
-       ('Tensor ('Atom j1) ('Dual ('Atom j2)))
-       ('Prod ('AtomM m) ('DualM ('AtomM n)))
-  -> RepV rest
-  -> RepV
-       ( '( 'Tensor ('Atom j1) ('Dual ('Atom j2))
-          , 'Prod ('AtomM m) ('DualM ('AtomM n))
-          )
-           ': rest
-       )
-pattern RConsTensorAtomDualAtom v rs =
-  RCons
-    @('Tensor ('Atom j1) ('Dual ('Atom j2)))
-    @('Prod ('AtomM m) ('DualM ('AtomM n)))
-    v
-    rs
-
-pattern RConsTensorDualAtomAtom
-  :: () => ( e ~ 'Tensor ('Dual ('Atom j1)) ('Atom j2)
-     , μ ~ 'Prod ('DualM ('AtomM m)) ('AtomM n)
-     )
-  => ToVSector
-       ('Tensor ('Dual ('Atom j1)) ('Atom j2))
-       ('Prod ('DualM ('AtomM m)) ('AtomM n))
-  -> RepV rest
-  -> RepV
-       ( '( 'Tensor ('Dual ('Atom j1)) ('Atom j2)
-          , 'Prod ('DualM ('AtomM m)) ('AtomM n)
-          )
-           ': rest
-       )
-pattern RConsTensorDualAtomAtom v rs =
-  RCons
-    @('Tensor ('Dual ('Atom j1)) ('Atom j2))
-    @('Prod ('DualM ('AtomM m)) ('AtomM n))
-    v
-    rs
-
 {-# COMPLETE RNil, RCons :: RepV #-}
 -- Pattern synonyms remain for call sites; production walks use 'RCons'.
+
+-- | Forgetful map: nonempty 'RepV' → 'ToVSpine' (sector payloads kept).
+-- Handles @'AtomM@ and @'Prod ('AtomM m) ('AtomM n)@ (fused CG tags).
+repVToV :: forall rs. KnownSymRep rs => RepV rs -> ToVSpine rs
+repVToV = go (symRepSing @rs)
+  where
+    go :: forall rs'. SRep rs' -> RepV rs' -> ToVSpine rs'
+    go (SRepCons SAtomI SMultAtom SRepNil) (RCons v RNil) = v
+    go (SRepCons SAtomI SMultAtom sRest@(SRepCons {})) (RCons v rest) =
+      (v, go sRest rest)
+    go (SRepCons SAtomI (SMultProd SMultAtom SMultAtom) SRepNil) (RCons v RNil) = v
+    go
+      (SRepCons SAtomI (SMultProd SMultAtom SMultAtom) sRest@(SRepCons {}))
+      (RCons v rest) =
+        (v, go sRest rest)
+    go _ _ = error "repVToV: expected nonempty KnownSymRep spine"
+
+-- | Inverse of 'repVToV' (total on nonempty 'KnownSymRep' spines).
+vToRepV :: forall rs. KnownSymRep rs => ToVSpine rs -> RepV rs
+vToRepV = go (symRepSing @rs)
+  where
+    go :: forall rs'. SRep rs' -> ToVSpine rs' -> RepV rs'
+    go (SRepCons (SAtomI @j) (SMultAtom @m) SRepNil) v =
+      RCons @('Atom j) @('AtomM m) v RNil
+    go (SRepCons (SAtomI @j) (SMultAtom @m) sRest@(SRepCons {})) (v, rest) =
+      RCons @('Atom j) @('AtomM m) v (go sRest rest)
+    go
+      (SRepCons (SAtomI @j) (SMultProd (SMultAtom @m) (SMultAtom @n)) SRepNil)
+      v =
+        RCons @('Atom j) @('Prod ('AtomM m) ('AtomM n)) v RNil
+    go
+      (SRepCons (SAtomI @j) (SMultProd (SMultAtom @m) (SMultAtom @n)) sRest@(SRepCons {}))
+      (v, rest) =
+        RCons @('Atom j) @('Prod ('AtomM m) ('AtomM n)) v (go sRest rest)
+    go _ _ = error "vToRepV: expected nonempty KnownSymRep spine"
+
+-- | Unfused tensor of two atom spines: @ToVSpine r ⊗ ToVSpine q@ (does not distribute).
+rtensor
+  :: forall r q
+   . ( KnownAtomRep r
+     , KnownAtomRep q
+     , TensorSpace (ToVSpine r)
+     , TensorSpace (ToVSpine q)
+     , Scalar (ToVSpine r) ~ Complex Double
+     , Scalar (ToVSpine q) ~ Complex Double
+     )
+  => RepV r
+  -> RepV q
+  -> ToV ('RTensor ('RSum r) ('RSum q))
+rtensor x y = repVToV x ⊗ repVToV y
 
 -- | Cons onto a spine (@RCons@; shape from @e@/@μ@).
 repCons
@@ -337,6 +254,10 @@ appendRepV RNil r2 = r2
 appendRepV (RCons v rest) r2 =
   RCons v (appendRepV rest r2)
 
+-- | Unfused atom×atom payload: copy×irrep block for each leg.
+type AtomPairV (j1 :: Nat) (j2 :: Nat) (m :: Nat) (n :: Nat) =
+  (C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2))
+
 -- | CG one output channel on irrep legs (@'AtomM'@ copy layout).
 fuseOneChannelAtomM
   :: forall j1 j2 j m
@@ -348,7 +269,7 @@ fuseOneChannelAtomM
      , KnownNat (IrrepDim j2)
      , KnownNat (IrrepDim j)
      )
-  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('AtomM m)
+  => (C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2))
   -> ToVSector ('Atom j) ('AtomM m)
 fuseOneChannelAtomM sec =
   ((id ⊗^ fuseCGChannel @j1 @j2 @j) . rassocMap) $ sec
@@ -366,7 +287,7 @@ fuseOneChannelProd
      , KnownNat (IrrepDim j)
      , KnownNat (m * n)
      )
-  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n))
+  => AtomPairV j1 j2 m n
   -> ToVSector ('Atom j) ('Prod ('AtomM m) ('AtomM n))
 fuseOneChannelProd sec =
   ( (id ⊗^ fuseCGChannel @j1 @j2 @j)
@@ -375,17 +296,24 @@ fuseOneChannelProd sec =
   )
     $ sec
 
--- | Walk @'TensorIrrepRepSU2'@ channels, building a tagged atom spine.
-class FuseTensorSpine (j1 :: Nat) (j2 :: Nat) (μ :: MultExpr) (cg :: [(Nat, Nat)]) where
-  fuseTensorSpine
-    :: ToVSector ('Tensor ('Atom j1) ('Atom j2)) μ
+-- | Walk CG channels for an atom pair, building a tagged atom spine.
+class FuseAtomPairSpine (j1 :: Nat) (j2 :: Nat) (μ :: MultExpr) (cg :: [(Nat, Nat)]) where
+  fuseAtomPairSpine
+    :: AtomPairPayload j1 j2 μ
     -> RepV (TagMult μ (AtomsFromCG cg))
 
-instance FuseTensorSpine j1 j2 μ '[] where
-  fuseTensorSpine _ = RNil
+-- | Payload for @fuseAtomPairSpine@ by multiplicity shape.
+type family AtomPairPayload (j1 :: Nat) (j2 :: Nat) (μ :: MultExpr) :: Type where
+  AtomPairPayload j1 j2 ('AtomM m) =
+    C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2)
+  AtomPairPayload j1 j2 ('Prod ('AtomM m) ('AtomM n)) =
+    AtomPairV j1 j2 m n
+
+instance FuseAtomPairSpine j1 j2 μ '[] where
+  fuseAtomPairSpine _ = RNil
 
 instance
-  ( FuseTensorSpine j1 j2 ('AtomM m) rest
+  ( FuseAtomPairSpine j1 j2 ('AtomM m) rest
   , KnownNat j
   , KnownNat j1
   , KnownNat j2
@@ -394,15 +322,15 @@ instance
   , KnownNat (IrrepDim j2)
   , KnownNat (IrrepDim j)
   ) =>
-  FuseTensorSpine j1 j2 ('AtomM m) ('(j, mOut) ': rest)
+  FuseAtomPairSpine j1 j2 ('AtomM m) ('(j, mOut) ': rest)
   where
-  fuseTensorSpine v =
+  fuseAtomPairSpine v =
     repCons @('Atom j) @('AtomM m)
       (fuseOneChannelAtomM @j1 @j2 @j @m v)
-      (fuseTensorSpine @j1 @j2 @('AtomM m) @rest v)
+      (fuseAtomPairSpine @j1 @j2 @('AtomM m) @rest v)
 
 instance
-  ( FuseTensorSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) rest
+  ( FuseAtomPairSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) rest
   , KnownNat j
   , KnownNat j1
   , KnownNat j2
@@ -413,46 +341,46 @@ instance
   , KnownNat (IrrepDim j)
   , KnownNat (m * n)
   ) =>
-  FuseTensorSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) ('(j, mOut) ': rest)
+  FuseAtomPairSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) ('(j, mOut) ': rest)
   where
-  fuseTensorSpine v =
+  fuseAtomPairSpine v =
     repCons @('Atom j) @('Prod ('AtomM m) ('AtomM n))
       (fuseOneChannelProd @j1 @j2 @j @m @n v)
-      (fuseTensorSpine @j1 @j2 @('Prod ('AtomM m) ('AtomM n)) @rest v)
+      (fuseAtomPairSpine @j1 @j2 @('Prod ('AtomM m) ('AtomM n)) @rest v)
 
--- | CG-fuse one tensor sector to a (possibly longer) atom spine.
+-- | CG-fuse one atom×atom pair (@'AtomM@ copy) to a tagged atom spine.
 fuseOneSectorTensorAtomM
   :: forall j1 j2 m
    . ( KnownNat j1
      , KnownNat j2
      , KnownNat m
-     , FuseTensorSpine j1 j2 ('AtomM m) (TensorIrrepRepSU2 j1 j2)
+     , FuseAtomPairSpine j1 j2 ('AtomM m) (TensorIrrepRepSU2 j1 j2)
      )
-  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('AtomM m)
-  -> RepV (FuseSector '( 'Tensor ('Atom j1) ('Atom j2), 'AtomM m))
+  => (C m ⊗ C (IrrepDim j1) ⊗ C (IrrepDim j2))
+  -> RepV (FuseAtoms j1 j2 ('AtomM m))
 fuseOneSectorTensorAtomM =
-  fuseTensorSpine @j1 @j2 @('AtomM m) @(TensorIrrepRepSU2 j1 j2)
+  fuseAtomPairSpine @j1 @j2 @('AtomM m) @(TensorIrrepRepSU2 j1 j2)
 
+-- | CG-fuse one atom×atom pair (@'Prod@ copy) to a tagged atom spine.
 fuseOneSectorTensorProd
   :: forall j1 j2 m n
    . ( KnownNat j1
      , KnownNat j2
      , KnownNat m
      , KnownNat n
-     , FuseTensorSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) (TensorIrrepRepSU2 j1 j2)
+     , FuseAtomPairSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) (TensorIrrepRepSU2 j1 j2)
      )
-  => ToVSector ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n))
-  -> RepV (FuseSector '( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n)))
+  => AtomPairV j1 j2 m n
+  -> RepV (FuseAtoms j1 j2 ('Prod ('AtomM m) ('AtomM n)))
 fuseOneSectorTensorProd =
-  fuseTensorSpine @j1 @j2 @('Prod ('AtomM m) ('AtomM n)) @(TensorIrrepRepSU2 j1 j2)
+  fuseAtomPairSpine @j1 @j2 @('Prod ('AtomM m) ('AtomM n)) @(TensorIrrepRepSU2 j1 j2)
 
 --------------------------------------------------------------------------------
--- Undual (Fuse identification): DualVector → primal atom payload
+-- Undual (pivotal identification): DualVector → primal atom payload
 --
--- Type-level 'UndualIrrep' / 'UndualMult' strip Dual labels. Term-level undual
--- is Riesz inverse ('asTensor' + Hilbert coerce), then Condon–Shortley on the
--- irrep leg, then scale by @√(j+1)@ so the CG singlet matches the DualVector
--- Hilbert cup (@1/√(2j+1)@ from CG × @√(2j+1)@ here).
+-- Term-level undual is the Riesz inverse ('asTensor' + Hilbert coerce), then
+-- Condon–Shortley on the irrep leg, then scale by @√(j+1)@ so the CG singlet
+-- matches the DualVector Hilbert cup (@1/√(2j+1)@ from CG × @√(2j+1)@ here).
 --------------------------------------------------------------------------------
 
 -- | Condon–Shortley dual on one irrep buffer: @|k⟩ ↦ (-1)^k |tj−k⟩@
@@ -483,7 +411,7 @@ csIrrepMap
   => C (IrrepDim j) +> C (IrrepDim j)
 csIrrepMap = arr (LinearFunction (csIrrepLinear @j))
 
--- | Inverse of 'dualAtomAtomM', then CS + @√(j+1)@ for Fuse/cup coherence.
+-- | Inverse of 'dualAtomAtomM', then CS + @√(j+1)@ for cup coherence.
 --
 -- @DualVector (u ⊗ v) = u +> DualVector v@. With Hilbert @DualVector (C n) ~ C n@,
 -- 'asTensor' recovers @DualVector (C m) ⊗ DualVector (C (j+1))@, coerce both
@@ -496,7 +424,7 @@ undualAtomAtomM
      , HilbertSpace (C m)
      , HilbertSpace (C (IrrepDim j))
      )
-  => ToVSector ('Dual ('Atom j)) ('DualM ('AtomM m))
+  => DualVector (ToVSector ('Atom j) ('AtomM m))
   -> ToVSector ('Atom j) ('AtomM m)
 undualAtomAtomM φ =
   let tDual =
@@ -507,7 +435,7 @@ undualAtomAtomM φ =
             ⊗^ arr (LinearFunction (coerce :: DualVector (C (IrrepDim j)) -> C (IrrepDim j)))
         )
           $ tDual
-      -- Pivotal: CG singlet has @1/√(2j+1)@; cancel it so @cup ∘ fuse ≅ cupUnfused@.
+      -- Pivotal: CG singlet has @1/√(2j+1)@; cancel it so @cup ∘ fuse ≅ cupRdual@.
       dim = fromIntegral (natVal (Proxy @(IrrepDim j))) :: Double
       scale = sqrt dim :+ 0
    in scale *^ ((id ⊗^ csIrrepMap @j) $ riesz)
@@ -521,88 +449,6 @@ instance FuseOneSector ('Atom j) ('AtomM m) where
 
 instance FuseOneSector ('Atom j) ('Prod ('AtomM m) ('AtomM n)) where
   fuseOneSector v = RCons @('Atom j) @('Prod ('AtomM m) ('AtomM n)) v RNil
-
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , FuseTensorSpine j1 j2 ('AtomM m) (TensorIrrepRepSU2 j1 j2)
-  ) =>
-  FuseOneSector ('Tensor ('Atom j1) ('Atom j2)) ('AtomM m)
-  where
-  fuseOneSector = fuseOneSectorTensorAtomM
-
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , KnownNat n
-  , FuseTensorSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) (TensorIrrepRepSU2 j1 j2)
-  ) =>
-  FuseOneSector ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n))
-  where
-  fuseOneSector = fuseOneSectorTensorProd
-
--- | Dual leaf: undual payload, land on @'Atom j@ / @'AtomM m@.
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat (IrrepDim j)
-  , HilbertSpace (C m)
-  , HilbertSpace (C (IrrepDim j))
-  ) =>
-  FuseOneSector ('Dual ('Atom j)) ('DualM ('AtomM m))
-  where
-  fuseOneSector φ =
-    RCons @('Atom j) @('AtomM m) (undualAtomAtomM @j @m φ) RNil
-
--- | @Atom ⊗ Dual Atom@: undual the right factor, then CG as primal tensor.
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , KnownNat n
-  , KnownNat (IrrepDim j1)
-  , KnownNat (IrrepDim j2)
-  , HilbertSpace (C n)
-  , HilbertSpace (C (IrrepDim j2))
-  , FuseTensorSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) (TensorIrrepRepSU2 j1 j2)
-  ) =>
-  FuseOneSector
-    ('Tensor ('Atom j1) ('Dual ('Atom j2)))
-    ('Prod ('AtomM m) ('DualM ('AtomM n)))
-  where
-  fuseOneSector t =
-    let undualed =
-          (id ⊗^ arr (LinearFunction (undualAtomAtomM @j2 @n))) $ t
-            :: ToVSector
-                 ('Tensor ('Atom j1) ('Atom j2))
-                 ('Prod ('AtomM m) ('AtomM n))
-     in fuseOneSectorTensorProd @j1 @j2 @m @n undualed
-
--- | @Dual Atom ⊗ Atom@: undual the left factor, then CG as primal tensor.
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , KnownNat n
-  , KnownNat (IrrepDim j1)
-  , KnownNat (IrrepDim j2)
-  , HilbertSpace (C m)
-  , HilbertSpace (C (IrrepDim j1))
-  , FuseTensorSpine j1 j2 ('Prod ('AtomM m) ('AtomM n)) (TensorIrrepRepSU2 j1 j2)
-  ) =>
-  FuseOneSector
-    ('Tensor ('Dual ('Atom j1)) ('Atom j2))
-    ('Prod ('DualM ('AtomM m)) ('AtomM n))
-  where
-  fuseOneSector t =
-    let undualed =
-          (arr (LinearFunction (undualAtomAtomM @j1 @m)) ⊗^ id) $ t
-            :: ToVSector
-                 ('Tensor ('Atom j1) ('Atom j2))
-                 ('Prod ('AtomM m) ('AtomM n))
-     in fuseOneSectorTensorProd @j1 @j2 @m @n undualed
 
 -- | Insert one sector into a coalesced spine (sort + merge on equal keys).
 -- Instance heads stay concrete so 'CmpIrrep' reduces; bodies match 'RCons'.
@@ -633,95 +479,8 @@ instance
   insertSpine sv (RCons sv2 restR) =
     insertCompared @ord @e @μ @('Atom j) @('Prod ('AtomM m) ('AtomM n)) sv sv2 restR
 
-instance
-  ( CmpIrrep e ('Tensor ('Atom j1) ('Atom j2)) ~ ord
-  , InsertCompared ord e μ ('Tensor ('Atom j1) ('Atom j2)) ('AtomM m) rest
-  ) =>
-  InsertSpine e μ ('( 'Tensor ('Atom j1) ('Atom j2), 'AtomM m) ': rest)
-  where
-  insertSpine sv (RCons sv2 restR) =
-    insertCompared @ord @e @μ @('Tensor ('Atom j1) ('Atom j2)) @('AtomM m) sv sv2 restR
-
-instance
-  ( CmpIrrep e ('Tensor ('Atom j1) ('Atom j2)) ~ ord
-  , InsertCompared ord e μ ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n)) rest
-  ) =>
-  InsertSpine e μ ('( 'Tensor ('Atom j1) ('Atom j2), 'Prod ('AtomM m) ('AtomM n)) ': rest)
-  where
-  insertSpine sv (RCons sv2 restR) =
-    insertCompared @ord @e @μ @('Tensor ('Atom j1) ('Atom j2)) @('Prod ('AtomM m) ('AtomM n)) sv sv2 restR
-
-instance
-  ( CmpIrrep e ('Dual ('Atom j)) ~ ord
-  , InsertCompared ord e μ ('Dual ('Atom j)) ('DualM ('AtomM m)) rest
-  ) =>
-  InsertSpine e μ ('( 'Dual ('Atom j), 'DualM ('AtomM m)) ': rest)
-  where
-  insertSpine sv (RCons sv2 restR) =
-    insertCompared @ord @e @μ @('Dual ('Atom j)) @('DualM ('AtomM m)) sv sv2 restR
-
-instance
-  ( CmpIrrep e ('Tensor ('Atom j1) ('Dual ('Atom j2))) ~ ord
-  , InsertCompared
-      ord
-      e
-      μ
-      ('Tensor ('Atom j1) ('Dual ('Atom j2)))
-      ('Prod ('AtomM m) ('DualM ('AtomM n)))
-      rest
-  ) =>
-  InsertSpine
-    e
-    μ
-    ( '( 'Tensor ('Atom j1) ('Dual ('Atom j2))
-       , 'Prod ('AtomM m) ('DualM ('AtomM n))
-       )
-        ': rest
-    )
-  where
-  insertSpine sv (RCons sv2 restR) =
-    insertCompared
-      @ord
-      @e
-      @μ
-      @('Tensor ('Atom j1) ('Dual ('Atom j2)))
-      @('Prod ('AtomM m) ('DualM ('AtomM n)))
-      sv
-      sv2
-      restR
-
-instance
-  ( CmpIrrep e ('Tensor ('Dual ('Atom j1)) ('Atom j2)) ~ ord
-  , InsertCompared
-      ord
-      e
-      μ
-      ('Tensor ('Dual ('Atom j1)) ('Atom j2))
-      ('Prod ('DualM ('AtomM m)) ('AtomM n))
-      rest
-  ) =>
-  InsertSpine
-    e
-    μ
-    ( '( 'Tensor ('Dual ('Atom j1)) ('Atom j2)
-       , 'Prod ('DualM ('AtomM m)) ('AtomM n)
-       )
-        ': rest
-    )
-  where
-  insertSpine sv (RCons sv2 restR) =
-    insertCompared
-      @ord
-      @e
-      @μ
-      @('Tensor ('Dual ('Atom j1)) ('Atom j2))
-      @('Prod ('DualM ('AtomM m)) ('AtomM n))
-      sv
-      sv2
-      restR
-
 -- | Compare incoming sector @e@ against spine head @e2@ (@ord ~ CmpIrrep e e2@).
--- LT/GT are polymorphic; EQ keeps merge-specific Atom/Tensor instances.
+-- LT/GT are polymorphic; EQ merges the copy axes.
 class InsertCompared
   (ord :: Ordering)
   (e :: IrrepExpr) (μ :: MultExpr)
@@ -768,31 +527,6 @@ instance
   where
   flattenCopy = flattenCopyProd @m @n @(IrrepDim j)
 
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , KnownNat (IrrepDim j1)
-  , KnownNat (IrrepDim j2)
-  ) =>
-  FlattenCopy ('Tensor ('Atom j1) ('Atom j2)) ('AtomM m)
-  where
-  flattenCopy = id
-
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m
-  , KnownNat n
-  , KnownNat (m * n)
-  , KnownNat (IrrepDim j1)
-  , KnownNat (IrrepDim j2)
-  ) =>
-  FlattenCopy ('Tensor ('Atom j1) ('Atom j2)) ('Prod ('AtomM m) ('AtomM n))
-  where
-  flattenCopy v =
-    tensorProdLeft (flattenTensorProdCopy @m @n @(IrrepDim j1) @(IrrepDim j2) v)
-
 -- | Merge two already-flat @'AtomM@ sectors of equal irrep.
 class MergeFlat (e :: IrrepExpr) (m1 :: Nat) (m2 :: Nat) where
   mergeFlat
@@ -810,19 +544,6 @@ instance
   MergeFlat ('Atom j) m1 m2
   where
   mergeFlat = mergeCopyAxis @m1 @m2 @(IrrepDim j)
-
-instance
-  ( KnownNat j1
-  , KnownNat j2
-  , KnownNat m1
-  , KnownNat m2
-  , KnownNat (m1 + m2)
-  , KnownNat (IrrepDim j1)
-  , KnownNat (IrrepDim j2)
-  ) =>
-  MergeFlat ('Tensor ('Atom j1) ('Atom j2)) m1 m2
-  where
-  mergeFlat = mergeCopyAxisTensorLeft @m1 @m2 @(IrrepDim j1) @(IrrepDim j2)
 
 -- | Direct-sum same-'IrrepExpr' sectors along the copy axis (coalesce).
 -- Flatten each side to @'AtomM@, then 'MergeFlat'.
@@ -862,23 +583,6 @@ instance
     RCons @('Atom j) @μOut
       (mergeSector @('Atom j) @μ @μ2 @μOut sv sv2)
       restR
-
-instance
-  ( j1 ~ k1
-  , j2 ~ k2
-  , AddMult μ μ2 ~ μOut
-  , MergeSector ('Tensor ('Atom j1) ('Atom j2)) μ μ2 μOut
-  ) =>
-  InsertCompared 'EQ ('Tensor ('Atom j1) ('Atom j2)) μ ('Tensor ('Atom k1) ('Atom k2)) μ2 rest
-  where
-  insertCompared sv sv2 restR =
-    RCons @('Tensor ('Atom j1) ('Atom j2)) @μOut
-      (mergeSector @('Tensor ('Atom j1) ('Atom j2)) @μ @μ2 @μOut sv sv2)
-      restR
-
--- EQ Dual↔Dual merge omitted: AddMult → 'AtomM conflicts with Dual ToVSector
--- expecting 'DualM. Coalesce of equal Dual keys is intentionally unsupported until
--- Dual copy-merge is designed.
 
 -- | Constraints for CG-fusing every sector (@FuseOneSector@ per head).
 -- Plain fold matches @RCons @e @μ@; no spine walk class.
@@ -931,122 +635,90 @@ fuse :: ( FuseRawSpine rs
 fuse rv =
   coalesce (fuseRaw rv)
 
--- | CG fuse a distributed tensor rep (@'Tensor'@).
-fuseTensor
-  :: ( FuseRawSpine (Tensor r s)
-     , KnownSymRep (FuseRepRaw (Tensor r s))
-     , CoalesceSpine (FuseRepRaw (Tensor r s))
-     )
-  => RepV (Tensor r s)
-  -> RepV (Fuse (Tensor r s))
-fuseTensor = fuse
-
--- | Build unfused @'Tensor'@ from two atom sectors (pair layout).
-tensorAtoms
-  :: forall j1 m1 j2 m2
-   . ( KnownNat j1
-     , KnownNat m1
-     , KnownNat j2
-     , KnownNat m2
-     , KnownNat (IrrepDim j1)
-     , KnownNat (IrrepDim j2)
-     )
-  => C m1 ⊗ C (IrrepDim j1)
-  -> C m2 ⊗ C (IrrepDim j2)
-  -> RepV
-       ( Tensor
-           '[ '( 'Atom j1, 'AtomM m1)]
-           '[ '( 'Atom j2, 'AtomM m2)]
-       )
-tensorAtoms s1 s2 =
-  tensor
-    (RCons @('Atom j1) @('AtomM m1) s1 RNil)
-    (RCons @('Atom j2) @('AtomM m2) s2 RNil)
-
--- | Pair one left sector with every sector of a right spine (@s1 ⊗ s2@).
-tensorOne
-  :: forall e μ q
-   . KnownSymRep q
-  => SIrrep e
-  -> SMult μ
-  -> ToVSector e μ
-  -> RepV q
-  -> RepV (TensorOne '(e, μ) q)
-tensorOne se sm s1 = go (symRepSing @q)
-  where
-    go :: forall q'. SRep q' -> RepV q' -> RepV (TensorOne '(e, μ) q')
-    go SRepNil RNil = RNil
-    go (SRepCons se2 sm2 rest) (RCons s2 qRest) =
-      RCons (tensorPairPayload se sm se2 sm2 s1 s2) (go rest qRest)
-
--- | Payload for one 'TensorPair' cell (singleton-refined @⊗@).
-tensorPairPayload
-  :: SIrrep e
-  -> SMult μ
-  -> SIrrep e2
-  -> SMult μ2
-  -> ToVSector e μ
-  -> ToVSector e2 μ2
-  -> ToVSector ('Tensor e e2) ('Prod μ μ2)
-tensorPairPayload (SAtomI @j1) (SMultAtom @m) (SAtomI @j2) (SMultAtom @n) a b =
-  a ⊗ b
-tensorPairPayload
-  (SAtomI @j1)
-  (SMultAtom @m)
-  (SDualI (SAtomI @j2))
-  (SMultDual (SMultAtom @n))
-  a
-  b =
-  a ⊗ b
-tensorPairPayload
-  (SDualI (SAtomI @j1))
-  (SMultDual (SMultAtom @m))
-  (SAtomI @j2)
-  (SMultAtom @n)
-  a
-  b =
-  a ⊗ b
-tensorPairPayload _ _ _ _ _ _ =
-  error "Experiments.Symbolic.tensorPairPayload: unsupported sector pair"
-
--- | Cartesian tensor of two spines ('Tensor' type family / 'SRep' fold).
-tensor
+-- | Fuse @'RTensor ('RSum r) ('RSum q)@ by CG on each atom pair.
+fuseExpr
   :: forall r q
-   . ( KnownSymRep r
-     , KnownSymRep q
+   . ( KnownAtomRep r
+     , KnownAtomRep q
+     , FuseAtomSpinesTerm r q
+     , KnownSymRep (FuseAtomSpines r q)
+     , CoalesceSpine (FuseAtomSpines r q)
      )
   => RepV r
   -> RepV q
-  -> RepV (Tensor r q)
-tensor r q = go (symRepSing @r) r
-  where
-    go :: forall r'. SRep r' -> RepV r' -> RepV (Tensor r' q)
-    go SRepNil RNil = RNil
-    go (SRepCons se sm rest) (RCons s1 rRest) =
-      appendRepV (tensorOne se sm s1 q) (go rest rRest)
+  -> RepV (FuseExpr ('RTensor ('RSum r) ('RSum q)))
+fuseExpr x y =
+  coalesce (fuseAtomSpinesTerm (symRepSing @r) x (symRepSing @q) y)
 
--- | Historical aliases (domain proofs via 'KnownAtomRep' / 'KnownDualAtomRep').
-tensorAtom
-  :: (KnownAtomRep r, KnownAtomRep q)
-  => RepV r -> RepV q -> RepV (Tensor r q)
-tensorAtom = tensor
+-- | Term-level constraints for walking @FuseAtomSpines@.
+type family FuseAtomSpinesTerm (r :: Rep) (q :: Rep) :: Constraint where
+  FuseAtomSpinesTerm '[] _ = ()
+  FuseAtomSpinesTerm ('( 'Atom j1, 'AtomM m1) ': rest) q =
+    ( FuseAtomSpineOneTerm j1 ('AtomM m1) q
+    , FuseAtomSpinesTerm rest q
+    )
 
-tensorDualAtom
-  :: (KnownDualAtomRep r, KnownAtomRep q)
-  => RepV r -> RepV q -> RepV (Tensor r q)
-tensorDualAtom = tensor
+type family FuseAtomSpineOneTerm (j1 :: Nat) (μ1 :: MultExpr) (q :: Rep) :: Constraint where
+  FuseAtomSpineOneTerm _ _ '[] = ()
+  FuseAtomSpineOneTerm j1 ('AtomM m1) ('( 'Atom j2, 'AtomM m2) ': rest) =
+    ( KnownNat j1
+    , KnownNat j2
+    , KnownNat m1
+    , KnownNat m2
+    , KnownNat (IrrepDim j1)
+    , KnownNat (IrrepDim j2)
+    , FuseAtomPairSpine j1 j2 ('Prod ('AtomM m1) ('AtomM m2)) (TensorIrrepRepSU2 j1 j2)
+    , FuseAtomSpineOneTerm j1 ('AtomM m1) rest
+    )
 
-tensorAtomDual
-  :: (KnownAtomRep r, KnownDualAtomRep q)
-  => RepV r -> RepV q -> RepV (Tensor r q)
-tensorAtomDual = tensor
+fuseAtomSpinesTerm
+  :: forall r q
+   . FuseAtomSpinesTerm r q
+  => SRep r
+  -> RepV r
+  -> SRep q
+  -> RepV q
+  -> RepV (FuseAtomSpines r q)
+fuseAtomSpinesTerm SRepNil RNil _ _ = RNil
+fuseAtomSpinesTerm
+  (SRepCons (SAtomI @j1) (SMultAtom @m1) rRest)
+  (RCons v1 rRestV)
+  qSing
+  q =
+  appendRepV
+    (fuseAtomSpineOneTerm @j1 @('AtomM m1) (SAtomI @j1) (SMultAtom @m1) v1 qSing q)
+    (fuseAtomSpinesTerm rRest rRestV qSing q)
+fuseAtomSpinesTerm _ _ _ _ =
+  error "fuseAtomSpinesTerm: expected atom spine"
+
+fuseAtomSpineOneTerm
+  :: forall j1 μ1 q
+   . FuseAtomSpineOneTerm j1 μ1 q
+  => SIrrep ('Atom j1)
+  -> SMult μ1
+  -> ToVSector ('Atom j1) μ1
+  -> SRep q
+  -> RepV q
+  -> RepV (FuseAtomSpineOne j1 μ1 q)
+fuseAtomSpineOneTerm _ _ _ SRepNil RNil = RNil
+fuseAtomSpineOneTerm
+  SAtomI
+  (SMultAtom @m1)
+  v1
+  (SRepCons (SAtomI @j2) (SMultAtom @m2) qRest)
+  (RCons v2 qRestV) =
+  appendRepV
+    ( fuseOneSectorTensorProd @j1 @j2 @m1 @m2 (v1 ⊗ v2)
+    )
+    (fuseAtomSpineOneTerm @j1 @('AtomM m1) (SAtomI @j1) (SMultAtom @m1) v1 qRest qRestV)
+fuseAtomSpineOneTerm _ _ _ _ _ =
+  error "fuseAtomSpineOneTerm: expected atom spine"
 
 --------------------------------------------------------------------------------
 -- SU(2) group action (Wigner on irrep legs)
 --
--- @g ↦ (RepV rs → RepV rs)@: identity on copy axes, @D^{j/2}(g)@ on each
--- irrep factor (Kronecker on unfused @'Tensor@). Dual / mixed dual tensors
--- are not wired yet.
+-- @g ↦ (RepV rs → RepV rs)@: identity on copy axes, @D^{j/2}(g)@ on the irrep
+-- factor of each sector.
 --------------------------------------------------------------------------------
 
 -- | Wigner @D^{j/2}(g)@ as a typed morphism on the CG magnetic basis.
@@ -1060,7 +732,7 @@ wignerD g =
     LinearFunction $
       applyWigner (fromIntegral (natVal (Proxy @j))) g
 
--- | Sector morphism: @id@ on multiplicity, Wigner on irrep factor(s).
+-- | Sector morphism: @id@ on multiplicity, Wigner on the irrep factor.
 sectorMap
   :: SIrrep e
   -> SMult μ
@@ -1070,15 +742,8 @@ sectorMap (SAtomI @j) SMultAtom g =
   id ⊗^ wignerD @j g
 sectorMap (SAtomI @j) (SMultProd SMultAtom SMultAtom) g =
   id ⊗^ wignerD @j g
-sectorMap (STensorI (SAtomI @j1) (SAtomI @j2)) SMultAtom g =
-  (id ⊗^ wignerD @j1 g) ⊗^ wignerD @j2 g
-sectorMap
-  (STensorI (SAtomI @j1) (SAtomI @j2))
-  (SMultProd SMultAtom SMultAtom)
-  g =
-  (id ⊗^ wignerD @j1 g) ⊗^ (id ⊗^ wignerD @j2 g)
 sectorMap _ _ _ =
-  error "Experiments.Symbolic.sectorMap: dual / unsupported sector (blocker)"
+  error "Experiments.Symbolic.sectorMap: unsupported multiplicity shape"
 
 -- | Apply 'sectorMap' to a sector payload.
 actSector
@@ -1091,12 +756,9 @@ actSector se@SAtomI sm@SMultAtom g v =
   sectorMap se sm g $ v
 actSector se@SAtomI sm@(SMultProd SMultAtom SMultAtom) g v =
   sectorMap se sm g $ v
-actSector se@(STensorI SAtomI SAtomI) sm@SMultAtom g v =
-  sectorMap se sm g $ v
-actSector se@(STensorI SAtomI SAtomI) sm@(SMultProd SMultAtom SMultAtom) g v =
-  sectorMap se sm g $ v
 actSector se sm g _ =
-  sectorMap se sm g `seq` error "Experiments.Symbolic.actSector: dual / unsupported sector (blocker)"
+  sectorMap se sm g `seq`
+    error "Experiments.Symbolic.actSector: unsupported multiplicity shape"
 
 -- | Group action on a spine: @SU2Element → (RepV rs → RepV rs)@.
 actRep
@@ -1111,74 +773,164 @@ actRep g = go (symRepSing @rs)
     go SRepNil RNil = RNil
     go (SRepCons e μ rest) (RCons v rs) =
       RCons (actSector e μ g v) (go rest rs)
-    go _ _ = error "actRep: spine / singleton mismatch"
 
 --------------------------------------------------------------------------------
--- Application (compact closed evaluation)
+-- Dual / cup on 'RepExpr' spaces
 --
--- Given @f ∈ Mor r q = Dual r ⊗ q@ and @x ∈ r@:
---
---   1. inject:   r ⊗ (Dual r ⊗ q)     — fuse @f@ first so 'Tensor' stays leaf×leaf
---   2. assoc:    (r ⊗ Dual r) ⊗ q     — F-move / associator (blocker: no Symbolic fmove yet)
---   3. cup:      Unit ⊗ q             — evaluation @r ⊗ Dual r → Unit@ on the left
---   4. unitor:   q                    — left unitor @Unit ⊗ q → q@
---
--- | Bodies for @assocApply@ are intentionally @undefined@ (Symbolic F-move).
--- @injectApply@, 'cup', 'cupApply', and @lunitApply@ are implemented.
+-- @'RDual ('RSum rs)@ is @DualVector (ToVSpine rs)@ — no formal dual sector.
 --------------------------------------------------------------------------------
 
--- | Step 1 target: @r ⊗ Fuse(Mor r q)@ (Mor fused to atoms so 'Tensor' applies).
-type ApplyInject (r :: Rep) (q :: Rep) = Tensor r (Fuse (Mor r q))
-
--- | Step 2 target: @(Fuse (r ⊗ Dual r)) ⊗ q@.
-type ApplyAssoc (r :: Rep) (q :: Rep) = Tensor (Fuse (Tensor r (Dual r))) q
-
--- | Step 3 target: @Unit ⊗ q@.
-type ApplyCupped (r :: Rep) (q :: Rep) = Tensor Unit q
-
--- | Left-inject the object into the morphism: @x ⊗ f@.
-injectApply
-  :: forall r q
-   . ( FuseRawSpine (Mor r q)
-     , KnownSymRep (FuseRepRaw (Mor r q))
-     , CoalesceSpine (FuseRepRaw (Mor r q))
-     , KnownAtomRep r
-     , KnownAtomRep (Fuse (Mor r q))
-     )
-  => RepV r
-  -> RepV (Mor r q)
-  -> RepV (ApplyInject r q)
-injectApply x f = tensor x (fuse f)
-
--- | Reassociate toward cup-ready parenthesization @(r ⊗ Dual r) ⊗ q@.
--- Blocker: Symbolic F-move / associator on fused spines.
-assocApply
-  :: forall r q
-   . RepV (ApplyInject r q)
-  -> RepV (ApplyAssoc r q)
-assocApply = undefined
-
--- | Cup (evaluation / counit): @Fuse (r ⊗ Dual r) → Unit@.
---
--- After Fuse undual (Riesz + CS + @√(j+1)@) + CG, keep the trivial channel and
--- contract its copy space (Hom) to a scalar. Coherent with 'cupUnfused' on
--- atom leaves (including spin-½).
-cup
-  :: forall r
-   . ( ProjectToSymmetric (Fuse (Tensor r (Dual r)))
-     , CupTrivial (FilterTrivial (Fuse (Tensor r (Dual r))))
-     )
-  => RepV (Fuse (Tensor r (Dual r)))
-  -> RepV Unit
-cup = cupTrivial . projectToSymmetric
-
--- | Contract a trivial-only spine (@FilterTrivial@) down to 'Unit'.
-class CupTrivial (rs :: Rep) where
-  cupTrivial :: RepV rs -> RepV Unit
-
+-- | Unit element carrying a scalar amplitude.
 unitFromScalar :: Complex Double -> RepV Unit
 unitFromScalar s =
   RCons @('Atom 0) @('AtomM 1) (s *^ (konst 1 ⊗ konst 1)) RNil
+
+-- | Read the amplitude stored in a 'Unit' vector.
+unitScalar :: RepV Unit -> Complex Double
+unitScalar (RCons u RNil) = VS.head (toArray u)
+
+-- | Dual of a leaf atom sector → @DualVector (C m ⊗ C (j+1))@.
+--
+-- Canonical Riesz via 'InnerSpace': linear form @w ↦ v <.> w@ (linear in @w@),
+-- then 'fromLinearForm'. Not @w ↦ w <.> v@ (antilinear in @w@) and not
+-- 'euclideanNorm' (that is @coerce@, only valid when @DualVector v ~ v@).
+dualAtomAtomM
+  :: forall j m
+   . ( KnownNat j
+     , KnownNat m
+     , KnownNat (IrrepDim j)
+     , InnerSpace (ToVSector ('Atom j) ('AtomM m))
+     , Scalar (ToVSector ('Atom j) ('AtomM m)) ~ Complex Double
+     )
+  => ToVSector ('Atom j) ('AtomM m)
+  -> DualVector (ToVSector ('Atom j) ('AtomM m))
+dualAtomAtomM v =
+  fromLinearForm
+    -+$> ( arr (LinearFunction ((v <.>)))
+             :: ToVSector ('Atom j) ('AtomM m) +> Complex Double
+         )
+
+-- | Dual of an atom spine as @DualVector (ToVSpine rs)@.
+rdual
+  :: forall rs
+   . KnownAtomRep rs
+  => RepV rs
+  -> ToV ('RDual ('RSum rs))
+rdual = go (symRepSing @rs) . repVToV
+  where
+    go :: forall rs'. SRep rs' -> ToVSpine rs' -> DualVector (ToVSpine rs')
+    go (SRepCons (SAtomI @j) (SMultAtom @m) SRepNil) v =
+      dualAtomAtomM @j @m v
+    go (SRepCons (SAtomI @j) (SMultAtom @m) sRest@(SRepCons {})) (v, rest) =
+      (dualAtomAtomM @j @m v, go sRest rest)
+    go _ _ = error "rdual: expected nonempty atom spine"
+
+-- | Pivotal undual of an atom spine (@'undualAtomAtomM'@ per sector).
+undualSpine
+  :: forall rs
+   . KnownAtomRep rs
+  => DualVector (ToVSpine rs)
+  -> ToVSpine rs
+undualSpine = go (symRepSing @rs)
+  where
+    go :: forall rs'. SRep rs' -> DualVector (ToVSpine rs') -> ToVSpine rs'
+    go (SRepCons (SAtomI @j) (SMultAtom @m) SRepNil) φ =
+      undualAtomAtomM @j @m φ
+    go (SRepCons (SAtomI @j) (SMultAtom @m) sRest@(SRepCons {})) (φ, rest) =
+      (undualAtomAtomM @j @m φ, go sRest rest)
+    go _ _ = error "undualSpine: expected nonempty atom spine"
+
+-- | Unfused morphism space @DualVector (ToVSpine r) ⊗ ToVSpine q@.
+rmor
+  :: forall r q
+   . ( KnownAtomRep r
+     , KnownAtomRep q
+     , TensorSpace (DualVector (ToVSpine r))
+     , TensorSpace (ToVSpine q)
+     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
+     , Scalar (ToVSpine q) ~ Complex Double
+     )
+  => RepV r
+  -> RepV q
+  -> ToV (MorExpr r q)
+rmor x y = rdual x ⊗ repVToV y
+
+--------------------------------------------------------------------------------
+-- Cup / cap (compact closed)
+--
+-- Unfused object: @r ⊗ r*@ ('CupUnfusedExpr' / primal⊗dual).
+-- Fused: dual≅primal, CG-fuse, restrict to singlets ('CupFusedRep').
+-- Cap on ⊕ is the diagonal coevaluation (biproduct natural η).
+--------------------------------------------------------------------------------
+
+-- | Unfused evaluation @ε : r ⊗ r* → 𝟙@.
+cupUnfused
+  :: forall r
+   . ( KnownAtomRep r
+     , LinearSpace (ToVSpine r)
+     , LinearSpace (DualVector (ToVSpine r))
+     , Scalar (ToVSpine r) ~ Complex Double
+     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
+     )
+  => ToV (CupUnfusedExpr r)
+  -> RepV Unit
+cupUnfused t =
+  unitFromScalar
+    ( getLinearFunction
+        trace
+        (fromTensor -+$=> (swapMap $ t))
+    )
+
+-- | Unfused coevaluation @η : 𝟙 → r ⊗ r*@ (linearmap 'idTensor').
+capUnfused
+  :: forall r
+   . ( KnownAtomRep r
+     , LinearSpace (ToVSpine r)
+     , LinearSpace (DualVector (ToVSpine r))
+     , Scalar (ToVSpine r) ~ Complex Double
+     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
+     )
+  => RepV Unit
+  -> ToV (CapUnfusedExpr r)
+capUnfused u = unitScalar u *^ idTensor @(ToVSpine r)
+
+-- | Hom scalar from flat @'AtomM m@ trivial channel.
+cupHomScalarAtomM
+  :: forall m
+   . ( KnownNat m
+     , KnownNat (m * 1)
+     , HilbertSpace (C m)
+     , InnerSpace (C m)
+     , Scalar (C m) ~ Complex Double
+     )
+  => ToVSector ('Atom 0) ('AtomM m)
+  -> Complex Double
+cupHomScalarAtomM hom =
+  let flat = fuseBond @m @1 $ hom
+   in flat <.> flat
+
+-- | Hom scalar from @'Atom 0@ / @'Prod m m@ (copy-leg trace).
+cupHomScalar
+  :: forall m
+   . ( KnownNat m
+     , KnownNat (m * 1)
+     , HilbertSpace (C m)
+     , InnerSpace (C m)
+     , Scalar (C m) ~ Complex Double
+     )
+  => ToVSector ('Atom 0) ('Prod ('AtomM m) ('AtomM m))
+  -> Complex Double
+cupHomScalar t =
+  let peeled =
+        ((id ⊗^ fuseBond @m @1) . rassocMap) $ t
+          :: C m ⊗ C m
+      paired =
+        (id ⊗^ (arr (LinearFunction (coerce :: C m -> DualVector (C m))))) $ peeled
+   in getLinearFunction trace (fromTensor -+$=> (swapMap $ paired))
+
+-- | Contract a trivial-only spine (@FilterTrivial@ / coalesced singlets) to 'Unit'.
+class CupTrivial (rs :: Rep) where
+  cupTrivial :: RepV rs -> RepV Unit
 
 instance CupTrivial '[] where
   cupTrivial RNil = unitFromScalar 0
@@ -1198,7 +950,7 @@ instance
 instance
   ( KnownNat m
   , KnownNat n
-  , KnownNat (n * 1)
+  , KnownNat (m * 1)
   , HilbertSpace (C m)
   , HilbertSpace (C n)
   , InnerSpace (C m)
@@ -1210,608 +962,94 @@ instance
   cupTrivial (RCons t RNil) =
     unitFromScalar (cupHomScalar @m t)
 
--- | Hom scalar from flat @'AtomM m@ trivial channel.
-cupHomScalarAtomM
-  :: forall m
-   . ( KnownNat m
-     , KnownNat (m * 1)
-     , HilbertSpace (C m)
-     , InnerSpace (C m)
-     , Scalar (C m) ~ Complex Double
-     )
-  => ToVSector ('Atom 0) ('AtomM m)
-  -> Complex Double
-cupHomScalarAtomM hom =
-  let flat = fuseBond @m @1 $ hom
-   in flat <.> flat
-
--- | Hom scalar from @'Atom 0@ / @'Prod m m@ (same contraction as 'CupTrivial').
-cupHomScalar
-  :: forall m
-   . ( KnownNat m
-     , KnownNat (m * 1)
-     , HilbertSpace (C m)
-     , InnerSpace (C m)
-     , Scalar (C m) ~ Complex Double
-     )
-  => ToVSector ('Atom 0) ('Prod ('AtomM m) ('AtomM m))
-  -> Complex Double
-cupHomScalar t =
-  let peeled =
-        ((id ⊗^ fuseBond @m @1) . rassocMap) $ t
-          :: C m ⊗ C m
-      paired =
-        (id ⊗^ (arr (LinearFunction (coerce :: C m -> DualVector (C m))))) $ peeled
-   in trace -+$> (fromTensor -+$=> (swapMap $ paired))
-
--- | @(cup ⊗ id)@ on one Hom/@q@ tensor row: contract Hom, land in @Tensor Unit q@.
-cupHomOnTensorUnit
-  :: forall μ j n
-   . ( KnownNat j
-     , KnownNat n
-     , KnownNat (IrrepDim j)
-     , LinearSpace (ToVSector ('Atom 0) μ)
-     , ToVSector ('Tensor ('Atom 0) ('Atom j)) ('Prod μ ('AtomM n))
-         ~ (ToVSector ('Atom 0) μ ⊗ ToVSector ('Atom j) ('AtomM n))
-     , ToVSector ('Tensor ('Atom 0) ('Atom j)) ('Prod ('AtomM 1) ('AtomM n))
-         ~ ((C 1 ⊗ C 1) ⊗ ToVSector ('Atom j) ('AtomM n))
-     , Scalar (ToVSector ('Atom 0) μ) ~ Complex Double
-     )
-  => (ToVSector ('Atom 0) μ -> Complex Double)
-  -> ToVSector
-       ('Tensor ('Atom 0) ('Atom j))
-       ('Prod μ ('AtomM n))
-  -> ToVSector
-       ('Tensor ('Atom 0) ('Atom j))
-       ('Prod ('AtomM 1) ('AtomM n))
-cupHomOnTensorUnit formScalar t =
-  let hom_q =
-        t
-          :: ToVSector ('Atom 0) μ
-               ⊗ ToVSector ('Atom j) ('AtomM n)
-      form =
-        arr (LinearFunction formScalar)
-          :: ToVSector ('Atom 0) μ +> Complex Double
-      scaled =
-        (form ⊗^ id) $ hom_q
-          :: Complex Double ⊗ ToVSector ('Atom j) ('AtomM n)
-      -- @TensorProduct (Complex Double) q = q@; avoid @fromFlatTensor@ on @q@.
-      LM.Tensor qv = scaled
-   in ((konst 1 ⊗ konst 1) :: C 1 ⊗ C 1) ⊗ qv
-
-cupHomTensorUnit
-  :: forall m j n
-   . ( KnownNat m
-     , KnownNat j
-     , KnownNat n
-     , KnownNat (IrrepDim j)
-     , KnownNat (m * 1)
-     , HilbertSpace (C m)
-     , InnerSpace (C m)
-     , Scalar (C m) ~ Complex Double
-     )
-  => ToVSector
-       ('Tensor ('Atom 0) ('Atom j))
-       ('Prod ('Prod ('AtomM m) ('AtomM m)) ('AtomM n))
-  -> ToVSector
-       ('Tensor ('Atom 0) ('Atom j))
-       ('Prod ('AtomM 1) ('AtomM n))
-cupHomTensorUnit = cupHomOnTensorUnit @('Prod ('AtomM m) ('AtomM m)) @j @n (cupHomScalar @m)
-
-cupHomAtomMTensorUnit
-  :: forall m j n
-   . ( KnownNat m
-     , KnownNat j
-     , KnownNat n
-     , KnownNat (IrrepDim j)
-     , KnownNat (m * 1)
-     , HilbertSpace (C m)
-     , InnerSpace (C m)
-     , Scalar (C m) ~ Complex Double
-     )
-  => ToVSector
-       ('Tensor ('Atom 0) ('Atom j))
-       ('Prod ('AtomM m) ('AtomM n))
-  -> ToVSector
-       ('Tensor ('Atom 0) ('Atom j))
-       ('Prod ('AtomM 1) ('AtomM n))
-cupHomAtomMTensorUnit =
-  cupHomOnTensorUnit @('AtomM m) @j @n (cupHomScalarAtomM @m)
-
--- | Zero spine of @Tensor Unit q@ (same shape as @tensorOne@ of a zero unit).
-zeroTensorUnit
-  :: forall q
-   . SRep q
-  -> RepV (Tensor Unit q)
-zeroTensorUnit SRepNil = RNil
-zeroTensorUnit (SRepCons (SAtomI @j) (SMultAtom @n) rest) =
-  RCons (zeroV :: ToVSector ('Tensor ('Atom 0) ('Atom j)) ('Prod ('AtomM 1) ('AtomM n)))
-    (zeroTensorUnit rest)
-zeroTensorUnit _ = error "zeroTensorUnit: expected atom spine"
-
--- | Pointwise sum of two @Tensor Unit q@ spines (driven by @q@ singleton).
-addTensorUnit
-  :: forall q
-   . SRep q
-  -> RepV (Tensor Unit q)
-  -> RepV (Tensor Unit q)
-  -> RepV (Tensor Unit q)
-addTensorUnit SRepNil RNil RNil = RNil
-addTensorUnit (SRepCons SAtomI SMultAtom qRest) (RCons a as) (RCons b bs) =
-  RCons (a ^+^ b) (addTensorUnit qRest as bs)
-addTensorUnit _ _ _ = error "addTensorUnit: expected atom spine"
-
--- | Peel one @TensorOne@ row guided by an atom spine @q@.
-peelTensorOneAtom
-  :: forall s q ys
-   . SRep q
-  -> RepV (Append (TensorOne s q) ys)
-  -> (RepV (TensorOne s q), RepV ys)
-peelTensorOneAtom SRepNil rv = (RNil, rv)
-peelTensorOneAtom (SRepCons _ _ qRest) (RCons v rv) =
-  let (xs, ys) = peelTensorOneAtom @s qRest rv
-   in (RCons v xs, ys)
-peelTensorOneAtom _ _ = error "peelTensorOneAtom: spine/value mismatch"
-
--- | Contract one Hom/@q@ @TensorOne@ row (@'Prod m m@ trivial channel).
-cupApplyRowProd
-  :: forall m q
-   . ( KnownNat m
-     , KnownNat (m * 1)
-     , HilbertSpace (C m)
-     , InnerSpace (C m)
-     , Scalar (C m) ~ Complex Double
-     )
-  => SRep q
-  -> RepV (TensorOne '( 'Atom 0, 'Prod ('AtomM m) ('AtomM m)) q)
-  -> RepV (Tensor Unit q)
-cupApplyRowProd SRepNil RNil = RNil
-cupApplyRowProd (SRepCons (SAtomI @j) (SMultAtom @n) qRest) (RCons t tRest) =
-  RCons (cupHomTensorUnit @m @j @n t) (cupApplyRowProd @m qRest tRest)
-cupApplyRowProd _ _ = error "cupApplyRowProd: expected atom spine"
-
--- | Contract one Hom/@q@ @TensorOne@ row (flat @'AtomM m@ trivial channel).
-cupApplyRowAtomM
-  :: forall m q
-   . ( KnownNat m
-     , KnownNat (m * 1)
-     , HilbertSpace (C m)
-     , InnerSpace (C m)
-     , Scalar (C m) ~ Complex Double
-     )
-  => SRep q
-  -> RepV (TensorOne '( 'Atom 0, 'AtomM m) q)
-  -> RepV (Tensor Unit q)
-cupApplyRowAtomM SRepNil RNil = RNil
-cupApplyRowAtomM (SRepCons (SAtomI @j) (SMultAtom @n) qRest) (RCons t tRest) =
-  RCons (cupHomAtomMTensorUnit @m @j @n t) (cupApplyRowAtomM @m qRest tRest)
-cupApplyRowAtomM _ _ = error "cupApplyRowAtomM: expected atom spine"
-
--- | Leaf pairing @v ⊗ DualVector v → ℂ@ (braid + fromTensor + trace).
-cupUnfusedLeaf
-  :: forall j m
-   . ( KnownNat j
-     , KnownNat m
-     , KnownNat (IrrepDim j)
-     , InnerSpace (ToVSector ('Atom j) ('AtomM m))
-     , Scalar (ToVSector ('Atom j) ('AtomM m)) ~ Complex Double
-     )
-  => ToVSector
-       ('Tensor ('Atom j) ('Dual ('Atom j)))
-       ('Prod ('AtomM m) ('DualM ('AtomM m)))
-  -> Complex Double
-cupUnfusedLeaf t =
-  let v =
-        t
-          :: ToVSector ('Atom j) ('AtomM m)
-               ⊗ DualVector (ToVSector ('Atom j) ('AtomM m))
-   in trace -+$> (fromTensor -+$=> (swapMap $ v))
-
--- | Atom-spine singleton ↦ dual-atom singleton (@Dual@ on keys).
-dualAtomSing :: SRep rs -> SRep (Dual rs)
-dualAtomSing SRepNil = SRepNil
-dualAtomSing (SRepCons (SAtomI @j) (SMultAtom @m) rest) =
-  SRepCons (SDualI (SAtomI @j)) (SMultDual (SMultAtom @m)) (dualAtomSing rest)
-dualAtomSing _ = error "dualAtomSing: expected atom spine"
-
--- | Peel one @TensorOne@ row using a dual-atom guide (same length); @TensorOne@
--- reduces under the 'SRepCons' refinement so no 'PeelAppend' on an unreduced
--- @Dual r@ is required.
-peelTensorOneAtomDual
-  :: forall j m q ys
-   . ( KnownNat j
-     , KnownNat m
-     , KnownNat (IrrepDim j)
-     )
-  => SRep q
-  -> RepV (Append (TensorOne '( 'Atom j, 'AtomM m) q) ys)
-  -> (RepV (TensorOne '( 'Atom j, 'AtomM m) q), RepV ys)
-peelTensorOneAtomDual SRepNil rv = (RNil, rv)
-peelTensorOneAtomDual
-  (SRepCons (SDualI (SAtomI @k)) (SMultDual (SMultAtom @n)) qRest)
-  (RCons v rv) =
-    let (xs, ys) = peelTensorOneAtomDual @j @m qRest rv
-     in (RCons v xs, ys)
-peelTensorOneAtomDual _ _ =
-  error "peelTensorOneAtomDual: expected dual-atom spine"
-
--- | Unfused cup on a full atom spine: sum over diagonal leaf cups in
--- @Tensor r (Dual r)@ (off-diagonal sectors contribute 0).
-cupUnfusedRep
+-- | Fused evaluation on singlets of @Fuse(r ⊗ r)@ (dual≅primal).
+cupFused
   :: forall r
-   . KnownAtomRep r
-  => RepV (Tensor r (Dual r))
-  -> RepV Unit
-cupUnfusedRep rv =
-  RCons @('Atom 0) @('AtomM 1) (s *^ (konst 1 ⊗ konst 1)) RNil
-  where
-    dFull = dualAtomSing (symRepSing @r)
-    s = goRows (symRepSing @r) rv
-
-    goRows
-      :: forall r'
-       . SRep r'
-      -> RepV (Tensor r' (Dual r))
-      -> Complex Double
-    goRows SRepNil RNil = 0
-    goRows (SRepCons (SAtomI @j) (SMultAtom @m) rRest) rv' =
-      goRowsCons @j @m rRest rv'
-    goRows _ _ = error "cupUnfusedRep: expected atom spine"
-
-    goRowsCons
-      :: forall j m rest
-       . ( KnownNat j
-         , KnownNat m
-         , KnownNat (IrrepDim j)
-         )
-      => SRep rest
-      -> RepV (Tensor ('( 'Atom j, 'AtomM m) ': rest) (Dual r))
-      -> Complex Double
-    goRowsCons rRest rv' =
-      let (row, restRv) = peelTensorOneAtomDual @j @m @(Dual r) @(Tensor rest (Dual r)) dFull rv'
-       in goCols @j @m dFull row + goRows rRest restRv
-
-    goCols
-      :: forall j m q'
-       . ( KnownNat j
-         , KnownNat m
-         , KnownNat (IrrepDim j)
-         )
-      => SRep q'
-      -> RepV (TensorOne '( 'Atom j, 'AtomM m) q')
-      -> Complex Double
-    goCols SRepNil RNil = 0
-    goCols
-      (SRepCons (SDualI (SAtomI @k)) (SMultDual (SMultAtom @n)) qRest)
-      (RCons t tRest) =
-        let sCol = case (sameNat (Proxy @j) (Proxy @k), sameNat (Proxy @m) (Proxy @n)) of
-              (Just Refl, Just Refl) -> cupUnfusedLeaf @j @m t
-              _ -> 0
-         in sCol + goCols @j @m qRest tRest
-    goCols _ _ = error "cupUnfusedRep.goCols: expected dual-atom spine"
-
--- | Unfused leaf cup: @Atom ⊗ Dual Atom → Unit@ (special case of 'cupUnfusedRep').
-cupUnfused
-  :: forall j m
-   . ( KnownNat j
-     , KnownNat m
-     , KnownNat (IrrepDim j)
-     , InnerSpace (ToVSector ('Atom j) ('AtomM m))
-     , Scalar (ToVSector ('Atom j) ('AtomM m)) ~ Complex Double
+   . ( KnownAtomRep r
+     , CupTrivial (CupFusedRep r)
      )
-  => RepV
-       '[ '( 'Tensor ('Atom j) ('Dual ('Atom j))
-           , 'Prod ('AtomM m) ('DualM ('AtomM m))
+  => RepV (CupFusedRep r)
+  -> RepV Unit
+cupFused = cupTrivial
+
+-- | Linear extension of 'fuseExpr' @r ⊗ r → FuseExpr (r ⊗ r)@.
+fuseExprTensor
+  :: forall r
+   . ( KnownAtomRep r
+     , FuseAtomSpinesTerm r r
+     , KnownSymRep (FuseAtomSpines r r)
+     , CoalesceSpine (FuseAtomSpines r r)
+     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+     , LinearSpace (ToVSpine r)
+     , LinearSpace (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , Scalar (ToVSpine r) ~ Complex Double
+     , Scalar (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+         ~ Complex Double
+     )
+  => ToVSpine r ⊗ ToVSpine r
+  -> RepV (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+fuseExprTensor t =
+  vToRepV @(FuseExpr ('RTensor ('RSum r) ('RSum r))) $
+    (uncurryLinearMap -+$=> fuseCurried) $ t
+  where
+    fuseCurried ::
+      ToVSpine r
+        +> ( ToVSpine r
+               +> ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r)))
            )
-        ]
+    fuseCurried =
+      arr . LinearFunction $ \x ->
+        arr . LinearFunction $ \y ->
+          repVToV $ fuseExpr @r @r (vToRepV @r x) (vToRepV @r y)
+
+-- | Fused coevaluation: diagonal @η@ into singlets of @Fuse(r ⊗ r)@.
+--
+-- @projectToSymmetric ∘ fuse ∘ (id ⊗ undual) ∘ idTensor@ — biproduct-natural
+-- (off-diagonal blocks vanish under 'FilterTrivial' for SU(2)).
+capFused
+  :: forall r
+   . ( KnownAtomRep r
+     , FuseAtomSpinesTerm r r
+     , KnownSymRep (FuseAtomSpines r r)
+     , CoalesceSpine (FuseAtomSpines r r)
+     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+     , LinearSpace (ToVSpine r)
+     , LinearSpace (DualVector (ToVSpine r))
+     , LinearSpace (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , Scalar (ToVSpine r) ~ Complex Double
+     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
+     , Scalar (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+         ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine r))
+     )
+  => RepV Unit
+  -> RepV (CapFusedRep r)
+capFused u =
+  let η = unitScalar u *^ idTensor @(ToVSpine r)
+      undualMap =
+        arr (LinearFunction (undualSpine @r))
+          :: DualVector (ToVSpine r) +> ToVSpine r
+      ηPrimal = (id ⊗^ undualMap) $ η
+   in projectToSymmetric (fuseExprTensor @r ηPrimal)
+
+-- | Self-pairing @r ↦ ε(r ⊗ r*)@ via 'cupUnfused'.
+cupRdual
+  :: forall r
+   . ( KnownAtomRep r
+     , LinearSpace (ToVSpine r)
+     , LinearSpace (DualVector (ToVSpine r))
+     , Scalar (ToVSpine r) ~ Complex Double
+     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine r))
+     )
+  => RepV r
   -> RepV Unit
-cupUnfused = cupUnfusedRep @'[ '( 'Atom j, 'AtomM m)]
-
--- | Apply cup on the left factor of @ApplyAssoc@: @(cup ⊗ id)@.
---
--- Walk @Fuse (r ⊗ Dual r)@; keep only @'Atom 0@ TensorOne rows, contract Hom,
--- sum into @Tensor Unit q@. Non-trivial left sectors contribute @0@.
-cupApply
-  :: forall r q
-   . ( KnownAtomRep q
-     , KnownSymRep (Fuse (Tensor r (Dual r)))
-     )
-  => RepV (ApplyAssoc r q)
-  -> RepV (ApplyCupped r q)
-cupApply = goFuse (symRepSing @(Fuse (Tensor r (Dual r))))
-  where
-    qSing = symRepSing @q
-
-    goFuse
-      :: forall fuse
-       . SRep fuse
-      -> RepV (Tensor fuse q)
-      -> RepV (Tensor Unit q)
-    goFuse SRepNil RNil = zeroTensorUnit qSing
-    goFuse (SRepCons (SAtomI @j) (SMultProd (SMultAtom @m) (SMultAtom @n)) fuseRest) rv =
-      case (sameNat (Proxy @j) (Proxy @0), sameNat (Proxy @m) (Proxy @n)) of
-        (Just Refl, Just Refl) ->
-          let (row, restRv) =
-                peelTensorOneAtom
-                  @'( 'Atom 0, 'Prod ('AtomM m) ('AtomM m))
-                  qSing
-                  rv
-              contrib = cupApplyRowProd @m qSing row
-           in addTensorUnit qSing contrib (goFuse fuseRest restRv)
-        _ ->
-          let (_, restRv) =
-                peelTensorOneAtom
-                  @'( 'Atom j, 'Prod ('AtomM m) ('AtomM n))
-                  qSing
-                  rv
-           in goFuse fuseRest restRv
-    goFuse (SRepCons (SAtomI @j) (SMultAtom @m) fuseRest) rv =
-      case sameNat (Proxy @j) (Proxy @0) of
-        Just Refl ->
-          let (row, restRv) =
-                peelTensorOneAtom @'( 'Atom 0, 'AtomM m) qSing rv
-              contrib = cupApplyRowAtomM @m qSing row
-           in addTensorUnit qSing contrib (goFuse fuseRest restRv)
-        Nothing ->
-          let (_, restRv) =
-                peelTensorOneAtom @'( 'Atom j, 'AtomM m) qSing rv
-           in goFuse fuseRest restRv
-    goFuse _ _ = error "cupApply: expected fused atom spine"
-
--- | One sector: fuse @0 ⊗ j → j@, then flatten @'Prod ('AtomM 1) ('AtomM n) → 'AtomM n@.
-lunitSector
-  :: forall j n
-   . ( KnownNat j
-     , KnownNat n
-     , KnownNat (IrrepDim j)
-     , KnownNat (1 * n)
-     )
-  => ToVSector ('Tensor ('Atom 0) ('Atom j)) ('Prod ('AtomM 1) ('AtomM n))
-  -> ToVSector ('Atom j) ('AtomM n)
-lunitSector sec =
-  flattenCopyProd @1 @n @(IrrepDim j)
-    (fuseOneChannelProd @0 @j @j @1 @n sec)
-
--- | Left unitor on @Tensor Unit q@, driven by 'SRep' (atom spine).
--- Matching 'SAtomI'/'SMultAtom' refines @q@ so @Tensor Unit q@ reduces.
-lunitSpine
-  :: forall q
-   . KnownAtomRep q
-  => RepV (Tensor Unit q)
-  -> RepV q
-lunitSpine = go (symRepSing @q)
-  where
-    go :: forall q'. SRep q' -> RepV (Tensor Unit q') -> RepV q'
-    go SRepNil RNil = RNil
-    go (SRepCons (SAtomI @j) (SMultAtom @n) rest) (RCons v tRest) =
-      RCons (lunitSector @j @n v) (go rest tRest)
-    go _ _ = error "lunitSpine: expected atom spine"
-
--- | Left unitor: @Unit ⊗ q → q@.
-lunitApply
-  :: forall r q
-   . KnownAtomRep q
-  => RepV (ApplyCupped r q)
-  -> RepV q
-lunitApply = lunitSpine @q
-
--- | Categorical application @Mor r q → r → q@ via inject / assoc / cup / unitor.
-apply
-  :: forall r q
-   . ( FuseRawSpine (Mor r q)
-     , KnownSymRep (FuseRepRaw (Mor r q))
-     , CoalesceSpine (FuseRepRaw (Mor r q))
-     , KnownAtomRep r
-     , KnownAtomRep (Fuse (Mor r q))
-     , KnownAtomRep q
-     , KnownSymRep (Fuse (Tensor r (Dual r)))
-     )
-  => RepV (Mor r q)
-  -> RepV r
-  -> RepV q
-apply f x =
-  lunitApply @r @q
-    (cupApply @r @q (assocApply @r @q (injectApply @r @q x f)))
+cupRdual r = cupUnfused @r (repVToV @r r ⊗ rdual @r r)
 
 --------------------------------------------------------------------------------
--- Category (constrained-categories): morphisms as Hom-elements
---
--- @Sym a b@ wraps @RepV (Mor a b) = RepV (Dual a ⊗ b)@. Identity is coevaluation
--- @η ∈ Dual a ⊗ a@; composition cups the middle @b ⊗ Dual b@ (same blockers as
--- 'apply': F-move / fused cup). Objects are leaf atom spines ('AtomSpine').
+-- Braid (copy-axis swap on each sector)
 --------------------------------------------------------------------------------
-
--- | Morphisms @a → b@ as elements of the internal Hom @Dual a ⊗ b@.
-newtype Sym (a :: Rep) (b :: Rep) = Sym { unSym :: RepV (Mor a b) }
-
--- | Identity morphism: coevaluation @η ∈ Dual a ⊗ a@ (diagonal @asTensor id@).
-idMor :: forall a. KnownAtomRep a => RepV (Mor a a)
-idMor = goRows (dualAtomSing (symRepSing @a))
-  where
-    aSing = symRepSing @a
-
-    goRows
-      :: forall d
-       . SRep d
-      -> RepV (Tensor d a)
-    goRows SRepNil = RNil
-    goRows (SRepCons (SDualI (SAtomI @j)) (SMultDual (SMultAtom @m)) dRest) =
-      appendRepV (idOneRow @j @m aSing) (goRows dRest)
-    goRows _ = error "idMor: expected dual-atom spine"
-
-    idOneRow
-      :: forall j m
-       . ( KnownNat j
-         , KnownNat m
-         , KnownNat (IrrepDim j)
-         )
-      => SRep a
-      -> RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) a)
-    idOneRow = goCols
-      where
-        goCols :: forall q. SRep q -> RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) q)
-        goCols SRepNil = RNil
-        goCols (SRepCons (SAtomI @k) (SMultAtom @n) qRest) =
-          let cell =
-                case (sameNat (Proxy @j) (Proxy @k), sameNat (Proxy @m) (Proxy @n)) of
-                  (Just Refl, Just Refl) ->
-                    asTensor
-                      -+$=> ( id
-                                :: ToVSector ('Atom j) ('AtomM m)
-                                     +> ToVSector ('Atom j) ('AtomM m)
-                             )
-                  _ -> zeroV
-           in RCons cell (goCols qRest)
-        goCols _ = error "idMor.idOneRow: expected atom spine"
-
---------------------------------------------------------------------------------
--- Composition (compact closed)
---
--- Given @f ∈ Mor a b = Dual a ⊗ b@ and @g ∈ Mor b c = Dual b ⊗ c@:
---
---   1. tensor:  Fuse(Mor a b) ⊗ Fuse(Mor b c)     — fuse so 'Tensor' stays leaf×leaf
---   2. assoc:   Dual a ⊗ (Fuse(b ⊗ Dual b) ⊗ c)   — F-move / associator
---   3. cup:     Dual a ⊗ (Unit ⊗ c)               — cup middle @b ⊗ Dual b@
---   4. unitor:  Dual a ⊗ c = Mor a c              — lunit on the right factor
---
--- @assocCompose@ waits on the Symbolic F-move (same as 'assocApply').
--- @tensorCompose@ needs @Tensor@ on fused Mor spines that still carry @'Prod@
--- tags (@KnownAtomRep@ is AtomM-only).
---------------------------------------------------------------------------------
-
--- | Step 1 target: @Fuse(Mor a b) ⊗ Fuse(Mor b c)@.
-type ComposeTensor (a :: Rep) (b :: Rep) (c :: Rep) =
-  Tensor (Fuse (Mor a b)) (Fuse (Mor b c))
-
--- | Step 2 target: @Dual a ⊗ (Fuse (b ⊗ Dual b) ⊗ c)@.
-type ComposeAssoc (a :: Rep) (b :: Rep) (c :: Rep) =
-  Tensor (Dual a) (Tensor (Fuse (Tensor b (Dual b))) c)
-
--- | Step 3 target: @Dual a ⊗ (Unit ⊗ c)@.
-type ComposeCupped (a :: Rep) (b :: Rep) (c :: Rep) =
-  Tensor (Dual a) (Tensor Unit c)
-
--- | Tensor the two Hom-elements (after fusing each to an atom spine).
--- Blocker: 'Fuse' of Mor leaves @'Prod@ multiplicities; 'tensorAtom' needs
--- @KnownAtomRep@ (AtomM-only). Flatten-Prod-then-tensor, or extend tensor.
-tensorCompose
-  :: forall a b c
-   . RepV (Mor a b)
-  -> RepV (Mor b c)
-  -> RepV (ComposeTensor a b c)
-tensorCompose = undefined
-
--- | Reassociate toward cup-ready @Dual a ⊗ (b ⊗ Dual b) ⊗ c@.
--- Blocker: Symbolic F-move / associator (same as 'assocApply').
-assocCompose
-  :: forall a b c
-   . RepV (ComposeTensor a b c)
-  -> RepV (ComposeAssoc a b c)
-assocCompose = undefined
-
--- | Cup the middle @Fuse (b ⊗ Dual b) → Unit@: @(id ⊗ (cup ⊗ id))@.
--- Same contraction as 'cupApply', but under an outer @Dual a@ factor: needs a
--- typed walk of @Dual a ⊗ ApplyAssoc b c@ (Fuse/@c@ grid inside each cell).
-cupCompose
-  :: forall a b c
-   . RepV (ComposeAssoc a b c)
-  -> RepV (ComposeCupped a b c)
-cupCompose = undefined
-
--- | Left-unitor on the right factor: @Dual a ⊗ (Unit ⊗ c) → Dual a ⊗ c@.
-lunitCompose
-  :: forall a b c
-   . ( KnownDualAtomRep (Dual a)
-     , KnownAtomRep c
-     )
-  => RepV (ComposeCupped a b c)
-  -> RepV (Mor a c)
-lunitCompose = go (symRepSing @(Dual a))
-  where
-    cSing = symRepSing @c
-
-    go
-      :: forall d
-       . SRep d
-      -> RepV (Tensor d (Tensor Unit c))
-      -> RepV (Tensor d c)
-    go SRepNil RNil = RNil
-    go (SRepCons @_ @_ @dRest (SDualI (SAtomI @j)) (SMultDual (SMultAtom @m)) dRest) rv =
-      let (row, restRv) =
-            peelTensorOneAtomUnit @j @m @c @(Tensor dRest (Tensor Unit c)) cSing rv
-       in appendRepV (lunitComposeRow @j @m cSing row) (go dRest restRv)
-    go _ _ = error "lunitCompose: expected dual-atom spine"
-
--- | Peel @TensorOne@ of @Dual leaf × (Tensor Unit c)@ (length guided by @c@).
-peelTensorOneAtomUnit
-  :: forall j m c ys
-   . ( KnownNat j
-     , KnownNat m
-     , KnownNat (IrrepDim j)
-     )
-  => SRep c
-  -> RepV (Append (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) (Tensor Unit c)) ys)
-  -> ( RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) (Tensor Unit c))
-     , RepV ys
-     )
-peelTensorOneAtomUnit SRepNil rv = (RNil, rv)
-peelTensorOneAtomUnit (SRepCons SAtomI SMultAtom cRest) (RCons v rv) =
-  let (xs, ys) = peelTensorOneAtomUnit @j @m cRest rv
-   in (RCons v xs, ys)
-peelTensorOneAtomUnit _ _ = error "peelTensorOneAtomUnit: expected atom spine"
-
--- | Apply 'lunitSector' on the right factor of each @Dual ⊗ (Unit ⊗ Atom)@ cell.
-lunitComposeRow
-  :: forall j m c
-   . ( KnownNat j
-     , KnownNat m
-     , KnownNat (IrrepDim j)
-     )
-  => SRep c
-  -> RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) (Tensor Unit c))
-  -> RepV (TensorOne '( 'Dual ('Atom j), 'DualM ('AtomM m)) c)
-lunitComposeRow SRepNil RNil = RNil
-lunitComposeRow (SRepCons (SAtomI @k) (SMultAtom @n) cRest) (RCons t tRest) =
-  let cell =
-        t
-          :: ToVSector ('Dual ('Atom j)) ('DualM ('AtomM m))
-               ⊗ ToVSector ('Tensor ('Atom 0) ('Atom k)) ('Prod ('AtomM 1) ('AtomM n))
-      out =
-        (id ⊗^ arr (LinearFunction (lunitSector @k @n))) $ cell
-   in RCons out (lunitComposeRow @j @m cRest tRest)
-lunitComposeRow _ _ = error "lunitComposeRow: expected atom spine"
-
--- | Compact-closed composition @Hom(b,c) × Hom(a,b) → Hom(a,c)@.
-composeMor
-  :: forall a b c
-   . ( KnownAtomRep a
-     , KnownAtomRep b
-     , KnownAtomRep c
-     , KnownDualAtomRep (Dual a)
-     )
-  => RepV (Mor b c)
-  -> RepV (Mor a b)
-  -> RepV (Mor a c)
-composeMor g f =
-  lunitCompose @a @b @c
-    (cupCompose @a @b @c
-      (assocCompose @a @b @c (tensorCompose @a @b @c f g)))
-
-instance Category Sym where
-  type Object Sym a = (KnownAtomRep a, KnownDualAtomRep (Dual a))
-
-  id :: forall a. Object Sym a => Sym a a
-  id = Sym (idMor @a)
-
-  (.) :: forall a b c
-      . ( Object Sym a
-        , Object Sym b
-        , Object Sym c
-        )
-     => Sym b c
-     -> Sym a b
-     -> Sym a c
-  Sym g . Sym f = Sym (composeMor @a @b @c g f)
 
 -- | Categorical swap of copy factors @C m ⊗ C n@ (irrep leg unchanged).
 swapCopyProductSector
@@ -1824,76 +1062,19 @@ swapCopyProductSector
   -> (C n ⊗ C m) ⊗ C d
 swapCopyProductSector sec = (swapMap ⊗^ id) $ sec
 
--- | Swap irrep legs on @((C m ⊗ C j₁) ⊗ C j₂)@ (copy leg fixed).
-swapIrrepTensorSector
-  :: forall m j1 j2
-   . ( KnownNat m
-     , KnownNat j1
+-- | Braid an unfused atom pair: @r ⊗ q → q ⊗ r@ (term-level 'BraidExpr').
+swapAtomPair
+  :: forall j1 j2 m n
+   . ( KnownNat j1
      , KnownNat j2
-     , KnownNat (IrrepDim j1)
-     , KnownNat (IrrepDim j2)
-     )
-  => ((C m ⊗ C (IrrepDim j1)) ⊗ C (IrrepDim j2))
-  -> ((C m ⊗ C (IrrepDim j2)) ⊗ C (IrrepDim j1))
-swapIrrepTensorSector sec =
-  (lassocMap . (id ⊗^ swapMap) . rassocMap) $ sec
-
--- | Swap both copy×irrep blocks @((C m₁ ⊗ C j₁) ⊗ (C m₂ ⊗ C j₂))@.
-swapTensorProductSector
-  :: forall m n j1 j2
-   . ( KnownNat m
-     , KnownNat n
-     , KnownNat j1
-     , KnownNat j2
-     , KnownNat (IrrepDim j1)
-     , KnownNat (IrrepDim j2)
-     )
-  => (C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2))
-  -> (C n ⊗ C (IrrepDim j2)) ⊗ (C m ⊗ C (IrrepDim j1))
-swapTensorProductSector sec = swapMap $ sec
-
---------------------------------------------------------------------------------
--- Dual (term-level)
---
--- Map primal sectors into 'DualVector' payloads matching
--- @ToVSector ('Dual e) ('DualM μ)@. CS + @√(j+1)@ identification back to
--- primal atoms is 'undualAtomAtomM' in Fuse — not here.
---------------------------------------------------------------------------------
-
--- | Dual of a leaf atom sector → @DualVector (C m ⊗ C (j+1))@.
---
--- Canonical Riesz via 'InnerSpace': linear form @w ↦ v <.> w@ (linear in @w@),
--- then 'fromLinearForm'. Not @w ↦ w <.> v@ (antilinear in @w@) and not
--- 'euclideanNorm' (that is @coerce@, only valid when @DualVector v ~ v@).
-dualAtomAtomM
-  :: forall j m
-   . ( KnownNat j
      , KnownNat m
-     , KnownNat (IrrepDim j)
-     , InnerSpace (ToVSector ('Atom j) ('AtomM m))
-     , Scalar (ToVSector ('Atom j) ('AtomM m)) ~ Complex Double
+     , KnownNat n
+     , KnownNat (IrrepDim j1)
+     , KnownNat (IrrepDim j2)
      )
-  => ToVSector ('Atom j) ('AtomM m)
-  -> ToVSector ('Dual ('Atom j)) ('DualM ('AtomM m))
-dualAtomAtomM v =
-  fromLinearForm
-    -+$> ( arr (LinearFunction ((v <.>)))
-             :: ToVSector ('Atom j) ('AtomM m) +> Complex Double
-         )
-
--- | Dual of an atom spine (@r ↦ Dual r@), driven by 'SRep'.
-dual
-  :: forall rs
-   . KnownAtomRep rs
-  => RepV rs
-  -> RepV (Dual rs)
-dual = go (symRepSing @rs)
-  where
-    go :: forall rs'. SRep rs' -> RepV rs' -> RepV (Dual rs')
-    go SRepNil RNil = RNil
-    go (SRepCons (SAtomI @j) (SMultAtom @m) rest) (RCons v rs) =
-      RCons (dualAtomAtomM @j @m v) (go rest rs)
-    go _ _ = error "dual: expected atom spine"
+  => AtomPairV j1 j2 m n
+  -> AtomPairV j2 j1 n m
+swapAtomPair sec = swapMap $ sec
 
 -- | Sector-level braid payload (@BraidIrrep@ / @BraidMult@).
 braidSector
@@ -1904,13 +1085,8 @@ braidSector
 braidSector SAtomI SMultAtom v = v
 braidSector (SAtomI @j) (SMultProd (SMultAtom @m) (SMultAtom @n)) v =
   swapCopyProductSector @m @n @(IrrepDim j) v
-braidSector (STensorI (SAtomI @j1) (SAtomI @j2)) (SMultAtom @m) v =
-  swapIrrepTensorSector @m @j1 @j2 v
-braidSector (STensorI (SAtomI @j1) (SAtomI @j2)) (SMultProd (SMultAtom @m) (SMultAtom @n)) v =
-  swapTensorProductSector @m @n @j1 @j2 v
-braidSector (SDualI SAtomI) (SMultDual SMultAtom) v = v
 braidSector _ _ _ =
-  error "braidSector: unsupported irrep/mult shape"
+  error "braidSector: unsupported multiplicity shape"
 
 -- | Braid every sector in a 'RepV' spine (driven by 'SRep'; no 'BraidSpine' class).
 braid
@@ -1928,8 +1104,7 @@ braid = go (symRepSing @rs)
 -- | Project a spine onto its trivial (@'Atom 0@) sectors.
 --
 -- Atom keep-vs-drop still needs 'ProjectAtomOrd': @CmpNat j 0@ only reduces when
--- @j@ is in an instance head. Non-atom sectors are dropped via an overlappable
--- catch-all; atom instances are overlapping.
+-- @j@ is in an instance head.
 class ProjectToSymmetric (rs :: Rep) where
   projectToSymmetric :: RepV rs -> RepV (FilterTrivial rs)
 
@@ -1994,14 +1169,6 @@ instance
   ProjectAtomOrd 'GT j μ rest
   where
   projectAtomOrd _ rs = rs
-
--- | Braid a distributed tensor rep (@'Tensor'@).
-braidTensor
-  :: forall r s
-   . KnownSymRep (Tensor r s)
-  => RepV (Tensor r s)
-  -> RepV (Braid (Tensor r s))
-braidTensor = braid
 
 --------------------------------------------------------------------------------
 -- rmove (R-matrix on fused tensor)
@@ -2076,26 +1243,16 @@ rmoveSpine = go (symRepSing @rs)
     go (SRepCons se sm rest) (RCons v rs) =
       RCons (rmoveSector @j1 @j2 se sm v) (go rest rs)
 
--- | Leaf braiding @r ⊗ s → s ⊗ r@ on a fused pair (@fuse ∘ braid ≅ rmove ∘ fuse@).
+-- | Leaf braiding @r ⊗ s → s ⊗ r@ on a fused pair
+-- (@fuseExpr ∘ braidExpr ≅ rmove ∘ fuseExpr@).
 rmove
   :: forall j1 j2 r s
    . ( KnownNat j1
      , KnownNat j2
-     , KnownSymRep (Fuse (Tensor r s))
-     , RmoveTarget j1 j2 (Fuse (Tensor r s)) ~ Fuse (Braid (Tensor r s))
+     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum s)))
+     , RmoveTarget j1 j2 (FuseExpr ('RTensor ('RSum r) ('RSum s)))
+         ~ FuseExpr (BraidExpr ('RTensor ('RSum r) ('RSum s)))
      )
-  => RepV (Fuse (Tensor r s))
-  -> RepV (Fuse (Braid (Tensor r s)))
-rmove = rmoveSpine @j1 @j2 @(Fuse (Tensor r s))
-
--- | Same as 'rmove' on a distributed tensor rep (@'Tensor'@).
-rmoveTensor
-  :: forall j1 j2 r s
-   . ( KnownNat j1
-     , KnownNat j2
-     , KnownSymRep (Fuse (Tensor r s))
-     , RmoveTarget j1 j2 (Fuse (Tensor r s)) ~ Fuse (Braid (Tensor r s))
-     )
-  => RepV (Fuse (Tensor r s))
-  -> RepV (Fuse (Braid (Tensor r s)))
-rmoveTensor = rmove @j1 @j2 @r @s
+  => RepV (FuseExpr ('RTensor ('RSum r) ('RSum s)))
+  -> RepV (FuseExpr (BraidExpr ('RTensor ('RSum r) ('RSum s))))
+rmove = rmoveSpine @j1 @j2 @(FuseExpr ('RTensor ('RSum r) ('RSum s)))
