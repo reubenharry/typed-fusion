@@ -21,7 +21,9 @@
 -- ('rdual'), paired by 'cupUnfused' / 'cupRdual' (primal⊗dual; unfused closed
 -- in 'ToV', including @'RSum Unit@), with morphism spaces as 'MorExpr' / 'rmor'.
 -- Unfused composition: 'composeMor' (@unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)@;
--- assoc = monoidal α). Fused cups/caps: 'cupFused' / 'capFused'.
+-- assoc = monoidal α). Fused composition: 'composeMorFused' on 'MorExprFused'
+-- (@unitor ∘ cup ∘ fmove ∘ (f ⊗ g)@; steps stubbed). Fused cups/caps:
+-- 'cupFused' / 'capFused'.
 --
 -- Tensor CG fuse uses typed 'Symmetry.CG.SU2.fuseCGChannel' per channel; see
 -- 'Experiments.Symbolic.Reference' for flat-buffer oracles.

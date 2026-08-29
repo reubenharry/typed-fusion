@@ -114,6 +114,12 @@ library
         Experiments.Categorical.Monoidal
         Experiments.Categorical.Braided
         Experiments.Fusion.Theory
+        Experiments.Fusion.Obj
+        Experiments.Fusion.Hom
+        Experiments.Fusion.Data
+        Experiments.Fusion.Ops
+        Experiments.Fusion.Unbounded
+        Experiments.Ising
         Experiments.SU2
         Experiments.Experiment
         Experiments.Experiment2

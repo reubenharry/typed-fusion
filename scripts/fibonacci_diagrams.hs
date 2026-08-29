@@ -17,8 +17,9 @@ import Diagrams.Backend.SVG (B, renderSVG)
 import Diagrams.Prelude hiding (arc)
 import Experiments.Fibonacci
   ( Fib (..)
-  , FibObj (..)
   , HomBlocks (..)
+  , Obj (..)
+  , Simple (..)
   , cap
   , cup
   , eqFib
@@ -173,17 +174,17 @@ runSmoke = do
     "F"
     ( eqFib
         (eval exFMove)
-        (associate :: Fib (Tensor (Tensor 'Tau 'Tau) 'Tau) (Tensor 'Tau (Tensor 'Tau 'Tau)))
+        (associate :: Fib (Tensor (Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Atom 'Tau)) (Tensor ('Atom 'Tau) (Tensor ('Atom 'Tau) ('Atom 'Tau))))
     )
   check
     "Finv"
     ( eqFib
         (eval exFMoveInv)
-        (disassociate :: Fib (Tensor 'Tau (Tensor 'Tau 'Tau)) (Tensor (Tensor 'Tau 'Tau) 'Tau))
+        (disassociate :: Fib (Tensor ('Atom 'Tau) (Tensor ('Atom 'Tau) ('Atom 'Tau))) (Tensor (Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Atom 'Tau)))
     )
   check
     "R"
-    (eqFib (eval exRMove) (braid :: Fib (Tensor 'Tau 'Tau) (Tensor 'Tau 'Tau)))
+    (eqFib (eval exRMove) (braid :: Fib (Tensor ('Atom 'Tau) ('Atom 'Tau)) (Tensor ('Atom 'Tau) ('Atom 'Tau))))
   check "snake = phi on 1-block" snakePhiOk
   yankResult <- try (evaluate (eqFib (eval exYank) (eval exYank))) :: IO (Either SomeException Bool)
   case yankResult of

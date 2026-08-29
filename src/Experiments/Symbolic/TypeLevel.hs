@@ -50,6 +50,7 @@ module Experiments.Symbolic.TypeLevel
   , FuseAtomSpines
   , DualExpr
   , MorExpr
+  , MorExprFused
   , CupUnfusedExpr
   , CapUnfusedExpr
   , CupFusedRep
@@ -189,6 +190,13 @@ type family DualExpr (e :: RepExpr) :: RepExpr where
 type MorExpr (r :: Rep) (q :: Rep) =
   'RTensor ('RDual ('RSum r)) ('RSum q)
 
+-- | Fused Hom @r → q@: @'RSum@ of @FuseExpr (MorExpr r q)@.
+--
+-- For SU(2) atom spines, dual≅primal at the type level, so this is the same
+-- coalesced CG spine as @FuseExpr ('RTensor ('RSum r) ('RSum q))@.
+type MorExprFused (r :: Rep) (q :: Rep) =
+  'RSum (FuseExpr (MorExpr r q))
+
 -- Compact closed cups / caps (primal⊗dual for eval/coev; 'MorExpr' stays Dual-left)
 --
 -- Unfused: closed in 'ToV' (@RepExpr@ spaces, including @'RSum Unit@).
@@ -263,9 +271,12 @@ type family FuseAtomSpines (r :: Rep) (q :: Rep) :: Rep where
       (FuseAtomSpines rest q)
 
 -- | Fuse a 'RepExpr'. @'RTensor@ args must be atom @'RSum@ (non-recursive).
+-- Dual-left Hom (@MorExpr@) fuses like primal⊗primal (SU(2) dual≅primal).
 type family FuseExpr (e :: RepExpr) :: Rep where
   FuseExpr ('RSum rs) = Fuse rs
   FuseExpr ('RTensor ('RSum r) ('RSum q)) =
+    Coalesce (FuseAtomSpines r q)
+  FuseExpr ('RTensor ('RDual ('RSum r)) ('RSum q)) =
     Coalesce (FuseAtomSpines r q)
 
 --------------------------------------------------------------------------------

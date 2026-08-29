@@ -26,8 +26,9 @@
 -- ('rtensor' / 'rdual' / 'rmor'), reduced by 'fuseExpr' or paired by
 -- 'cupUnfused' / 'cupRdual' (object @r ⊗ r*@); fused 'cupFused' / 'capFused'
 -- on singlets after dual≅primal. Unfused Hom composition: 'composeMor'
--- (monoidal assoc + cup⊗id + unitor). 'repVToV' / 'vToRepV' round-trip a
--- 'KnownSymRep' spine through 'ToVSpine'.
+-- (monoidal assoc + cup⊗id + unitor); fused Hom: 'composeMorFused' on
+-- 'MorExprFused' (tensor + F-move + cup + unitor; steps stubbed).
+-- 'repVToV' / 'vToRepV' round-trip a 'KnownSymRep' spine through 'ToVSpine'.
 module Experiments.Symbolic.Core where
 
 import Data.Complex (Complex ((:+)))
@@ -1149,6 +1150,18 @@ unitLunit =
     . swapMap
     . (fuseBond @1 @1 ⊗^ id)
 
+-- | Right unitor for the Unit sector packaging @'v ⊗ (C 1 ⊗ C 1) → v@.
+unitRunit
+  :: forall v
+   . ( LinearSpace v
+     , Scalar v ~ Complex Double
+     , TensorSpace v
+     )
+  => (v ⊗ (C 1 ⊗ C 1)) +> v
+unitRunit =
+  runit
+    . (id ⊗^ fuseBond @1 @1)
+
 -- | Step 3: @(cup ⊗ id)@ on the middle @b ⊗ Dual b@.
 cupTensorIdCompose
   :: forall a b c
@@ -1241,6 +1254,167 @@ composeMor f g =
             (tensorCompose @a @b @c f g)
         )
     )
+
+--------------------------------------------------------------------------------
+-- Fused composition (Hom spaces already fused)
+--
+--   composeMorFused f g =
+--     unitor ∘ (cup ⊗ id) ∘ fmove ∘ (f ⊗ g)
+--
+-- Inputs/outputs live in 'MorExprFused' (= @'RSum (FuseExpr (MorExpr · ·))@).
+-- 'tensorComposeFused', 'cupComposeFused', 'unitorComposeFused' filled;
+-- 'fmoveComposeFused' still stubbed.
+--------------------------------------------------------------------------------
+
+-- | Fused middle object for the cup: @Fuse(b ⊗ b)@ (dual≅primal).
+type FuseMiddleExpr (b :: Rep) =
+  'RSum (FuseExpr ('RTensor ('RSum b) ('RSum b)))
+
+-- | Step 1: @f ⊗ g@ in fused Hom spaces.
+tensorComposeFused
+  :: forall a b c
+   . ( TensorSpace (ToV (MorExprFused a b))
+     , TensorSpace (ToV (MorExprFused b c))
+     , Scalar (ToV (MorExprFused a b)) ~ Complex Double
+     , Scalar (ToV (MorExprFused b c)) ~ Complex Double
+     )
+  => ToV (MorExprFused a b)
+  -> ToV (MorExprFused b c)
+  -> ToV ('RTensor (MorExprFused a b) (MorExprFused b c))
+tensorComposeFused = (⊗)
+
+-- | Step 2: SU(2) F-move / recoupling to cup-ready form
+-- @Fuse(a*⊗b) ⊗ Fuse(b*⊗c) → Fuse(a*⊗c) ⊗ Fuse(b⊗b)@.
+fmoveComposeFused
+  :: forall a b c
+   . ()
+  => ToV ('RTensor (MorExprFused a b) (MorExprFused b c))
+  -> ToV ('RTensor (MorExprFused a c) (FuseMiddleExpr b))
+fmoveComposeFused = undefined
+
+-- | Cup the already-fused middle @Fuse(b⊗b) → Unit@ (project singlets, then
+-- 'cupFused').
+cupMiddleFused
+  :: forall b
+   . ( KnownAtomRep b
+     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum b) ('RSum b)))
+     , CupTrivial (CupFusedRep b)
+     , KnownSymRep (FuseExpr ('RTensor ('RSum b) ('RSum b)))
+     , KnownSymRep (CupFusedRep b)
+     )
+  => ToV (FuseMiddleExpr b)
+  -> ToV ('RSum Unit)
+cupMiddleFused mid =
+  cupFusedOnSpine @b $
+    repVToV @(CupFusedRep b) $
+      projectToSymmetric $
+        vToRepV @(FuseExpr ('RTensor ('RSum b) ('RSum b))) mid
+
+-- | Step 3: @id ⊗ cup@ on @Fuse(a*⊗c) ⊗ Fuse(b⊗b)@.
+cupComposeFused
+  :: forall a b c
+   . ( KnownAtomRep b
+     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum b) ('RSum b)))
+     , CupTrivial (CupFusedRep b)
+     , KnownSymRep (FuseExpr ('RTensor ('RSum b) ('RSum b)))
+     , KnownSymRep (CupFusedRep b)
+     , LinearSpace (ToV (MorExprFused a c))
+     , LinearSpace (ToV (FuseMiddleExpr b))
+     , Scalar (ToV (MorExprFused a c)) ~ Complex Double
+     , Scalar (ToV (FuseMiddleExpr b)) ~ Complex Double
+     , TensorSpace (ToV (MorExprFused a c))
+     , TensorSpace (ToV (FuseMiddleExpr b))
+     , TensorSpace (ToV ('RSum Unit))
+     )
+  => ToV ('RTensor (MorExprFused a c) (FuseMiddleExpr b))
+  -> ToV ('RTensor (MorExprFused a c) ('RSum Unit))
+cupComposeFused t =
+  (id ⊗^ arr (LinearFunction (cupMiddleFused @b))) $ t
+
+-- | Step 4: absorb @Unit@ (@Fuse(a*⊗c) ⊗ Unit → Fuse(a*⊗c)@).
+unitorComposeFused
+  :: forall a c
+   . ( LinearSpace (ToV (MorExprFused a c))
+     , Scalar (ToV (MorExprFused a c)) ~ Complex Double
+     , TensorSpace (ToV (MorExprFused a c))
+     )
+  => ToV ('RTensor (MorExprFused a c) ('RSum Unit))
+  -> ToV (MorExprFused a c)
+unitorComposeFused t =
+  unitRunit @(ToV (MorExprFused a c)) $ t
+
+-- | Fused Hom composition on 'MorExprFused':
+-- @unitor ∘ (cup ⊗ id) ∘ fmove ∘ (f ⊗ g)@.
+composeMorFused
+  :: forall a b c
+   . ( TensorSpace (ToV (MorExprFused a b))
+     , TensorSpace (ToV (MorExprFused b c))
+     , Scalar (ToV (MorExprFused a b)) ~ Complex Double
+     , Scalar (ToV (MorExprFused b c)) ~ Complex Double
+     , KnownAtomRep b
+     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum b) ('RSum b)))
+     , CupTrivial (CupFusedRep b)
+     , KnownSymRep (FuseExpr ('RTensor ('RSum b) ('RSum b)))
+     , KnownSymRep (CupFusedRep b)
+     , LinearSpace (ToV (MorExprFused a c))
+     , LinearSpace (ToV (FuseMiddleExpr b))
+     , Scalar (ToV (MorExprFused a c)) ~ Complex Double
+     , Scalar (ToV (FuseMiddleExpr b)) ~ Complex Double
+     , TensorSpace (ToV (MorExprFused a c))
+     , TensorSpace (ToV (FuseMiddleExpr b))
+     , TensorSpace (ToV ('RSum Unit))
+     )
+  => ToV (MorExprFused a b)
+  -> ToV (MorExprFused b c)
+  -> ToV (MorExprFused a c)
+composeMorFused f g =
+  unitorComposeFused @a @c
+    ( cupComposeFused @a @b @c
+        ( fmoveComposeFused @a @b @c
+            (tensorComposeFused @a @b @c f g)
+        )
+    )
+
+-- | Middle step retained from the old fused-cup-on-unfused path.
+fuseMiddleOnCup
+  :: forall r
+   . ( KnownAtomRep r
+     , FuseAtomSpinesTerm r r
+     , KnownSymRep (FuseAtomSpines r r)
+     , CoalesceSpine (FuseAtomSpines r r)
+     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+     , KnownSymRep (CupFusedRep r)
+     , LinearSpace (ToVSpine r)
+     , LinearSpace (DualVector (ToVSpine r))
+     , LinearSpace (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , Scalar (ToVSpine r) ~ Complex Double
+     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
+     , Scalar (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+         ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine r))
+     )
+  => ToV (CupUnfusedExpr r)
+  -> ToVSpine (CupFusedRep r)
+fuseMiddleOnCup t =
+  let undualMap =
+        arr (LinearFunction (undualSpine @r))
+          :: DualVector (ToVSpine r) +> ToVSpine r
+      ηPrimal = (id ⊗^ undualMap) $ t
+   in repVToV @(CupFusedRep r) $
+        projectToSymmetric (fuseExprTensor @r ηPrimal)
+
+-- | Fused cup on a projected singlet spine → @Unit@.
+cupFusedOnSpine
+  :: forall r
+   . ( KnownAtomRep r
+     , CupTrivial (CupFusedRep r)
+     , KnownSymRep (CupFusedRep r)
+     )
+  => ToVSpine (CupFusedRep r)
+  -> ToV ('RSum Unit)
+cupFusedOnSpine s =
+  repVToV @Unit (cupFused @r (vToRepV @(CupFusedRep r) s))
 
 --------------------------------------------------------------------------------
 -- Braid (copy-axis swap on each sector)

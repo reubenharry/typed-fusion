@@ -7,7 +7,8 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
--- Covers 'RepExpr' / 'ToV' / 'fuseExpr' / 'rtensor' / 'cupRdual' / 'composeMor'.
+-- Covers 'RepExpr' / 'ToV' / 'fuseExpr' / 'rtensor' / 'cupRdual' / 'composeMor' /
+-- 'MorExprFused' (fused compose steps stubbed).
 module Experiments.SymbolicExamples where
 
 import Control.Arrow.Constrained (($), arr)
@@ -273,6 +274,44 @@ cupCapFusedSnakeTrivialOk =
           (capFused @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1))
    in abs (unitAmp u - 1) < 1e-9
 
+-- | 'cupMiddleFused' on @Fuse(½⊗½)@ agrees with 'cupFused' ∘ project.
+cupMiddleFusedSpinHalfOk :: Bool
+cupMiddleFusedSpinHalfOk =
+  let v :: ToVSector ('Atom 1) ('AtomM 1)
+      v = unsafeFromArray (VS.fromList [1, 0])
+      r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      mid =
+        repVToV @(FuseExpr ('RTensor ('RSum '[ '( 'Atom 1, 'AtomM 1)]) ('RSum '[ '( 'Atom 1, 'AtomM 1)])))
+          ( fuseExpr @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)]
+              r
+              (vToRepV @'[ '( 'Atom 1, 'AtomM 1)] (undualSpine @'[ '( 'Atom 1, 'AtomM 1)] (rdual r)))
+          )
+      uMid = cupMiddleFused @'[ '( 'Atom 1, 'AtomM 1)] mid
+      RConsAtomAtomM uFus RNil =
+        cupFused @'[ '( 'Atom 1, 'AtomM 1)]
+          ( projectToSymmetric
+              ( fuseExpr @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)]
+                  r
+                  (vToRepV @'[ '( 'Atom 1, 'AtomM 1)] (undualSpine @'[ '( 'Atom 1, 'AtomM 1)] (rdual r)))
+              )
+          )
+   in toVApproxEq (toArray uMid) (toArray (unitToVFromScalar (unitAmp uFus :+ 0)))
+
+-- | 'unitorComposeFused' absorbs @Unit@ on the right (@m ⊗ 1 ≅ m@).
+unitorComposeFusedTrivialOk :: Bool
+unitorComposeFusedTrivialOk =
+  let m =
+        (konst 1 ⊗ konst 1) ⊗ konst (5 :+ 0)
+          :: ToV
+               ( MorExprFused
+                   '[ '( 'Atom 0, 'AtomM 1)]
+                   '[ '( 'Atom 0, 'AtomM 1)]
+               )
+      u = unitToVFromScalar 1
+   in toVApproxEq
+        (toArray (unitorComposeFused @'[ '( 'Atom 0, 'AtomM 1)] @'[ '( 'Atom 0, 'AtomM 1)] (m ⊗ u)))
+        (toArray m)
+
 -- | @(cup ⊗ id)@ then unitor on a packed assoc-shape state: @cup(η_b) = dim b@.
 cupTensorIdUnitorOk :: Bool
 cupTensorIdUnitorOk =
@@ -503,6 +542,8 @@ symbolicExamplesOk =
     , cupFusedTrivialOk
     , cupFusedSpinHalfCoherentOk
     , cupCapFusedSnakeTrivialOk
+    , cupMiddleFusedSpinHalfOk
+    , unitorComposeFusedTrivialOk
     , cupTensorIdUnitorOk
     , composeMorIdIdOk
     , composeMorLeftUnitOk
@@ -562,6 +603,22 @@ type SmokeMor =
     )
     ( DualVector (C 2 ⊗ C 2)
       ⊗ (C 3 ⊗ C 3)
+    )
+
+-- | @MorExprFused@: Dual-left Hom fuses like primal⊗primal (half → half).
+type SmokeMorFused =
+  AssertEqRep
+    ( FuseExpr
+        ( MorExpr
+            '[ '( 'Atom 1, 'AtomM 1)]
+            '[ '( 'Atom 1, 'AtomM 1)]
+        )
+    )
+    ( FuseExpr
+        ( 'RTensor
+            ('RSum '[ '( 'Atom 1, 'AtomM 1)])
+            ('RSum '[ '( 'Atom 1, 'AtomM 1)])
+        )
     )
 
 -- | Compose step-2 packing: @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@.
@@ -760,6 +817,9 @@ smokeBraid = Proxy
 
 smokeMor :: Proxy SmokeMor
 smokeMor = Proxy
+
+smokeMorFused :: Proxy SmokeMorFused
+smokeMorFused = Proxy
 
 smokeComposeAssoc :: Proxy SmokeComposeAssoc
 smokeComposeAssoc = Proxy

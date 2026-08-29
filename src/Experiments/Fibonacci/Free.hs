@@ -40,9 +40,9 @@ import Experiments.Categorical.Braided (Braided (..))
 import Experiments.Categorical.Monoidal (Monoidal (..))
 import Experiments.Fibonacci
   ( Fib
-  , FibObj (..)
-  , OnePlusTau
-  , TauTau
+  , FibObj
+  , Obj (..)
+  , Simple (..)
   , cap
   , cup
   , fuse
@@ -76,10 +76,10 @@ data FreeFib :: FibObj -> FibObj -> Type where
     -> FreeFib c d
     -> FreeFib (Tensor a c) (Tensor b d)
   -- Generators
-  CupF :: FreeFib 'One TauTau
-  CapF :: FreeFib TauTau 'One
-  FuseF :: FreeFib TauTau OnePlusTau
-  SplitF :: FreeFib OnePlusTau TauTau
+  CupF :: FreeFib ('Atom 'One) ('Tensor ('Atom 'Tau) ('Atom 'Tau))
+  CapF :: FreeFib ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Atom 'One)
+  FuseF :: FreeFib ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Sum ('Atom 'One) ('Atom 'Tau))
+  SplitF :: FreeFib ('Sum ('Atom 'One) ('Atom 'Tau)) ('Tensor ('Atom 'Tau) ('Atom 'Tau))
   AssocF
     :: ( Object Fib a
        , Object Fib b
@@ -108,17 +108,17 @@ data FreeFib :: FibObj -> FibObj -> Type where
        )
     => FreeFib (Tensor a b) (Tensor b a)
   IdlF
-    :: (Object Fib a, Object Fib 'One, Object Fib (Tensor 'One a))
-    => FreeFib (Tensor 'One a) a
+    :: (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor ('Atom 'One) a))
+    => FreeFib (Tensor ('Atom 'One) a) a
   IdrF
-    :: (Object Fib a, Object Fib 'One, Object Fib (Tensor a 'One))
-    => FreeFib (Tensor a 'One) a
+    :: (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor a ('Atom 'One)))
+    => FreeFib (Tensor a ('Atom 'One)) a
   CoidlF
-    :: (Object Fib a, Object Fib 'One, Object Fib (Tensor 'One a))
-    => FreeFib a (Tensor 'One a)
+    :: (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor ('Atom 'One) a))
+    => FreeFib a (Tensor ('Atom 'One) a)
   CoidrF
-    :: (Object Fib a, Object Fib 'One, Object Fib (Tensor a 'One))
-    => FreeFib a (Tensor a 'One)
+    :: (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor a ('Atom 'One)))
+    => FreeFib a (Tensor a ('Atom 'One))
   -- | Opaque leaf: concrete @Fib@ drawn as a labeled box.
   BoxF :: String -> Fib a b -> FreeFib a b
 
@@ -208,7 +208,7 @@ instance Associative FreeFib Tensor where
   disassociate = DisassocF
 
 instance Monoidal FreeFib Tensor where
-  type Id FreeFib Tensor = 'One
+  type Id FreeFib Tensor = ('Atom 'One)
   idl = IdlF
   idr = IdrF
   coidl = CoidlF
@@ -221,38 +221,38 @@ instance Braided FreeFib Tensor where
 -- Gallery (shared by diagrams exe + computation smoke checks)
 --------------------------------------------------------------------------------
 
-exCup :: FreeFib 'One TauTau
+exCup :: FreeFib ('Atom 'One) ('Tensor ('Atom 'Tau) ('Atom 'Tau))
 exCup = CupF
 
-exCap :: FreeFib TauTau 'One
+exCap :: FreeFib ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Atom 'One)
 exCap = CapF
 
 -- | @cap ∘ cup : 𝟙 → 𝟙@ (snake scalar @φ@ under @eval@).
-exSnake :: FreeFib 'One 'One
+exSnake :: FreeFib ('Atom 'One) ('Atom 'One)
 exSnake = CapF . CupF
 
-exFuse :: FreeFib TauTau OnePlusTau
+exFuse :: FreeFib ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Sum ('Atom 'One) ('Atom 'Tau))
 exFuse = FuseF
 
-exSplit :: FreeFib OnePlusTau TauTau
+exSplit :: FreeFib ('Sum ('Atom 'One) ('Atom 'Tau)) ('Tensor ('Atom 'Tau) ('Atom 'Tau))
 exSplit = SplitF
 
 -- | Associator @(τ⊗τ)⊗τ → τ⊗(τ⊗τ)@.
-exFMove :: FreeFib (Tensor TauTau 'Tau) (Tensor 'Tau TauTau)
+exFMove :: FreeFib (Tensor ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Atom 'Tau)) (Tensor ('Atom 'Tau) ('Tensor ('Atom 'Tau) ('Atom 'Tau)))
 exFMove = AssocF
 
-exFMoveInv :: FreeFib (Tensor 'Tau TauTau) (Tensor TauTau 'Tau)
+exFMoveInv :: FreeFib (Tensor ('Atom 'Tau) ('Tensor ('Atom 'Tau) ('Atom 'Tau))) (Tensor ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Atom 'Tau))
 exFMoveInv = DisassocF
 
 -- | Braiding @τ⊗τ → τ⊗τ@.
-exRMove :: FreeFib TauTau TauTau
+exRMove :: FreeFib ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Tensor ('Atom 'Tau) ('Atom 'Tau))
 exRMove = BraidF
 
 -- | Yank @τ → τ@: @ρ ∘ (id ⊗ cap) ∘ F ∘ (cup ⊗ id) ∘ λ⁻¹@.
-exYank :: FreeFib 'Tau 'Tau
+exYank :: FreeFib ('Atom 'Tau) ('Atom 'Tau)
 exYank =
   IdrF
-    . TensorF (id :: FreeFib 'Tau 'Tau) CapF
+    . TensorF (id :: FreeFib ('Atom 'Tau) ('Atom 'Tau)) CapF
     . AssocF
-    . TensorF CupF (id :: FreeFib 'Tau 'Tau)
+    . TensorF CupF (id :: FreeFib ('Atom 'Tau) ('Atom 'Tau))
     . CoidlF
