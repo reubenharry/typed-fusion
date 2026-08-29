@@ -1,14 +1,17 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
--- Covers 'RepExpr' / 'ToV' / 'fuseExpr' / 'rtensor' / 'cupRdual'.
+-- Covers 'RepExpr' / 'ToV' / 'fuseExpr' / 'rtensor' / 'cupRdual' / 'composeMor'.
 module Experiments.SymbolicExamples where
 
+import Control.Arrow.Constrained (($), arr)
+import Control.Category.Constrained.Prelude (id)
 import Data.Complex (Complex ((:+)), magnitude, realPart)
 import Data.Kind (Type)
 import Data.Maybe (fromJust)
@@ -26,15 +29,26 @@ import Experiments.Symbolic.Reference
   , repVFlatProdToAtomM
   , sectorFlatDim
   )
-import Math.LinearMap.Category (type (⊗), (⊗), DualVector)
+import Math.LinearMap.Category
+  ( DualVector
+  , pattern LinearFunction
+  , type (+>)
+  , type (⊗)
+  , (⊗)
+  )
+import Math.LinearMap.Category.Class (asTensor, fromTensor)
+import Math.LinearMap.Coercion ((-+$=>))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
-import Numeric.LinearAlgebra.Static (C)
+import Numeric.LinearAlgebra.Static (C, konst)
 import Symmetry.SU2
   ( SU2Element
   , su2FromQuaternion
   , su2Ident
   )
+import TensorNetwork.Categorical ((⊗^))
 import qualified Data.Vector.Storable as VS
+
+import Prelude hiding (id, ($))
 
 -- | Hexagon coherence via Reference CG fuse (see 'Experiments.Symbolic.Reference').
 coherenceRmoveLeafOk :: Bool
@@ -270,7 +284,6 @@ cupTensorIdUnitorOk =
       out =
         unitorCompose
           @'[ '( 'Atom 0, 'AtomM 1)]
-          @'[ '( 'Atom 1, 'AtomM 1)]
           @'[ '( 'Atom 0, 'AtomM 1)]
           ( cupTensorIdCompose
               @'[ '( 'Atom 0, 'AtomM 1)]
@@ -313,6 +326,57 @@ composeMorRightUnitOk =
    in toVApproxEq
         (toArray (composeMor @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] f i))
         (toArray f)
+
+-- | Unfused 'composeMor' matches ordinary map composition.
+--
+-- Spines: spin-½ (@C 1 ⊗ C 2@) → spin-½ → spin-1 (@C 1 ⊗ C 3@), with @id@ on
+-- the trivial copy leg. Hom elements are @asTensor@ of the linear maps;
+-- @composeMor f g@ is compared to @g ∘ f@ on the standard basis.
+composeMorMatchesMatMulOk :: Bool
+composeMorMatchesMatMulOk =
+  let -- Irrep-leg maps (column action on coordinate lists).
+      fLeg :: C 2 +> C 2
+      fLeg =
+        arr . LinearFunction $ \v ->
+          let [a, b] = VS.toList (toArray v)
+           in unsafeFromArray (VS.fromList [a + 2 * b, 3 * a + 4 * b])
+      gLeg :: C 2 +> C 3
+      gLeg =
+        arr . LinearFunction $ \v ->
+          let [a, b] = VS.toList (toArray v)
+           in unsafeFromArray (VS.fromList [a, b, a + b])
+      uf :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 2)
+      uf = id ⊗^ fLeg
+      ug :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
+      ug = id ⊗^ gLeg
+      fHom =
+        asTensor -+$=> uf
+          :: ToV
+               ( MorExpr
+                   '[ '( 'Atom 1, 'AtomM 1)]
+                   '[ '( 'Atom 1, 'AtomM 1)]
+               )
+      gHom =
+        asTensor -+$=> ug
+          :: ToV
+               ( MorExpr
+                   '[ '( 'Atom 1, 'AtomM 1)]
+                   '[ '( 'Atom 2, 'AtomM 1)]
+               )
+      hHom =
+        composeMor
+          @'[ '( 'Atom 1, 'AtomM 1)]
+          @'[ '( 'Atom 1, 'AtomM 1)]
+          @'[ '( 'Atom 2, 'AtomM 1)]
+          fHom
+          gHom
+      h = fromTensor -+$=> hHom :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
+      e0 = unsafeFromArray (VS.fromList [1, 0]) :: C 2
+      e1 = unsafeFromArray (VS.fromList [0, 1]) :: C 2
+      xs = [(konst 1 ⊗ e0), (konst 1 ⊗ e1)]
+      agree x =
+        toVApproxEq (toArray (h $ x)) (toArray (ug $ (uf $ x)))
+   in all agree xs
 
 -- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ @√(j+1) · CS@ (pivotal undual).
 undualDualRoundtripOk :: Bool
@@ -443,6 +507,7 @@ symbolicExamplesOk =
     , composeMorIdIdOk
     , composeMorLeftUnitOk
     , composeMorRightUnitOk
+    , composeMorMatchesMatMulOk
     , undualDualRoundtripOk
     , repVToVRoundTripOk
     , coalesceMergeFlatDimOk
@@ -503,10 +568,12 @@ type SmokeMor =
 type SmokeComposeAssoc =
   AssertEqType
     ( ToV
-        ( ComposeAssocExpr
-            '[ '( 'Atom 0, 'AtomM 1)]
-            '[ '( 'Atom 1, 'AtomM 1)]
-            '[ '( 'Atom 0, 'AtomM 1)]
+        ( 'RTensor
+            ('RDual ('RSum '[ '( 'Atom 0, 'AtomM 1)]))
+            ( 'RTensor
+                (CupUnfusedExpr '[ '( 'Atom 1, 'AtomM 1)])
+                ('RSum '[ '( 'Atom 0, 'AtomM 1)])
+            )
         )
     )
     ( DualVector (C 1 ⊗ C 1)

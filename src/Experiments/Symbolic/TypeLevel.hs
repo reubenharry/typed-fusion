@@ -54,9 +54,6 @@ module Experiments.Symbolic.TypeLevel
   , CapUnfusedExpr
   , CupFusedRep
   , CapFusedRep
-  , ComposeTensorExpr
-  , ComposeAssocExpr
-  , ComposeCuppedExpr
     -- * Fusion
   , AtomsFromCG
   , FuseIrrep
@@ -214,29 +211,6 @@ type CupFusedRep (r :: Rep) =
 
 -- | Fused cap codomain: same singlet spine as 'CupFusedRep'.
 type CapFusedRep (r :: Rep) = CupFusedRep r
-
---------------------------------------------------------------------------------
--- Unfused composition stages (@compose = unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)@)
---
--- Hom packing is Dual-left ('MorExpr'). Cup on the middle uses primal⊗dual
--- ('CupUnfusedExpr'); 'assocCompose' is monoidal @α@ (rassoc then id⊗lassoc).
---------------------------------------------------------------------------------
-
--- | Step 1: @f ⊗ g@ with @f ∈ Mor a b@, @g ∈ Mor b c@.
-type ComposeTensorExpr (a :: Rep) (b :: Rep) (c :: Rep) =
-  'RTensor (MorExpr a b) (MorExpr b c)
-
--- | Step 2: @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@ — middle ready for 'cupUnfused'.
-type ComposeAssocExpr (a :: Rep) (b :: Rep) (c :: Rep) =
-  'RTensor
-    ('RDual ('RSum a))
-    ('RTensor (CupUnfusedExpr b) ('RSum c))
-
--- | Step 3: @Dual a ⊗ (Unit ⊗ c)@ after @(cup ⊗ id)@ on the middle.
-type ComposeCuppedExpr (a :: Rep) (b :: Rep) (c :: Rep) =
-  'RTensor
-    ('RDual ('RSum a))
-    ('RTensor ('RSum Unit) ('RSum c))
 
 --------------------------------------------------------------------------------
 -- Fusion: CG on atom pairs, then coalesced rep

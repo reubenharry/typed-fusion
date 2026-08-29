@@ -1092,7 +1092,7 @@ tensorCompose
      )
   => ToV (MorExpr a b)
   -> ToV (MorExpr b c)
-  -> ToV (ComposeTensorExpr a b c)
+  -> ToV ('RTensor (MorExpr a b) (MorExpr b c))
 tensorCompose = (⊗)
 
 -- | Step 2: reassociate to @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@ (cup-ready middle).
@@ -1119,8 +1119,12 @@ assocCompose
      , TensorSpace (DualVector (ToVSpine b))
      , TensorSpace (ToVSpine c)
      )
-  => ToV (ComposeTensorExpr a b c)
-  -> ToV (ComposeAssocExpr a b c)
+  => ToV ('RTensor (MorExpr a b) (MorExpr b c))
+  -> ToV
+       ( 'RTensor
+           ('RDual ('RSum a))
+           ('RTensor (CupUnfusedExpr b) ('RSum c))
+       )
 assocCompose t =
   (id ⊗^ lassocMap @(ToVSpine b) @(DualVector (ToVSpine b)) @(ToVSpine c))
     $ ( rassocMap
@@ -1164,8 +1168,16 @@ cupTensorIdCompose
      , TensorSpace (ToV (CupUnfusedExpr b))
      , TensorSpace (ToV ('RSum Unit))
      )
-  => ToV (ComposeAssocExpr a b c)
-  -> ToV (ComposeCuppedExpr a b c)
+  => ToV
+       ( 'RTensor
+           ('RDual ('RSum a))
+           ('RTensor (CupUnfusedExpr b) ('RSum c))
+       )
+  -> ToV
+       ( 'RTensor
+           ('RDual ('RSum a))
+           ('RTensor ('RSum Unit) ('RSum c))
+       )
 cupTensorIdCompose t =
   ( id
       ⊗^ ( arr (LinearFunction (cupUnfused @b))
@@ -1176,7 +1188,7 @@ cupTensorIdCompose t =
 
 -- | Step 4: left unitor on the right factor @Unit ⊗ c → c@.
 unitorCompose
-  :: forall a b c
+  :: forall a c
    . ( LinearSpace (DualVector (ToVSpine a))
      , LinearSpace (ToVSpine c)
      , Scalar (DualVector (ToVSpine a)) ~ Complex Double
@@ -1184,7 +1196,11 @@ unitorCompose
      , TensorSpace (DualVector (ToVSpine a))
      , TensorSpace (ToVSpine c)
      )
-  => ToV (ComposeCuppedExpr a b c)
+  => ToV
+       ( 'RTensor
+           ('RDual ('RSum a))
+           ('RTensor ('RSum Unit) ('RSum c))
+       )
   -> ToV (MorExpr a c)
 unitorCompose t =
   (id ⊗^ unitLunit @(ToVSpine c)) $ t
@@ -1219,7 +1235,7 @@ composeMor
   -> ToV (MorExpr b c)
   -> ToV (MorExpr a c)
 composeMor f g =
-  unitorCompose @a @b @c
+  unitorCompose @a @c
     ( cupTensorIdCompose @a @b @c
         ( assocCompose @a @b @c
             (tensorCompose @a @b @c f g)
