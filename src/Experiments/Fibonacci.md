@@ -1,8 +1,8 @@
 # Fibonacci fusion category — mathematical specification
 
 This note states the **mathematics** we want `Experiments.Fibonacci` to capture.
-Implementation choices (singletons, `C n` packing, `KnownFib`, type families)
-are listed only to mark them as *not* part of the math.
+Implementation choices (type families, `HomBlocks` packing) are listed only to
+mark them as *not* part of the math.
 
 The goal is a faithful, scalable encoding of a (unitary) fusion category,
 specialized first to Fibonacci; the same skeleton should later host Ising, etc.
@@ -236,18 +236,21 @@ For four simples (here only $\tau$ nontrivial), the associator in a fixed fusion
 is a unitary matrix $F^{abc}_{d}$ relating the two parenthesizations of
 $a\otimes b\otimes c$ with total charge $d$.
 
-**Typed meaning:**
+**Typed meaning:** `associate @Fib @Tensor @Tau @Tau @Tau` is the associator
 
 $$
-\mathrm{fmove}
-\colon
 (\tau\otimes\tau)\otimes\tau
 \longrightarrow
-\tau\otimes(\tau\otimes\tau)
+\tau\otimes(\tau\otimes\tau).
 $$
 
-Both sides fuse to $𝟙 \oplus \tau \oplus \tau$, so `fmove` is an element of
+Both sides fuse to $𝟙 \oplus \tau \oplus \tau$, so it is an element of
 $\mathrm{End}(𝟙\oplus\tau\oplus\tau) \cong \mathbb{C} \times \mathrm{Mat}_2(\mathbb{C})$.
+
+**Extension to general objects** (same $N$-basis as `tensorBlocks`):
+`associate` (via `associateBlocks`) $:$ $(a\otimes b)\otimes c\to a\otimes(b\otimes c)$
+applies Fibonacci $F$-symbols on fusion trees. Nontrivial only for leaf charges
+$\tau\tau\tau$; otherwise the unique allowed reassociation has amplitude $1$.
 
 **τ-sector basis (fixed):** for both associations, `FuseNorm ∘ Norm` yields
 `Sum Tau (Sum One Tau)` i.e. simples $[\tau,𝟙,\tau]$ before stabilize. After
@@ -286,21 +289,20 @@ R^{ττ}_{τ}=e^{3\pi i/5}.
 $$
 
 **Extension to general objects** (same $N$-basis as `tensorBlocks`):
-`braidBlocks` / `braidFib` $:$ $a\otimes b\to b\otimes a$ acts by
+`braidBlocks` / `braid` $:$ $a\otimes b\to b\otimes a$ acts by
 
 - **𝟙-sector:** commute $(𝟙\otimes𝟙)$ pairs with $R^{𝟙𝟙}$ and $(τ\otimesτ\to𝟙)$ pairs with $R^{ττ}_{𝟙}$;
 - **τ-sector:** $(𝟙\otimesτ)\leftrightarrow(τ\otimes𝟙)$ with unit phases, and $(τ\otimesτ\toτ)$ with $R^{ττ}_{τ}$.
 
-Special case `rmove` $=$ `braidFib @Tau @Tau`. Hexagon identities pair this with `fmove`.
+Hexagon identities pair `braid` with `associate`.
 
 $F$ and $R$ must satisfy the pentagon / hexagon equations; that is a **property
 to test**, not part of Hom composition.
 
-### 7.3 General $F$ (next)
+### 7.3 Status
 
-General $F^{abc}$ needs labeled intermediate channels on the fused spines of
-$(a\otimes b)\otimes c$ and $a\otimes(b\otimes c)$, not only $τττ$. Same basis
-discipline as $R$; implement after hexagon smoke on the general $R$ above.
+`associateBlocks` / `braidBlocks` on Mult* $N$-basis (see §7.1–7.2). Remaining:
+pentagon/hexagon smoke tests; confirm composite-leg bases against a reference.
 
 ---
 
@@ -310,7 +312,7 @@ discipline as $R$; implement after hexagon smoke on the general $R$ above.
 2. **Hom dimensions** = $\sum_s n_s(X)\, n_s(Y)$.
 3. **Cup/cap** carry quantum-dimension normalization; compose does not special-case them.
 4. **Fuse/split** are (chosen) isos $\tau\otimes\tau \simeq 𝟙\oplus\tau$; after Fuse they may be id.
-5. **F/R** are separate named isos with published matrices in a fixed basis.
+5. **F/R** are `associate` / `braid` (published matrices on a fixed $N$-basis).
 6. Trees remember parenthesization; skeleton forgets it (except via F as a coherent iso).
 
 ---
@@ -321,12 +323,10 @@ These are encodings. They should be replaceable without changing §1–8.
 
 | Mechanism | Role today | Scalable substitute |
 | --- | --- | --- |
-| `SFib` / `KnownFib` | Closed world of 4 objects | Spine singleton or generically `Fuse X` as list of simples |
-| `packHom` / `coeffsHom` | $4\times 4$ reification of `C n` | One generic pack/unpack from multiplicities $n_𝟙,n_\tau$ |
 | Flat `C (HomDim a b)` | Anonymous coefficient vector | Same vector **plus** documented sector layout, or typed `Hom` as pair of matrices $(M_𝟙, M_\tau)$ |
 | `Norm` / `Stabilize` type families | Compute $\mathrm{Fuse}(X)$ | Same math; could be value-level or type-level |
 | `composePacked` | Implements §4.3 for Fib’s two sectors | Same algorithm for any multiplicity-free (or multi) theory with $\lvert\mathrm{Irr}\rvert$ sectors |
-| Singletons in `Category (.)` | Discharge `KnownNat` for `hmatrix-static` | `KnownNat` from multiplicities; or non-static vectors; or typed block Hom |
+| `KnownNat` on Mult* | Discharge sizes for `hmatrix-static` | Same; or non-static vectors; or typed block Hom |
 
 **Why the current `packHom` approach feels unscalable:** it case-splits on *object names*
 (`One`, `TauTau`, …) instead of on *fused multiplicities* $(n_𝟙,n_\tau)$. Math only
@@ -353,9 +353,8 @@ Resolved for the current code:
 Still open:
 
 3. **Cup/cap normalization:** currently $\varphi$ on cup, $1$ on cap (snake $= d_τ$); unitary $\sqrt{\varphi}$ each is an alternative.
-4. **Pentagon / hexagon tests** for the `fmove` / `rmove` matrices in §7 (basis is fixed; coherence not yet checked in code).
-5. **Unit legs of `associate`:** still blocked / error until general $F$; unit braids are covered by `braidFib` (no `Mult*` coerce needed — domain/codomain Mults are independent).
-6. **Whether trees are objects of the same `Category` instance** as the skeleton, or
+4. **Pentagon / hexagon tests** for `associate` / `braid` (§7; basis fixed; coherence not yet checked in code).
+5. **Whether trees are objects of the same `Category` instance** as the skeleton, or
    skeletal category + a separate tree language with interpretation $\mathrm{Fuse}$.
 
 ---
@@ -389,7 +388,10 @@ In code (`Experiments.Fibonacci`):
 - `idBlocks` = `(I_{n1}, I_{nτ})`; cups/caps/fuse/split are concrete `HomBlocks`.
 - `HomDim a b = MultOne a * MultOne b + MultTau a * MultTau b` (derived).
 
-**Singletons (`SFib` / `KnownFib`)** are optional demos. `Object Fib` is only `KnownNat` on `Mult*`.
+`Object Fib` is `KnownMult` (= `KnownNat` on both `Mult*`). Compound `KnownNat`
+needs for Kronecker / braid / associator are bundled by type families
+`NTensorNats` / `AssocNats` → `KnownNTensor` / `KnownAssoc` (and object-level
+`KnownTensorMult` / `KnownAssocMult`).
 
 **Fuse as a functor on morphisms:** `fuseMap` is the identity on `HomBlocks`, under `FuseIdemMult`.
 
@@ -407,18 +409,32 @@ R_𝟙=\mathrm{diag}(F_𝟙\otimes G_𝟙,\; F_τ\otimes G_τ),\qquad
 R_τ=\mathrm{diag}(F_𝟙\otimes G_τ,\; F_τ\otimes G_𝟙,\; F_τ\otimes G_τ)
 $$
 
-with basis order matching `Norm` distribute (Ones: $𝟙\otimes𝟙$ then $τ\otimesτ\to𝟙$; Taus: $𝟙\otimesτ$, $τ\otimes𝟙$, $τ\otimesτ\toτ$). `bimap` / `first` / `second` = `tensorFib`.
+with basis order matching `Norm` distribute (Ones: $𝟙\otimes𝟙$ then $τ\otimesτ\to𝟙$; Taus: $𝟙\otimesτ$, $τ\otimes𝟙$, $τ\otimesτ\toτ$). `bimap` / `first` / `second` call `tensorBlocks`.
 
 **Associative / Monoidal / Braided** (Kmett-shaped, under `Experiments.Categorical`):
 
 | Class | Fib `Tensor` |
 | --- | --- |
 | `Monoidal` | `Id = One`; unitors = `idBlocks` |
-| `Associative` | `associate`/`disassociate` = `fmove`/`fmoveInv` for $τττ$; else runtime error until general $F$ |
-| `Braided` | `braid` = `braidFib` (bilinear $R$ on $N$-basis); `rmove` = $τ⊗τ$ special case |
+| `Associative` | `associate`/`disassociate` via `associateBlocks` |
+| `Braided` | `braid` via `braidBlocks` |
 
-Not `Symmetric` ($R^2\neq\mathrm{id}$). Pentagon/hexagon untested. `KnownFib` is closed under `Tensor`/`Sum`.
+Not `Symmetric` ($R^2\neq\mathrm{id}$). Pentagon/hexagon untested.
 
 **Optional flat view** (not implemented): row-major `blkOne` then row-major `blkTau` yields a vector of length `HomDim`. One generic flatten/unflatten — never a $4\times 4$ object grid.
 
 **Scalability:** adding a tree object only requires `Fuse` (hence `Mult*`) to typecheck; compose stays unchanged. A second theory (e.g. Ising) needs more sector labels in `HomBlocks`, same compose pattern.
+
+---
+
+## 13. Free category, string diagrams, and examples
+
+`Fib` is the **concrete** category (Hom = sector matrices). String diagrams need **syntax**: the free monoidal category on the theory generators.
+
+| Layer | Module | Role |
+| --- | --- | --- |
+| Syntax | `Experiments.Fibonacci.Free` (`FreeFib`) | Terms: `id`, compose, tensor, cup/cap/fuse/split, associate/braid/unitors |
+| Semantics | `eval :: FreeFib a b -> Fib a b` | Unique monoidal functor into `Fib` |
+| Pictures | `cabal run fibonacci-diagrams` | Second algebra: fold `FreeFib` → SVG under `plots/fib/` |
+
+Gallery terms (`exCup`, `exSnake`, `exFMove`, `exRMove`, `exYank`, …) live in `Free` so the **same** expression drives computation (`eval`) and diagrams (`renderFree`). Do not try to recover a string diagram from a bare `Fib` value.

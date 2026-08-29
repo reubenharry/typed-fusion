@@ -195,24 +195,24 @@ cupUnfusedMatchesCupRdualOk =
       v = unsafeFromArray (VS.fromList [1, 0])
       r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
       RConsAtomAtomM u1 RNil = cupRdual r
-      RConsAtomAtomM u2 RNil =
+      u2 =
         cupUnfused @'[ '( 'Atom 1, 'AtomM 1)] (repVToV r ⊗ rdual r)
    in abs (unitAmp u1 - unitAmp u2) < 1e-9
 
 -- | Unfused snake: @cup ∘ cap = dim@ on @j = 0@ (@dim = 1@).
 cupCapUnfusedSnakeTrivialOk :: Bool
 cupCapUnfusedSnakeTrivialOk =
-  let RConsAtomAtomM u RNil =
+  let u =
         cupUnfused @'[ '( 'Atom 0, 'AtomM 1)]
-          (capUnfused @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1))
+          (capUnfused @'[ '( 'Atom 0, 'AtomM 1)] (unitToVFromScalar 1))
    in abs (unitAmp u - 1) < 1e-9
 
 -- | Unfused snake on spin-½: @cup ∘ cap = 2@.
 cupCapUnfusedSnakeSpinHalfOk :: Bool
 cupCapUnfusedSnakeSpinHalfOk =
-  let RConsAtomAtomM u RNil =
+  let u =
         cupUnfused @'[ '( 'Atom 1, 'AtomM 1)]
-          (capUnfused @'[ '( 'Atom 1, 'AtomM 1)] (unitFromScalar 1))
+          (capUnfused @'[ '( 'Atom 1, 'AtomM 1)] (unitToVFromScalar 1))
    in abs (unitAmp u - 2) < 1e-9
 
 -- | Fused cup agrees with unfused on @j = 0@ (CS = id, scale 1).
@@ -221,7 +221,7 @@ cupFusedTrivialOk =
   let x :: ToVSector ('Atom 0) ('AtomM 1)
       x = unsafeFromArray (VS.fromList [3 :+ 4])
       r = RConsAtomAtomM x RNil :: RepV '[ '( 'Atom 0, 'AtomM 1)]
-      RConsAtomAtomM uUnf RNil =
+      uUnf =
         cupUnfused @'[ '( 'Atom 0, 'AtomM 1)] (repVToV r ⊗ rdual r)
       RConsAtomAtomM uFus RNil =
         cupFused @'[ '( 'Atom 0, 'AtomM 1)]
@@ -239,7 +239,7 @@ cupFusedSpinHalfCoherentOk =
   let v :: ToVSector ('Atom 1) ('AtomM 1)
       v = unsafeFromArray (VS.fromList [1, 0])
       r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
-      RConsAtomAtomM uUnf RNil =
+      uUnf =
         cupUnfused @'[ '( 'Atom 1, 'AtomM 1)] (repVToV r ⊗ rdual r)
       RConsAtomAtomM uFus RNil =
         cupFused @'[ '( 'Atom 1, 'AtomM 1)]
@@ -258,6 +258,61 @@ cupCapFusedSnakeTrivialOk =
         cupFused @'[ '( 'Atom 0, 'AtomM 1)]
           (capFused @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1))
    in abs (unitAmp u - 1) < 1e-9
+
+-- | @(cup ⊗ id)@ then unitor on a packed assoc-shape state: @cup(η_b) = dim b@.
+cupTensorIdUnitorOk :: Bool
+cupTensorIdUnitorOk =
+  let packed =
+        rdual @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1)
+          ⊗ ( capUnfused @'[ '( 'Atom 1, 'AtomM 1)] (unitToVFromScalar 1)
+                ⊗ repVToV @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1)
+            )
+      out =
+        unitorCompose
+          @'[ '( 'Atom 0, 'AtomM 1)]
+          @'[ '( 'Atom 1, 'AtomM 1)]
+          @'[ '( 'Atom 0, 'AtomM 1)]
+          ( cupTensorIdCompose
+              @'[ '( 'Atom 0, 'AtomM 1)]
+              @'[ '( 'Atom 1, 'AtomM 1)]
+              @'[ '( 'Atom 0, 'AtomM 1)]
+              packed
+          )
+      -- @cup ∘ cap = 2@ on spin-½; result is scale on Dual-left @η@.
+      expected = 2 *^ idMor @'[ '( 'Atom 0, 'AtomM 1)]
+   in all (\(x, y) -> magnitude (x - y) < 1e-9)
+        (zip (VS.toList (toArray out)) (VS.toList (toArray expected)))
+
+toVApproxEq :: VS.Vector (Complex Double) -> VS.Vector (Complex Double) -> Bool
+toVApproxEq u v =
+  VS.length u == VS.length v
+    && VS.and (VS.zipWith (\x y -> magnitude (x - y) < 1e-9) u v)
+
+-- | @composeMor id id ≅ id@ on @j = 0@.
+composeMorIdIdOk :: Bool
+composeMorIdIdOk =
+  let i = idMor @'[ '( 'Atom 0, 'AtomM 1)]
+   in toVApproxEq
+        (toArray (composeMor @'[ '( 'Atom 0, 'AtomM 1)] @'[ '( 'Atom 0, 'AtomM 1)] @'[ '( 'Atom 0, 'AtomM 1)] i i))
+        (toArray i)
+
+-- | Left unit law: @composeMor id f ≅ f@ on spin-½.
+composeMorLeftUnitOk :: Bool
+composeMorLeftUnitOk =
+  let i = idMor @'[ '( 'Atom 1, 'AtomM 1)]
+      f = (3 :+ 0) *^ idMor @'[ '( 'Atom 1, 'AtomM 1)]
+   in toVApproxEq
+        (toArray (composeMor @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] i f))
+        (toArray f)
+
+-- | Right unit law: @composeMor f id ≅ f@ on spin-½.
+composeMorRightUnitOk :: Bool
+composeMorRightUnitOk =
+  let i = idMor @'[ '( 'Atom 1, 'AtomM 1)]
+      f = (3 :+ 0) *^ idMor @'[ '( 'Atom 1, 'AtomM 1)]
+   in toVApproxEq
+        (toArray (composeMor @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] f i))
+        (toArray f)
 
 -- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ @√(j+1) · CS@ (pivotal undual).
 undualDualRoundtripOk :: Bool
@@ -384,6 +439,10 @@ symbolicExamplesOk =
     , cupFusedTrivialOk
     , cupFusedSpinHalfCoherentOk
     , cupCapFusedSnakeTrivialOk
+    , cupTensorIdUnitorOk
+    , composeMorIdIdOk
+    , composeMorLeftUnitOk
+    , composeMorRightUnitOk
     , undualDualRoundtripOk
     , repVToVRoundTripOk
     , coalesceMergeFlatDimOk
@@ -438,6 +497,22 @@ type SmokeMor =
     )
     ( DualVector (C 2 ⊗ C 2)
       ⊗ (C 3 ⊗ C 3)
+    )
+
+-- | Compose step-2 packing: @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@.
+type SmokeComposeAssoc =
+  AssertEqType
+    ( ToV
+        ( ComposeAssocExpr
+            '[ '( 'Atom 0, 'AtomM 1)]
+            '[ '( 'Atom 1, 'AtomM 1)]
+            '[ '( 'Atom 0, 'AtomM 1)]
+        )
+    )
+    ( DualVector (C 1 ⊗ C 1)
+        ⊗ ( ((C 1 ⊗ C 2) ⊗ DualVector (C 1 ⊗ C 2))
+              ⊗ (C 1 ⊗ C 1)
+          )
     )
 
 -- | Same @'Atom 1@ sectors coalesce by adding multiplicities.
@@ -618,6 +693,9 @@ smokeBraid = Proxy
 
 smokeMor :: Proxy SmokeMor
 smokeMor = Proxy
+
+smokeComposeAssoc :: Proxy SmokeComposeAssoc
+smokeComposeAssoc = Proxy
 
 smokeCoalesceAtoms :: Proxy SmokeCoalesceAtoms
 smokeCoalesceAtoms = Proxy

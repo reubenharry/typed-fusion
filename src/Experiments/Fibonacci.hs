@@ -3,7 +3,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -26,9 +25,9 @@
 --   @MultTau@ (@N@-bilinear on @'Tensor@, additive on @'Sum@).
 -- * __Compose__: @composeBlocks@ (per-sector matrix multiply); @cup@ carries @φ@.
 -- * __Fuse functor__: @fuseMap@ reindexes object parameters (id on blocks).
--- * __Tensor bifunctor__: @tensorBlocks@ \/ @tensorFib@ — Kronecker via @N@-symbols.
+-- * __Tensor bifunctor__: @tensorBlocks@ \/ @bimap@ — Kronecker via @N@-symbols.
 -- * __Monoidal \/ braided__: @Associative@\/@Monoidal@\/@Braided@ on @Tensor@
---   (@fmove@; @braidBlocks@\/@rmove@\/unitors; not 'Symmetric').
+--   (@associateBlocks@\/@braidBlocks@\/unitors; not 'Symmetric').
 module Experiments.Fibonacci
   ( -- * Labels \/ objects
     Simple (..)
@@ -43,47 +42,41 @@ module Experiments.Fibonacci
   , FuseIdemMult
   , TauTau
   , OnePlusTau
-  , AssocL
-  , AssocR
+    -- * KnownNat bundles
+  , KnownMult
+  , KnownNTensor
+  , KnownAssoc
+  , KnownTensorMult
+  , KnownAssocMult
     -- * Hom
   , HomBlocks (..)
   , Fib (..)
-  , SFib (..)
-  , KnownFib (..)
-  , sfTauTau
-  , sfOnePlusTau
-  , sfAssocL
-  , sfAssocR
   , composeBlocks
   , idBlocks
   , zeroBlocks
   , tensorBlocks
   , braidBlocks
-  , braidFib
+  , associateBlocks
+  , disassociateBlocks
   , phi
   , phiInv
   , phiInvSqrt
   , cup
   , cap
-  , composeFib
   , zeroMor
   , fuseMap
-  , tensorFib
+  , eqFib
     -- * Fuse \/ split
   , fuse
   , split
-    -- * F \/ R
-  , fmove
-  , fmoveInv
-  , rmove
-  , rPhaseTauTauOne
-  , rPhaseTauTauTau
     -- * Fusion theory
   , FibTh
   ) where
 
 import Control.Category.Constrained.Prelude (Category (..))
+import Control.Monad (guard)
 import Data.Complex (Complex (..))
+import Data.Kind (Constraint)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import Experiments.Categorical.Associative (Associative (..))
@@ -131,8 +124,6 @@ data FibObj
 
 type TauTau = 'Tensor 'Tau 'Tau
 type OnePlusTau = 'Sum 'One 'Tau
-type AssocL = 'Tensor TauTau 'Tau
-type AssocR = 'Tensor 'Tau TauTau
 
 --------------------------------------------------------------------------------
 -- Norm: coalesced sum of tensor trees
@@ -258,38 +249,108 @@ type FuseIdemMult (a :: FibObj) =
   )
 
 --------------------------------------------------------------------------------
--- Singletons / objects of the category
+-- KnownNat bundles (generated from N-bilinear Mult formulas)
 --------------------------------------------------------------------------------
 
-data SFib (a :: FibObj) where
-  SFOne :: SFib 'One
-  SFTau :: SFib 'Tau
-  SFTensor :: SFib a -> SFib b -> SFib (Tensor a b)
-  SFSum :: SFib a -> SFib b -> SFib (Sum a b)
+-- | Both sector multiplicities of an object are 'KnownNat'.
+type KnownMult (a :: FibObj) =
+  ( KnownNat (MultOne a)
+  , KnownNat (MultTau a)
+  )
 
-class KnownFib (a :: FibObj) where
-  fibSing :: SFib a
+-- | Fold 'KnownNat' over a type-level list.
+type family AllKnownNat (ns :: [Nat]) :: Constraint where
+  AllKnownNat '[] = ()
+  AllKnownNat (n ': ns) = (KnownNat n, AllKnownNat ns)
 
-instance KnownFib 'One where fibSing = SFOne
-instance KnownFib 'Tau where fibSing = SFTau
-instance (KnownFib a, KnownFib b) => KnownFib (Tensor a b) where
-  fibSing = SFTensor (fibSing @a) (fibSing @b)
-instance (KnownFib a, KnownFib b) => KnownFib (Sum a b) where
-  fibSing = SFSum (fibSing @a) (fibSing @b)
+type family AppendNat (xs :: [Nat]) (ys :: [Nat]) :: [Nat] where
+  AppendNat '[] ys = ys
+  AppendNat (x ': xs) ys = x ': AppendNat xs ys
 
--- | Convenience singletons for common trees.
-sfTauTau :: SFib TauTau
-sfTauTau = SFTensor SFTau SFTau
+-- | @n₁@ / @nτ@ of an N-bilinear tensor of two multiplicity pairs
+-- (matches 'MultOne' \/ 'MultTau' on @'Tensor@). Inline in 'NTensorNats'
+-- (do not wrap in a type family — 'KnownNat' solvers need the @*@\/@+@ spine).
+type N1Pair n1a nta n1b ntb = n1a * n1b + nta * ntb
+type NTPair n1a nta n1b ntb = (n1a * ntb + nta * n1b) + nta * ntb
 
-sfOnePlusTau :: SFib OnePlusTau
-sfOnePlusTau = SFSum SFOne SFTau
+-- | Nat expressions needed for @Hom@ Kronecker \/ braid of two pairs
+-- (includes both factor orders for braiding).
+type family NTensorNats (n1a :: Nat) (nta :: Nat) (n1b :: Nat) (ntb :: Nat) :: [Nat] where
+  NTensorNats n1a nta n1b ntb =
+    '[ n1a * n1b
+     , n1b * n1a
+     , nta * ntb
+     , ntb * nta
+     , n1a * ntb
+     , ntb * n1a
+     , nta * n1b
+     , n1b * nta
+     , n1a * n1b + nta * ntb
+     , n1b * n1a + ntb * nta
+     , n1a * ntb + nta * n1b
+     , n1b * nta + ntb * n1a
+     , (n1a * ntb + nta * n1b) + nta * ntb
+     , (n1b * nta + ntb * n1a) + ntb * nta
+     ]
 
-sfAssocL :: SFib AssocL
-sfAssocL = SFTensor sfTauTau SFTau
+-- | 'KnownNat' for two multiplicity pairs and their N-tensor intermediates.
+type KnownNTensor (n1a :: Nat) (nta :: Nat) (n1b :: Nat) (ntb :: Nat) =
+  ( KnownNat n1a
+  , KnownNat nta
+  , KnownNat n1b
+  , KnownNat ntb
+  , AllKnownNat (NTensorNats n1a nta n1b ntb)
+  )
 
-sfAssocR :: SFib AssocR
-sfAssocR = SFTensor SFTau sfTauTau
+-- | Nat expressions for the associator @((a⊗b)⊗c)@ \/ @(a⊗(b⊗c))@.
+type family AssocNats
+  (n1a :: Nat) (nta :: Nat)
+  (n1b :: Nat) (ntb :: Nat)
+  (n1c :: Nat) (ntc :: Nat) :: [Nat] where
+  AssocNats n1a nta n1b ntb n1c ntc =
+    AppendNat
+      (NTensorNats n1a nta n1b ntb)
+      ( AppendNat
+          (NTensorNats n1b ntb n1c ntc)
+          ( AppendNat
+              ( NTensorNats
+                  (n1a * n1b + nta * ntb)
+                  ((n1a * ntb + nta * n1b) + nta * ntb)
+                  n1c
+                  ntc
+              )
+              ( NTensorNats
+                  n1a
+                  nta
+                  (n1b * n1c + ntb * ntc)
+                  ((n1b * ntc + ntb * n1c) + ntb * ntc)
+              )
+          )
+      )
 
+type KnownAssoc
+  (n1a :: Nat) (nta :: Nat)
+  (n1b :: Nat) (ntb :: Nat)
+  (n1c :: Nat) (ntc :: Nat) =
+  ( KnownNat n1a
+  , KnownNat nta
+  , KnownNat n1b
+  , KnownNat ntb
+  , KnownNat n1c
+  , KnownNat ntc
+  , AllKnownNat (AssocNats n1a nta n1b ntb n1c ntc)
+  )
+
+-- | Object-level: N-tensor of @Mult* a@ with @Mult* b@.
+type KnownTensorMult (a :: FibObj) (b :: FibObj) =
+  KnownNTensor (MultOne a) (MultTau a) (MultOne b) (MultTau b)
+
+-- | Object-level associator on @a,b,c@.
+type KnownAssocMult (a :: FibObj) (b :: FibObj) (c :: FibObj) =
+  KnownAssoc
+    (MultOne a) (MultTau a)
+    (MultOne b) (MultTau b)
+    (MultOne c) (MultTau c)
 
 --------------------------------------------------------------------------------
 -- Sector Hom blocks and composition
@@ -425,30 +486,8 @@ blockDiag3 u v w = blockDiag2 (blockDiag2 u v) w
 -- @Rτ = diag(F₁⊗Gτ, Fτ⊗G₁, Fτ⊗Gτ)@.
 tensorBlocks
   :: forall n1x ntx n1y nty n1z ntz n1w ntw
-   . ( KnownNat n1x
-     , KnownNat ntx
-     , KnownNat n1y
-     , KnownNat nty
-     , KnownNat n1z
-     , KnownNat ntz
-     , KnownNat n1w
-     , KnownNat ntw
-     , KnownNat (n1x * n1z)
-     , KnownNat (ntx * ntz)
-     , KnownNat (n1y * n1w)
-     , KnownNat (nty * ntw)
-     , KnownNat (n1x * ntz)
-     , KnownNat (ntx * n1z)
-     , KnownNat (n1y * ntw)
-     , KnownNat (nty * n1w)
-     , KnownNat (n1x * n1z + ntx * ntz)
-     , KnownNat (n1y * n1w + nty * ntw)
-     , KnownNat (n1x * ntz + ntx * n1z)
-     , KnownNat ((n1x * ntz + ntx * n1z) + ntx * ntz)
-     , KnownNat (n1y * ntw + nty * n1w)
-     , KnownNat ((n1y * ntw + nty * n1w) + nty * ntw)
-     , KnownNat (n1x * n1z)
-     , KnownNat (n1y * n1w)
+   . ( KnownNTensor n1x ntx n1z ntz
+     , KnownNTensor n1y nty n1w ntw
      )
   => HomBlocks n1x ntx n1y nty
   -> HomBlocks n1z ntz n1w ntw
@@ -467,22 +506,12 @@ tensorBlocks (HomBlocks f1 ft) (HomBlocks g1 gt) =
 --------------------------------------------------------------------------------
 
 -- | Simple-label R-matrix phases (Bonderson Fibonacci).
-rPhaseOneOne :: Complex Double
-rPhaseOneOne = 1
-
-rPhaseOneTau :: Complex Double
-rPhaseOneTau = 1
-
-rPhaseTauOne :: Complex Double
-rPhaseTauOne = 1
-
--- | @R^{ττ}_𝟙 = e^{-4πi/5}@.
+-- @R^{𝟙𝟙}=R^{𝟙τ}=R^{τ𝟙}=1@; nontrivial @R^{ττ}@ below.
 rPhaseTauTauOne :: Complex Double
 rPhaseTauTauOne =
   let i = 0 :+ 1
    in exp (-4 * pi * i / 5)
 
--- | @R^{ττ}_τ = e^{3πi/5}@.
 rPhaseTauTauTau :: Complex Double
 rPhaseTauTauTau =
   let i = 0 :+ 1
@@ -512,25 +541,7 @@ commuteKron n m phase
 --   @(τ⊗τ→τ)@ with @R^{ττ}_τ@.
 braidBlocks
   :: forall n1a nta n1b ntb
-   . ( KnownNat n1a
-     , KnownNat nta
-     , KnownNat n1b
-     , KnownNat ntb
-     , KnownNat (n1a * n1b)
-     , KnownNat (nta * ntb)
-     , KnownNat (n1b * n1a)
-     , KnownNat (ntb * nta)
-     , KnownNat (n1a * ntb)
-     , KnownNat (nta * n1b)
-     , KnownNat (n1b * nta)
-     , KnownNat (ntb * n1a)
-     , KnownNat (n1a * n1b + nta * ntb)
-     , KnownNat (n1b * n1a + ntb * nta)
-     , KnownNat (n1a * ntb + nta * n1b)
-     , KnownNat ((n1a * ntb + nta * n1b) + nta * ntb)
-     , KnownNat (n1b * nta + ntb * n1a)
-     , KnownNat ((n1b * nta + ntb * n1a) + ntb * nta)
-     )
+   . KnownNTensor n1a nta n1b ntb
   => HomBlocks
       (n1a * n1b + nta * ntb)
       ((n1a * ntb + nta * n1b) + nta * ntb)
@@ -551,13 +562,13 @@ braidBlocks =
       tausCodTT = ntb * nta
       oneBlk =
         LA.fromBlocks
-          [ [commuteKron n1a n1b rPhaseOneOne, LA.konst 0 (onesCod, nta * ntb)]
+          [ [commuteKron n1a n1b 1, LA.konst 0 (onesCod, nta * ntb)]
           , [LA.konst 0 (ntb * nta, onesDom), commuteKron nta ntb rPhaseTauTauOne]
           ]
       -- τ-sector rows = OT'|TO'|TT' (b⊗a), cols = OT|TO|TT (a⊗b):
       --   OT → TO' (R^{𝟙τ}), TO → OT' (R^{τ𝟙}), TT → TT' (R^{ττ}_τ).
-      otToTo = commuteKron n1a ntb rPhaseOneTau
-      toToOt = commuteKron nta n1b rPhaseTauOne
+      otToTo = commuteKron n1a ntb 1
+      toToOt = commuteKron nta n1b 1
       ttToTt = commuteKron nta ntb rPhaseTauTauTau
       tauBlk =
         LA.fromBlocks
@@ -594,6 +605,268 @@ phiInv = 1 / phi
 phiInvSqrt :: Complex Double
 phiInvSqrt = sqrt phiInv
 
+--------------------------------------------------------------------------------
+-- Skeletal associator (F-symbols on the N-bilinear basis)
+--------------------------------------------------------------------------------
+
+-- | Simple fusion charges.
+data Ch = C1 | Ct
+  deriving (Eq)
+
+canFuse :: Ch -> Ch -> Ch -> Bool
+canFuse C1 C1 C1 = True
+canFuse C1 Ct Ct = True
+canFuse Ct C1 Ct = True
+canFuse Ct Ct C1 = True
+canFuse Ct Ct Ct = True
+canFuse _ _ _ = False
+
+-- | @F^{abc}_{d;e→f}@ amplitudes (@inv=False@) or @F^{-1}@ (@inv=True@).
+-- Nontrivial only for @τττ@; otherwise the unique allowed @(e,f)@ has amp @1@.
+fRow :: Bool -> Ch -> Ch -> Ch -> Ch -> Ch -> [(Ch, Complex Double)]
+fRow inv Ct Ct Ct C1 Ct = [(Ct, if inv then phi else phiInv)]
+fRow _ Ct Ct Ct Ct C1 =
+  [(C1, phiInv), (Ct, phiInvSqrt)]
+fRow _ Ct Ct Ct Ct Ct =
+  [(C1, phiInvSqrt), (Ct, -phiInv)]
+fRow _ a b c d e =
+  [ (f, 1)
+  | f <- [C1, Ct]
+  , canFuse a b e
+  , canFuse e c d
+  , canFuse b c f
+  , canFuse a f d
+  ]
+
+copiesOf :: Ch -> Int -> Int -> [Int]
+copiesOf C1 n1 _ = [0 .. n1 - 1]
+copiesOf Ct _ nt = [0 .. nt - 1]
+
+-- | Ones-channel index of @x⊗y → 𝟙@.
+idxOnesXY :: Int -> Int -> Int -> Int -> Ch -> Int -> Ch -> Int -> Maybe Int
+idxOnesXY n1x _ntx n1y _nty C1 ix C1 iy
+  | ix < n1x && iy < n1y = Just (ix * n1y + iy)
+  | otherwise = Nothing
+idxOnesXY n1x ntx n1y nty Ct tx Ct ty
+  | tx < ntx && ty < nty = Just (n1x * n1y + tx * nty + ty)
+  | otherwise = Nothing
+idxOnesXY _ _ _ _ _ _ _ _ = Nothing
+
+-- | Taus-channel index of @x⊗y → τ@.
+idxTausXY :: Int -> Int -> Int -> Int -> Ch -> Int -> Ch -> Int -> Maybe Int
+idxTausXY n1x _ntx _n1y nty C1 ix Ct ty
+  | ix < n1x && ty < nty = Just (ix * nty + ty)
+  | otherwise = Nothing
+idxTausXY n1x ntx n1y nty Ct tx C1 iy
+  | tx < ntx && iy < n1y = Just (n1x * nty + tx * n1y + iy)
+  | otherwise = Nothing
+idxTausXY n1x ntx n1y nty Ct tx Ct ty
+  | tx < ntx && ty < nty = Just (n1x * nty + ntx * n1y + tx * nty + ty)
+  | otherwise = Nothing
+idxTausXY _ _ _ _ _ _ _ _ = Nothing
+
+-- | Column in @((a⊗b)⊗c)@ ones sector for leaves + left intermediate @e@.
+leftColOnes
+  :: Int -> Int -> Int -> Int -> Int -> Int
+  -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+  -> Maybe Int
+leftColOnes n1a nta n1b ntb n1c ntc aCh aI bCh bI cCh cI eCh =
+  let n1ab = n1a * n1b + nta * ntb
+   in case eCh of
+        C1 -> do
+          guard (cCh == C1)
+          eIdx <- idxOnesXY n1a nta n1b ntb aCh aI bCh bI
+          Just (eIdx * n1c + cI)
+        Ct -> do
+          guard (cCh == Ct)
+          eIdx <- idxTausXY n1a nta n1b ntb aCh aI bCh bI
+          Just (n1ab * n1c + eIdx * ntc + cI)
+
+-- | Row in @a⊗(b⊗c)@ ones sector for leaves + right intermediate @f@.
+rightRowOnes
+  :: Int -> Int -> Int -> Int -> Int -> Int
+  -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+  -> Maybe Int
+rightRowOnes n1a _nta n1b ntb n1c ntc aCh aI bCh bI cCh cI fCh =
+  let n1bc = n1b * n1c + ntb * ntc
+      ntbc = n1b * ntc + ntb * n1c + ntb * ntc
+   in case aCh of
+        C1 -> do
+          guard (fCh == C1)
+          fIdx <- idxOnesXY n1b ntb n1c ntc bCh bI cCh cI
+          Just (aI * n1bc + fIdx)
+        Ct -> do
+          guard (fCh == Ct)
+          fIdx <- idxTausXY n1b ntb n1c ntc bCh bI cCh cI
+          Just (n1a * n1bc + aI * ntbc + fIdx)
+
+-- | Column in @((a⊗b)⊗c)@ tau sector.
+leftColTaus
+  :: Int -> Int -> Int -> Int -> Int -> Int
+  -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+  -> Maybe Int
+leftColTaus n1a nta n1b ntb n1c ntc aCh aI bCh bI cCh cI eCh =
+  let n1ab = n1a * n1b + nta * ntb
+      ntab = n1a * ntb + nta * n1b + nta * ntb
+   in case (eCh, cCh) of
+        (C1, Ct) -> do
+          eIdx <- idxOnesXY n1a nta n1b ntb aCh aI bCh bI
+          Just (eIdx * ntc + cI)
+        (Ct, C1) -> do
+          eIdx <- idxTausXY n1a nta n1b ntb aCh aI bCh bI
+          Just (n1ab * ntc + eIdx * n1c + cI)
+        (Ct, Ct) -> do
+          eIdx <- idxTausXY n1a nta n1b ntb aCh aI bCh bI
+          Just (n1ab * ntc + ntab * n1c + eIdx * ntc + cI)
+        _ -> Nothing
+
+-- | Row in @a⊗(b⊗c)@ tau sector.
+rightRowTaus
+  :: Int -> Int -> Int -> Int -> Int -> Int
+  -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+  -> Maybe Int
+rightRowTaus n1a nta n1b ntb n1c ntc aCh aI bCh bI cCh cI fCh =
+  let n1bc = n1b * n1c + ntb * ntc
+      ntbc = n1b * ntc + ntb * n1c + ntb * ntc
+   in case (aCh, fCh) of
+        (C1, Ct) -> do
+          fIdx <- idxTausXY n1b ntb n1c ntc bCh bI cCh cI
+          Just (aI * ntbc + fIdx)
+        (Ct, C1) -> do
+          fIdx <- idxOnesXY n1b ntb n1c ntc bCh bI cCh cI
+          Just (n1a * ntbc + aI * n1bc + fIdx)
+        (Ct, Ct) -> do
+          fIdx <- idxTausXY n1b ntb n1c ntc bCh bI cCh cI
+          Just (n1a * ntbc + nta * n1bc + aI * ntbc + fIdx)
+        _ -> Nothing
+
+assocSectorEntries
+  :: Bool -- ^ inverse F-symbols
+  -> Ch -- ^ total charge
+  -> ( Int -> Int -> Int -> Int -> Int -> Int
+       -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+       -> Maybe Int
+     ) -- ^ left column
+  -> ( Int -> Int -> Int -> Int -> Int -> Int
+       -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+       -> Maybe Int
+     ) -- ^ right row
+  -> Int -> Int -> Int -> Int -> Int -> Int
+  -> [((Int, Int), Complex Double)]
+assocSectorEntries inv total leftCol rightRow n1a nta n1b ntb n1c ntc =
+  [ ((row, col), amp)
+  | aCh <- [C1, Ct]
+  , aI <- copiesOf aCh n1a nta
+  , bCh <- [C1, Ct]
+  , bI <- copiesOf bCh n1b ntb
+  , cCh <- [C1, Ct]
+  , cI <- copiesOf cCh n1c ntc
+  , e <- [C1, Ct]
+  , canFuse aCh bCh e
+  , canFuse e cCh total
+  , Just col <- [leftCol n1a nta n1b ntb n1c ntc aCh aI bCh bI cCh cI e]
+  , (f, amp) <- fRow inv aCh bCh cCh total e
+  , Just row <- [rightRow n1a nta n1b ntb n1c ntc aCh aI bCh bI cCh cI f]
+  ]
+
+buildAssocMatrix
+  :: Bool
+  -> Int -> Int -> Int -> Int -> Int -> Int
+  -> (Int, Int)
+  -> ( Int -> Int -> Int -> Int -> Int -> Int
+       -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+       -> Maybe Int
+     )
+  -> ( Int -> Int -> Int -> Int -> Int -> Int
+       -> Ch -> Int -> Ch -> Int -> Ch -> Int -> Ch
+       -> Maybe Int
+     )
+  -> Ch
+  -> LA.Matrix (Complex Double)
+buildAssocMatrix inv n1a nta n1b ntb n1c ntc (nRows, nCols) leftCol rightRow total
+  | nRows == 0 || nCols == 0 = LA.konst 0 (nRows, nCols)
+  | otherwise =
+      LA.accum (LA.konst 0 (nRows, nCols)) (+) $
+        assocSectorEntries inv total leftCol rightRow n1a nta n1b ntb n1c ntc
+
+-- | Associator @((a⊗b)⊗c) → (a⊗(b⊗c))@ on skeletal Hom via Fibonacci @F@-symbols.
+-- Same @N@-basis order as 'tensorBlocks'.
+associateBlocks
+  :: forall n1a nta n1b ntb n1c ntc
+   . KnownAssoc n1a nta n1b ntb n1c ntc
+  => HomBlocks
+      ( (n1a * n1b + nta * ntb) * n1c
+          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
+      )
+      ( ((n1a * n1b + nta * ntb) * ntc + ((n1a * ntb + nta * n1b) + nta * ntb) * n1c)
+          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
+      )
+      ( n1a * (n1b * n1c + ntb * ntc)
+          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
+      )
+      ( (n1a * ((n1b * ntc + ntb * n1c) + ntb * ntc) + nta * (n1b * n1c + ntb * ntc))
+          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
+      )
+associateBlocks =
+  let n1a = natI @n1a
+      nta = natI @nta
+      n1b = natI @n1b
+      ntb = natI @ntb
+      n1c = natI @n1c
+      ntc = natI @ntc
+      n1ab = n1a * n1b + nta * ntb
+      ntab = n1a * ntb + nta * n1b + nta * ntb
+      n1bc = n1b * n1c + ntb * ntc
+      ntbc = n1b * ntc + ntb * n1c + ntb * ntc
+      n1L = n1ab * n1c + ntab * ntc
+      ntL = n1ab * ntc + ntab * n1c + ntab * ntc
+      n1R = n1a * n1bc + nta * ntbc
+      ntR = n1a * ntbc + nta * n1bc + nta * ntbc
+      oneBlk =
+        buildAssocMatrix False n1a nta n1b ntb n1c ntc (n1R, n1L) leftColOnes rightRowOnes C1
+      tauBlk =
+        buildAssocMatrix False n1a nta n1b ntb n1c ntc (ntR, ntL) leftColTaus rightRowTaus Ct
+   in HomBlocks (fromLA oneBlk) (fromLA tauBlk)
+
+-- | Inverse associator via @F^{-1}@ (same basis).
+disassociateBlocks
+  :: forall n1a nta n1b ntb n1c ntc
+   . KnownAssoc n1a nta n1b ntb n1c ntc
+  => HomBlocks
+      ( n1a * (n1b * n1c + ntb * ntc)
+          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
+      )
+      ( (n1a * ((n1b * ntc + ntb * n1c) + ntb * ntc) + nta * (n1b * n1c + ntb * ntc))
+          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
+      )
+      ( (n1a * n1b + nta * ntb) * n1c
+          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
+      )
+      ( ((n1a * n1b + nta * ntb) * ntc + ((n1a * ntb + nta * n1b) + nta * ntb) * n1c)
+          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
+      )
+disassociateBlocks =
+  let n1a = natI @n1a
+      nta = natI @nta
+      n1b = natI @n1b
+      ntb = natI @ntb
+      n1c = natI @n1c
+      ntc = natI @ntc
+      n1ab = n1a * n1b + nta * ntb
+      ntab = n1a * ntb + nta * n1b + nta * ntb
+      n1bc = n1b * n1c + ntb * ntc
+      ntbc = n1b * ntc + ntb * n1c + ntb * ntc
+      n1L = n1ab * n1c + ntab * ntc
+      ntL = n1ab * ntc + ntab * n1c + ntab * ntc
+      n1R = n1a * n1bc + nta * ntbc
+      ntR = n1a * ntbc + nta * n1bc + nta * ntbc
+      -- Domain is right-associated; cols index @a⊗(b⊗c)@, rows @((a⊗b)⊗c)@.
+      oneBlk =
+        buildAssocMatrix True n1a nta n1b ntb n1c ntc (n1L, n1R) rightRowOnes leftColOnes C1
+      tauBlk =
+        buildAssocMatrix True n1a nta n1b ntb n1c ntc (ntL, ntR) rightRowTaus leftColTaus Ct
+   in HomBlocks (fromLA oneBlk) (fromLA tauBlk)
+
 -- | Coevaluation @𝟙 → τ⊗τ@. Coefficient @φ@ in the @𝟙@-channel so
 -- @cap ∘ cup = φ · id@ under @composeBlocks@.
 cup :: Fib 'One TauTau
@@ -617,78 +890,17 @@ fuse = Fib idBlocks
 split :: Fib OnePlusTau TauTau
 split = Fib idBlocks
 
--- | Braiding @τ⊗τ → τ⊗τ@ in fused channels @(𝟙, τ)@.
---
--- Convention (Bonderson \/ Fibonacci anyons):
--- @R^{ττ}_𝟙 = e^{-4πi/5}@, @R^{ττ}_τ = e^{3πi/5}@ (see 'braidBlocks').
-rmove :: Fib TauTau TauTau
-rmove = braidFib @'Tau @'Tau
-
--- | Associator @(τ⊗τ)⊗τ → τ⊗(τ⊗τ)@ on the common fused spine
--- @Fuse = 𝟙 ⊕ τ ⊕ τ@ (@HomBlocks@: @1×1@ on 𝟙, @2×2@ on τ).
---
--- __τ-sector basis__ (both @AssocL@ and @AssocR@): after @FuseNorm@ one has
--- @Sum Tau (Sum One Tau)@, i.e. @CollectSimples = [τ, 𝟙, τ]@; @Stabilize@
--- sorts to @[𝟙, τ, τ]@. The τ-block indices are therefore
---
--- * @0@: intermediate @𝟙@ (vacuum channel of the first @τ⊗τ@ fuse),
--- * @1@: intermediate @τ@.
---
--- Matrices (standard unitary Fibonacci \/ Bonderson): @F^{τττ}_𝟙 = φ⁻¹@,
--- @F^{τττ}_τ@ as below. Pentagon\/hexagon not yet tested in-tree.
-fmove :: Fib AssocL AssocR
-fmove =
-  Fib $
-    HomBlocks
-      (fromList [phiInv] :: M 1 1)
-      ( fromList
-          [ phiInv
-          , phiInvSqrt
-          , phiInvSqrt
-          , -phiInv
-          ] ::
-          M 2 2
-      )
-
--- | Inverse associator: @φ@ on the 𝟙-block; @F_τ@ is an involution.
-fmoveInv :: Fib AssocR AssocL
-fmoveInv =
-  Fib $
-    HomBlocks
-      (fromList [phi] :: M 1 1)
-      ( fromList
-          [ phiInv
-          , phiInvSqrt
-          , phiInvSqrt
-          , -phiInv
-          ] ::
-          M 2 2
-      )
+-- | Pointwise equality on sector matrices (smoke checks / gallery).
+eqFib :: (KnownMult a, KnownMult b) => Fib a b -> Fib a b -> Bool
+eqFib (Fib (HomBlocks o1 t1)) (Fib (HomBlocks o2 t2)) =
+  unwrap o1 == unwrap o2 && unwrap t1 == unwrap t2
 
 -- | Zero morphism (both sectors).
 zeroMor
   :: forall a c
-   . ( KnownNat (MultOne a)
-     , KnownNat (MultTau a)
-     , KnownNat (MultOne c)
-     , KnownNat (MultTau c)
-     )
+   . (KnownMult a, KnownMult c)
   => Fib a c
 zeroMor = Fib zeroBlocks
-
-composeFib
-  :: forall a b c
-   . ( KnownNat (MultOne a)
-     , KnownNat (MultTau a)
-     , KnownNat (MultOne b)
-     , KnownNat (MultTau b)
-     , KnownNat (MultOne c)
-     , KnownNat (MultTau c)
-     )
-  => Fib b c
-  -> Fib a b
-  -> Fib a c
-composeFib (Fib g) (Fib f) = Fib (composeBlocks g f)
 
 -- | @Fuse@ as a functor on morphisms: identity on Hom blocks.
 --
@@ -701,73 +913,12 @@ fuseMap
   -> Fib (Fuse a) (Fuse b)
 fuseMap (Fib h) = Fib h
 
--- | Bifunctorial tensor on morphisms (@N@-symbol Kronecker).
-tensorFib
-  :: forall a b c d
-   . ( KnownNat (MultOne a)
-     , KnownNat (MultTau a)
-     , KnownNat (MultOne b)
-     , KnownNat (MultTau b)
-     , KnownNat (MultOne c)
-     , KnownNat (MultTau c)
-     , KnownNat (MultOne d)
-     , KnownNat (MultTau d)
-     , KnownNat (MultOne a * MultOne c)
-     , KnownNat (MultTau a * MultTau c)
-     , KnownNat (MultOne b * MultOne d)
-     , KnownNat (MultTau b * MultTau d)
-     , KnownNat (MultOne a * MultTau c)
-     , KnownNat (MultTau a * MultOne c)
-     , KnownNat (MultOne b * MultTau d)
-     , KnownNat (MultTau b * MultOne d)
-     , KnownNat (MultOne a * MultOne c + MultTau a * MultTau c)
-     , KnownNat (MultOne b * MultOne d + MultTau b * MultTau d)
-     , KnownNat (MultOne a * MultTau c + MultTau a * MultOne c)
-     , KnownNat ((MultOne a * MultTau c + MultTau a * MultOne c) + MultTau a * MultTau c)
-     , KnownNat (MultOne b * MultTau d + MultTau b * MultOne d)
-     , KnownNat ((MultOne b * MultTau d + MultTau b * MultOne d) + MultTau b * MultTau d)
-     )
-  => Fib a b
-  -> Fib c d
-  -> Fib (Tensor a c) (Tensor b d)
-tensorFib (Fib f) (Fib g) = Fib (tensorBlocks f g)
-
--- | Braiding morphism @a⊗b → b⊗a@ via 'braidBlocks'.
-braidFib
-  :: forall a b
-   . ( KnownNat (MultOne a)
-     , KnownNat (MultTau a)
-     , KnownNat (MultOne b)
-     , KnownNat (MultTau b)
-     , KnownNat (MultOne a * MultOne b)
-     , KnownNat (MultTau a * MultTau b)
-     , KnownNat (MultOne b * MultOne a)
-     , KnownNat (MultTau b * MultTau a)
-     , KnownNat (MultOne a * MultTau b)
-     , KnownNat (MultTau a * MultOne b)
-     , KnownNat (MultOne b * MultTau a)
-     , KnownNat (MultTau b * MultOne a)
-     , KnownNat (MultOne a * MultOne b + MultTau a * MultTau b)
-     , KnownNat (MultOne b * MultOne a + MultTau b * MultTau a)
-     , KnownNat (MultOne a * MultTau b + MultTau a * MultOne b)
-     , KnownNat ((MultOne a * MultTau b + MultTau a * MultOne b) + MultTau a * MultTau b)
-     , KnownNat (MultOne b * MultTau a + MultTau b * MultOne a)
-     , KnownNat ((MultOne b * MultTau a + MultTau b * MultOne a) + MultTau b * MultTau a)
-     )
-  => Fib (Tensor a b) (Tensor b a)
-braidFib = Fib (braidBlocks @(MultOne a) @(MultTau a) @(MultOne b) @(MultTau b))
-
 --------------------------------------------------------------------------------
 -- Category
 --------------------------------------------------------------------------------
 
--- | Multiplicities known so @id@ \/ @(.)@ \/ @tensorFib@ need no object-name table.
--- @KnownFib@ enables @associate@\/@braid@ dispatch on concrete trees.
-type FibObject a =
-  ( KnownFib a
-  , KnownNat (MultOne a)
-  , KnownNat (MultTau a)
-  )
+-- | Multiplicities known so @id@ \/ @(.)@ need no object-name table.
+type FibObject a = KnownMult a
 
 instance Category Fib where
   type Object Fib a = FibObject a
@@ -781,14 +932,14 @@ instance Category Fib where
     => Fib b c
     -> Fib a b
     -> Fib a c
-  (.) = composeFib @a @b @c
+  (.) (Fib g) (Fib f) = Fib (composeBlocks g f)
 
 --------------------------------------------------------------------------------
 -- Tensor biendofunctor (tree layer)
 --------------------------------------------------------------------------------
 
 -- | @Tensor@ bifunctor: skeletal @N@-symbol Kronecker on Hom blocks
--- (@tensorBlocks@ \/ @tensorFib@). Basis order matches @Norm@ distribute
+-- (@tensorBlocks@). Basis order matches @Norm@ distribute
 -- (Ones from @𝟙⊗𝟙@ then @τ⊗τ→𝟙@; Taus from @𝟙⊗τ@, @τ⊗𝟙@, @τ⊗τ→τ@).
 instance PFunctor Tensor Fib Fib where
   first
@@ -801,7 +952,7 @@ instance PFunctor Tensor Fib Fib where
        )
     => Fib a b
     -> Fib (Tensor a c) (Tensor b c)
-  first f = tensorFib f (id :: Fib c c)
+  first f = bimap f (id :: Fib c c)
 
 instance QFunctor Tensor Fib Fib where
   second
@@ -814,7 +965,7 @@ instance QFunctor Tensor Fib Fib where
        )
     => Fib a b
     -> Fib (Tensor c a) (Tensor c b)
-  second g = tensorFib (id :: Fib c c) g
+  second g = bimap (id :: Fib c c) g
 
 instance Bifunctor Tensor Fib Fib Fib where
   bimap
@@ -829,29 +980,11 @@ instance Bifunctor Tensor Fib Fib Fib where
     => Fib a b
     -> Fib c d
     -> Fib (Tensor a c) (Tensor b d)
-  bimap = tensorFib @a @b @c @d
+  bimap (Fib f) (Fib g) = Fib (tensorBlocks f g)
 
 --------------------------------------------------------------------------------
 -- Associative / Monoidal / Braided (Tensor)
 --------------------------------------------------------------------------------
-
-associateBySing
-  :: SFib a
-  -> SFib b
-  -> SFib c
-  -> Fib (Tensor (Tensor a b) c) (Tensor a (Tensor b c))
-associateBySing SFTau SFTau SFTau = fmove
-associateBySing _ _ _ =
-  error "Fib associate: general F-symbols not implemented (only τ⊗τ⊗τ; unit legs via idl/idr)"
-
-disassociateBySing
-  :: SFib a
-  -> SFib b
-  -> SFib c
-  -> Fib (Tensor a (Tensor b c)) (Tensor (Tensor a b) c)
-disassociateBySing SFTau SFTau SFTau = fmoveInv
-disassociateBySing _ _ _ =
-  error "Fib disassociate: general F-symbols not implemented (only τ⊗τ⊗τ; unit legs via idl/idr)"
 
 instance Associative Fib Tensor where
   associate
@@ -865,7 +998,16 @@ instance Associative Fib Tensor where
        , Object Fib (Tensor a (Tensor b c))
        )
     => Fib (Tensor (Tensor a b) c) (Tensor a (Tensor b c))
-  associate = associateBySing (fibSing @a) (fibSing @b) (fibSing @c)
+  associate =
+    Fib
+      ( associateBlocks
+          @(MultOne a)
+          @(MultTau a)
+          @(MultOne b)
+          @(MultTau b)
+          @(MultOne c)
+          @(MultTau c)
+      )
 
   disassociate
     :: forall a b c
@@ -878,7 +1020,16 @@ instance Associative Fib Tensor where
        , Object Fib (Tensor a (Tensor b c))
        )
     => Fib (Tensor a (Tensor b c)) (Tensor (Tensor a b) c)
-  disassociate = disassociateBySing (fibSing @a) (fibSing @b) (fibSing @c)
+  disassociate =
+    Fib
+      ( disassociateBlocks
+          @(MultOne a)
+          @(MultTau a)
+          @(MultOne b)
+          @(MultTau b)
+          @(MultOne c)
+          @(MultTau c)
+      )
 
 instance Monoidal Fib Tensor where
   type Id Fib Tensor = 'One
@@ -904,4 +1055,4 @@ instance Braided Fib Tensor where
        , Object Fib (Tensor b a)
        )
     => Fib (Tensor a b) (Tensor b a)
-  braid = braidFib @a @b
+  braid = Fib (braidBlocks @(MultOne a) @(MultTau a) @(MultOne b) @(MultTau b))

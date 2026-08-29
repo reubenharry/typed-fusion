@@ -18,8 +18,10 @@
 -- 'IrrepExpr'. @'RTensor ('RSum r) ('RSum q)@ has
 -- @ToV = ToVSpine r ⊗ ToVSpine q@ ('rtensor') and reduces through 'FuseExpr' /
 -- 'fuseExpr' on atom pairs; @'RDual ('RSum r)@ is @DualVector (ToVSpine r)@
--- ('rdual'), paired by 'cupUnfused' / 'cupRdual' (primal⊗dual), with morphism
--- spaces as 'MorExpr' / 'rmor'. Fused cups/caps: 'cupFused' / 'capFused'.
+-- ('rdual'), paired by 'cupUnfused' / 'cupRdual' (primal⊗dual; unfused closed
+-- in 'ToV', including @'RSum Unit@), with morphism spaces as 'MorExpr' / 'rmor'.
+-- Unfused composition: 'composeMor' (@unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)@;
+-- assoc = monoidal α). Fused cups/caps: 'cupFused' / 'capFused'.
 --
 -- Tensor CG fuse uses typed 'Symmetry.CG.SU2.fuseCGChannel' per channel; see
 -- 'Experiments.Symbolic.Reference' for flat-buffer oracles.

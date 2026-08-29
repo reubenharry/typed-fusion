@@ -54,6 +54,9 @@ module Experiments.Symbolic.TypeLevel
   , CapUnfusedExpr
   , CupFusedRep
   , CapFusedRep
+  , ComposeTensorExpr
+  , ComposeAssocExpr
+  , ComposeCuppedExpr
     -- * Fusion
   , AtomsFromCG
   , FuseIrrep
@@ -191,9 +194,11 @@ type MorExpr (r :: Rep) (q :: Rep) =
 
 -- Compact closed cups / caps (primal⊗dual for eval/coev; 'MorExpr' stays Dual-left)
 --
--- Unfused: work in @ToV@ of @r ⊗ r*@ (matches historical @Tensor r (Dual r)@).
--- Fused: SU(2) identifies @r* ≅ r@, CG-fuse @r ⊗ r@, then restrict to singlets
--- (@'FilterTrivial@) — the Hom(@𝟙@,@𝟙@) summand.
+-- Unfused: closed in 'ToV' (@RepExpr@ spaces, including @'RSum Unit@).
+-- Fused: 'RepV' on singlet spines after dual≅primal and 'FuseExpr'.
+-- Cap on ⊕ is the diagonal coevaluation (biproduct natural η).
+--
+-- Unfused object: @r ⊗ r*@ ('CupUnfusedExpr' / primal⊗dual).
 --------------------------------------------------------------------------------
 
 -- | Unfused cup/cap object: @r ⊗ r*@ as a 'RepExpr'.
@@ -209,6 +214,29 @@ type CupFusedRep (r :: Rep) =
 
 -- | Fused cap codomain: same singlet spine as 'CupFusedRep'.
 type CapFusedRep (r :: Rep) = CupFusedRep r
+
+--------------------------------------------------------------------------------
+-- Unfused composition stages (@compose = unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)@)
+--
+-- Hom packing is Dual-left ('MorExpr'). Cup on the middle uses primal⊗dual
+-- ('CupUnfusedExpr'); 'assocCompose' is monoidal @α@ (rassoc then id⊗lassoc).
+--------------------------------------------------------------------------------
+
+-- | Step 1: @f ⊗ g@ with @f ∈ Mor a b@, @g ∈ Mor b c@.
+type ComposeTensorExpr (a :: Rep) (b :: Rep) (c :: Rep) =
+  'RTensor (MorExpr a b) (MorExpr b c)
+
+-- | Step 2: @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@ — middle ready for 'cupUnfused'.
+type ComposeAssocExpr (a :: Rep) (b :: Rep) (c :: Rep) =
+  'RTensor
+    ('RDual ('RSum a))
+    ('RTensor (CupUnfusedExpr b) ('RSum c))
+
+-- | Step 3: @Dual a ⊗ (Unit ⊗ c)@ after @(cup ⊗ id)@ on the middle.
+type ComposeCuppedExpr (a :: Rep) (b :: Rep) (c :: Rep) =
+  'RTensor
+    ('RDual ('RSum a))
+    ('RTensor ('RSum Unit) ('RSum c))
 
 --------------------------------------------------------------------------------
 -- Fusion: CG on atom pairs, then coalesced rep

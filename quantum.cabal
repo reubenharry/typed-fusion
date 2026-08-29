@@ -108,6 +108,7 @@ library
         Experiments.Symbolic.Reference
         Experiments.SymbolicExamples
         Experiments.Fibonacci
+        Experiments.Fibonacci.Free
         Experiments.Categorical.Bifunctor
         Experiments.Categorical.Associative
         Experiments.Categorical.Monoidal
@@ -619,6 +620,22 @@ executable tfim-dmrg-plot
         base ^>=4.19.2.0,
         quantum,
         mtl
+    default-language: GHC2021
+
+executable fibonacci-diagrams
+    import:           warnings
+    main-is:          fibonacci_diagrams.hs
+    hs-source-dirs:   scripts
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        diagrams-lib >= 1.4 && < 1.6,
+        diagrams-svg >= 1.4 && < 1.6,
+        diagrams-core >= 1.4 && < 1.6,
+        constrained-categories,
+        hmatrix,
+        filepath,
+        directory
     default-language: GHC2021
 
 executable groundstate-smoke

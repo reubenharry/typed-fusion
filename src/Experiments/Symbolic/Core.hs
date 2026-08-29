@@ -25,7 +25,8 @@
 -- Sectors are atom-keyed. Unfused tensor / dual spaces are 'RepExpr' values
 -- ('rtensor' / 'rdual' / 'rmor'), reduced by 'fuseExpr' or paired by
 -- 'cupUnfused' / 'cupRdual' (object @r ⊗ r*@); fused 'cupFused' / 'capFused'
--- on singlets after dual≅primal. 'repVToV' / 'vToRepV' round-trip a
+-- on singlets after dual≅primal. Unfused Hom composition: 'composeMor'
+-- (monoidal assoc + cup⊗id + unitor). 'repVToV' / 'vToRepV' round-trip a
 -- 'KnownSymRep' spine through 'ToVSpine'.
 module Experiments.Symbolic.Core where
 
@@ -67,8 +68,10 @@ import TensorNetwork.Categorical
   ( flattenCopyProd
   , flattenTensorProdCopy
   , fuseBond
+  , lassocMap
   , mergeCopyAxis
   , rassocMap
+  , runit
   , splitBond
   , swapMap
   , (⊗^)
@@ -780,14 +783,21 @@ actRep g = go (symRepSing @rs)
 -- @'RDual ('RSum rs)@ is @DualVector (ToVSpine rs)@ — no formal dual sector.
 --------------------------------------------------------------------------------
 
--- | Unit element carrying a scalar amplitude.
-unitFromScalar :: Complex Double -> RepV Unit
-unitFromScalar s =
-  RCons @('Atom 0) @('AtomM 1) (s *^ (konst 1 ⊗ konst 1)) RNil
+-- | Unit amplitude as @ToV ('RSum Unit)@ (@C 1 ⊗ C 1@).
+unitToVFromScalar :: Complex Double -> ToV ('RSum Unit)
+unitToVFromScalar s = s *^ (konst 1 ⊗ konst 1)
 
--- | Read the amplitude stored in a 'Unit' vector.
+-- | Read the amplitude from @ToV ('RSum Unit)@.
+unitToVScalar :: ToV ('RSum Unit) -> Complex Double
+unitToVScalar u = VS.head (toArray u)
+
+-- | Unit element as a 'RepV' spine (fused / atom-spine API).
+unitFromScalar :: Complex Double -> RepV Unit
+unitFromScalar = vToRepV @Unit . unitToVFromScalar
+
+-- | Read the amplitude stored in a 'Unit' 'RepV'.
 unitScalar :: RepV Unit -> Complex Double
-unitScalar (RCons u RNil) = VS.head (toArray u)
+unitScalar = unitToVScalar . repVToV @Unit
 
 -- | Dual of a leaf atom sector → @DualVector (C m ⊗ C (j+1))@.
 --
@@ -858,12 +868,12 @@ rmor x y = rdual x ⊗ repVToV y
 --------------------------------------------------------------------------------
 -- Cup / cap (compact closed)
 --
--- Unfused object: @r ⊗ r*@ ('CupUnfusedExpr' / primal⊗dual).
--- Fused: dual≅primal, CG-fuse, restrict to singlets ('CupFusedRep').
+-- Unfused: closed in 'ToV' (@RepExpr@ spaces, including @'RSum Unit@).
+-- Fused: 'RepV' on singlet spines after dual≅primal + 'FuseExpr'.
 -- Cap on ⊕ is the diagonal coevaluation (biproduct natural η).
 --------------------------------------------------------------------------------
 
--- | Unfused evaluation @ε : r ⊗ r* → 𝟙@.
+-- | Unfused evaluation @ε : r ⊗ r* → 𝟙@ (both sides 'ToV').
 cupUnfused
   :: forall r
    . ( KnownAtomRep r
@@ -873,9 +883,9 @@ cupUnfused
      , Scalar (DualVector (ToVSpine r)) ~ Complex Double
      )
   => ToV (CupUnfusedExpr r)
-  -> RepV Unit
+  -> ToV ('RSum Unit)
 cupUnfused t =
-  unitFromScalar
+  unitToVFromScalar
     ( getLinearFunction
         trace
         (fromTensor -+$=> (swapMap $ t))
@@ -890,9 +900,9 @@ capUnfused
      , Scalar (ToVSpine r) ~ Complex Double
      , Scalar (DualVector (ToVSpine r)) ~ Complex Double
      )
-  => RepV Unit
+  => ToV ('RSum Unit)
   -> ToV (CapUnfusedExpr r)
-capUnfused u = unitScalar u *^ idTensor @(ToVSpine r)
+capUnfused u = unitToVScalar u *^ idTensor @(ToVSpine r)
 
 -- | Hom scalar from flat @'AtomM m@ trivial channel.
 cupHomScalarAtomM
@@ -1033,7 +1043,7 @@ capFused u =
       ηPrimal = (id ⊗^ undualMap) $ η
    in projectToSymmetric (fuseExprTensor @r ηPrimal)
 
--- | Self-pairing @r ↦ ε(r ⊗ r*)@ via 'cupUnfused'.
+-- | Self-pairing @r ↦ ε(r ⊗ r*)@; wraps 'cupUnfused' into 'RepV Unit'.
 cupRdual
   :: forall r
    . ( KnownAtomRep r
@@ -1045,7 +1055,176 @@ cupRdual
      )
   => RepV r
   -> RepV Unit
-cupRdual r = cupUnfused @r (repVToV @r r ⊗ rdual @r r)
+cupRdual r =
+  vToRepV @Unit (cupUnfused @r (repVToV @r r ⊗ rdual @r r))
+
+--------------------------------------------------------------------------------
+-- Unfused composition (compact closed)
+--
+--   compose f g = unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)
+--
+-- Hom elements live in 'ToV' of 'MorExpr' (Dual-left). Identity is coevaluation
+-- braided into Dual-left packing. 'assocCompose' is monoidal @α@ (no F-move).
+--------------------------------------------------------------------------------
+
+-- | Morphisms @a → b@ as Hom-elements @ToV (MorExpr a b)@.
+newtype Sym (a :: Rep) (b :: Rep) = Sym {unSym :: ToV (MorExpr a b)}
+
+-- | Identity: @η@ from 'capUnfused', swapped into Dual-left ('MorExpr').
+idMor
+  :: forall a
+   . ( KnownAtomRep a
+     , LinearSpace (ToVSpine a)
+     , LinearSpace (DualVector (ToVSpine a))
+     , Scalar (ToVSpine a) ~ Complex Double
+     , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+     )
+  => ToV (MorExpr a a)
+idMor = swapMap $ capUnfused @a (unitToVFromScalar 1)
+
+-- | Step 1: @f ⊗ g@.
+tensorCompose
+  :: forall a b c
+   . ( TensorSpace (ToV (MorExpr a b))
+     , TensorSpace (ToV (MorExpr b c))
+     , Scalar (ToV (MorExpr a b)) ~ Complex Double
+     , Scalar (ToV (MorExpr b c)) ~ Complex Double
+     )
+  => ToV (MorExpr a b)
+  -> ToV (MorExpr b c)
+  -> ToV (ComposeTensorExpr a b c)
+tensorCompose = (⊗)
+
+-- | Step 2: reassociate to @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@ (cup-ready middle).
+--
+-- Unfused path is plain monoidal @α@ (no SU(2) F-move):
+--
+-- @
+-- (Dual a ⊗ b) ⊗ (Dual b ⊗ c)
+--   ─ rassoc ─► Dual a ⊗ (b ⊗ (Dual b ⊗ c))
+--   ─ id ⊗ lassoc ─► Dual a ⊗ ((b ⊗ Dual b) ⊗ c)
+-- @
+assocCompose
+  :: forall a b c
+   . ( LinearSpace (DualVector (ToVSpine a))
+     , LinearSpace (ToVSpine b)
+     , LinearSpace (DualVector (ToVSpine b))
+     , LinearSpace (ToVSpine c)
+     , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+     , Scalar (ToVSpine b) ~ Complex Double
+     , Scalar (DualVector (ToVSpine b)) ~ Complex Double
+     , Scalar (ToVSpine c) ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine a))
+     , TensorSpace (ToVSpine b)
+     , TensorSpace (DualVector (ToVSpine b))
+     , TensorSpace (ToVSpine c)
+     )
+  => ToV (ComposeTensorExpr a b c)
+  -> ToV (ComposeAssocExpr a b c)
+assocCompose t =
+  (id ⊗^ lassocMap @(ToVSpine b) @(DualVector (ToVSpine b)) @(ToVSpine c))
+    $ ( rassocMap
+          @(DualVector (ToVSpine a))
+          @(ToVSpine b)
+          @( DualVector (ToVSpine b)
+               ⊗ ToVSpine c
+           )
+          $ t
+      )
+
+-- | Left unitor for the Unit sector packaging @'(C 1 ⊗ C 1) ⊗ v → v@.
+unitLunit
+  :: forall v
+   . ( LinearSpace v
+     , Scalar v ~ Complex Double
+     , TensorSpace v
+     )
+  => ((C 1 ⊗ C 1) ⊗ v) +> v
+unitLunit =
+  runit
+    . swapMap
+    . (fuseBond @1 @1 ⊗^ id)
+
+-- | Step 3: @(cup ⊗ id)@ on the middle @b ⊗ Dual b@.
+cupTensorIdCompose
+  :: forall a b c
+   . ( KnownAtomRep b
+     , LinearSpace (ToVSpine b)
+     , LinearSpace (DualVector (ToVSpine b))
+     , LinearSpace (ToVSpine a)
+     , LinearSpace (DualVector (ToVSpine a))
+     , LinearSpace (ToVSpine c)
+     , Scalar (ToVSpine b) ~ Complex Double
+     , Scalar (DualVector (ToVSpine b)) ~ Complex Double
+     , Scalar (ToVSpine a) ~ Complex Double
+     , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+     , Scalar (ToVSpine c) ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine a))
+     , TensorSpace (ToVSpine c)
+     , TensorSpace (ToV (CupUnfusedExpr b))
+     , TensorSpace (ToV ('RSum Unit))
+     )
+  => ToV (ComposeAssocExpr a b c)
+  -> ToV (ComposeCuppedExpr a b c)
+cupTensorIdCompose t =
+  ( id
+      ⊗^ ( arr (LinearFunction (cupUnfused @b))
+             ⊗^ id
+         )
+  )
+    $ t
+
+-- | Step 4: left unitor on the right factor @Unit ⊗ c → c@.
+unitorCompose
+  :: forall a b c
+   . ( LinearSpace (DualVector (ToVSpine a))
+     , LinearSpace (ToVSpine c)
+     , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+     , Scalar (ToVSpine c) ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine a))
+     , TensorSpace (ToVSpine c)
+     )
+  => ToV (ComposeCuppedExpr a b c)
+  -> ToV (MorExpr a c)
+unitorCompose t =
+  (id ⊗^ unitLunit @(ToVSpine c)) $ t
+
+-- | Unfused Hom composition:
+-- @unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)@.
+composeMor
+  :: forall a b c
+   . ( TensorSpace (ToV (MorExpr a b))
+     , TensorSpace (ToV (MorExpr b c))
+     , Scalar (ToV (MorExpr a b)) ~ Complex Double
+     , Scalar (ToV (MorExpr b c)) ~ Complex Double
+     , KnownAtomRep b
+     , LinearSpace (ToVSpine b)
+     , LinearSpace (DualVector (ToVSpine b))
+     , LinearSpace (ToVSpine a)
+     , LinearSpace (DualVector (ToVSpine a))
+     , LinearSpace (ToVSpine c)
+     , Scalar (ToVSpine b) ~ Complex Double
+     , Scalar (DualVector (ToVSpine b)) ~ Complex Double
+     , Scalar (ToVSpine a) ~ Complex Double
+     , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+     , Scalar (ToVSpine c) ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine a))
+     , TensorSpace (ToVSpine b)
+     , TensorSpace (DualVector (ToVSpine b))
+     , TensorSpace (ToVSpine c)
+     , TensorSpace (ToV (CupUnfusedExpr b))
+     , TensorSpace (ToV ('RSum Unit))
+     )
+  => ToV (MorExpr a b)
+  -> ToV (MorExpr b c)
+  -> ToV (MorExpr a c)
+composeMor f g =
+  unitorCompose @a @b @c
+    ( cupTensorIdCompose @a @b @c
+        ( assocCompose @a @b @c
+            (tensorCompose @a @b @c f g)
+        )
+    )
 
 --------------------------------------------------------------------------------
 -- Braid (copy-axis swap on each sector)
