@@ -109,6 +109,9 @@ library
         Experiments.SymbolicExamples
         Experiments.Fibonacci
         Experiments.Categorical.Bifunctor
+        Experiments.Categorical.Associative
+        Experiments.Categorical.Monoidal
+        Experiments.Categorical.Braided
         Experiments.Fusion.Theory
         Experiments.SU2
         Experiments.Experiment

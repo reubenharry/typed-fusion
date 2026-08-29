@@ -29,6 +29,7 @@ class (Category r, Category t) => PFunctor (p :: κ -> κ -> κ) (r :: κ -> κ 
   first
     :: ( Object r a
        , Object r b
+       , Object t c
        , Object t (p a c)
        , Object t (p b c)
        )
@@ -40,6 +41,7 @@ class (Category s, Category t) => QFunctor (q :: κ -> κ -> κ) (s :: κ -> κ 
   second
     :: ( Object s a
        , Object s b
+       , Object t c
        , Object t (q c a)
        , Object t (q c b)
        )

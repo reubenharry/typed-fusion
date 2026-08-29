@@ -236,21 +236,6 @@ For four simples (here only $\tau$ nontrivial), the associator in a fixed fusion
 is a unitary matrix $F^{abc}_{d}$ relating the two parenthesizations of
 $a\otimes b\otimes c$ with total charge $d$.
 
-Fibonacci (multiplicity-free) has a standard $F$-matrix on the $\tau\otimes\tau\otimes\tau$
-space; schematically, in the usual basis of fusion channels,
-
-$$
-F^{\tau\tau\tau}_{\tau}
-=
-\begin{pmatrix}
-\varphi^{-1} & \varphi^{-1/2} \\
-\varphi^{-1/2} & -\varphi^{-1}
-\end{pmatrix}
-$$
-
-(up to conventional phase choices). Exact matrix and basis order belong in the
-spec of `fmove`, not in compose.
-
 **Typed meaning:**
 
 $$
@@ -261,18 +246,61 @@ $$
 \tau\otimes(\tau\otimes\tau)
 $$
 
-is one concrete isomorphism; its components are $F$-symbols once Hom bases are fixed.
+Both sides fuse to $𝟙 \oplus \tau \oplus \tau$, so `fmove` is an element of
+$\mathrm{End}(𝟙\oplus\tau\oplus\tau) \cong \mathbb{C} \times \mathrm{Mat}_2(\mathbb{C})$.
+
+**τ-sector basis (fixed):** for both associations, `FuseNorm ∘ Norm` yields
+`Sum Tau (Sum One Tau)` i.e. simples $[\tau,𝟙,\tau]$ before stabilize. After
+sorting Ones-then-Taus, the τ-block indices are:
+
+| index | intermediate of first $\tau\otimes\tau$ |
+| --- | --- |
+| $0$ | $𝟙$ |
+| $1$ | $\tau$ |
+
+**Matrices (Bonderson / standard unitary Fibonacci):**
+
+$$
+F^{\tau\tau\tau}_{𝟙} = \varphi^{-1},
+\qquad
+F^{\tau\tau\tau}_{\tau}
+=
+\begin{pmatrix}
+\varphi^{-1} & \varphi^{-1/2} \\
+\varphi^{-1/2} & -\varphi^{-1}
+\end{pmatrix}.
+$$
+
+Pentagon identity is the check that this basis+matrix choice is coherent (not yet
+automated in-tree).
 
 ### 7.2 $R$-symbols
 
-Braiding $R^{\tau\tau} = \mathrm{diag}(e^{-4\pi i/5},\, e^{3\pi i/5})$ (usual Fibonacci anyon
-convention; confirm phase convention when implementing).
+Simple-label braiding phases (Bonderson Fibonacci):
 
-**Typed meaning:** $\mathrm{rmove} \colon \tau\otimes\tau \to \tau\otimes\tau$ (or the braided
-iso on fused channels).
+$$
+R^{𝟙𝟙}_{𝟙}=1,\quad
+R^{𝟙τ}_{τ}=R^{τ𝟙}_{τ}=1,\quad
+R^{ττ}_{𝟙}=e^{-4\pi i/5},\quad
+R^{ττ}_{τ}=e^{3\pi i/5}.
+$$
+
+**Extension to general objects** (same $N$-basis as `tensorBlocks`):
+`braidBlocks` / `braidFib` $:$ $a\otimes b\to b\otimes a$ acts by
+
+- **𝟙-sector:** commute $(𝟙\otimes𝟙)$ pairs with $R^{𝟙𝟙}$ and $(τ\otimesτ\to𝟙)$ pairs with $R^{ττ}_{𝟙}$;
+- **τ-sector:** $(𝟙\otimesτ)\leftrightarrow(τ\otimes𝟙)$ with unit phases, and $(τ\otimesτ\toτ)$ with $R^{ττ}_{τ}$.
+
+Special case `rmove` $=$ `braidFib @Tau @Tau`. Hexagon identities pair this with `fmove`.
 
 $F$ and $R$ must satisfy the pentagon / hexagon equations; that is a **property
 to test**, not part of Hom composition.
+
+### 7.3 General $F$ (next)
+
+General $F^{abc}$ needs labeled intermediate channels on the fused spines of
+$(a\otimes b)\otimes c$ and $a\otimes(b\otimes c)$, not only $τττ$. Same basis
+discipline as $R$; implement after hexagon smoke on the general $R$ above.
 
 ---
 
@@ -325,8 +353,9 @@ Resolved for the current code:
 Still open:
 
 3. **Cup/cap normalization:** currently $\varphi$ on cup, $1$ on cap (snake $= d_τ$); unitary $\sqrt{\varphi}$ each is an alternative.
-4. **Phase convention** for $F$ and $R$ (must be fixed and tested against pentagon/hexagon).
-5. **Whether trees are objects of the same `Category` instance** as the skeleton, or
+4. **Pentagon / hexagon tests** for the `fmove` / `rmove` matrices in §7 (basis is fixed; coherence not yet checked in code).
+5. **Unit legs of `associate`:** still blocked / error until general $F$; unit braids are covered by `braidFib` (no `Mult*` coerce needed — domain/codomain Mults are independent).
+6. **Whether trees are objects of the same `Category` instance** as the skeleton, or
    skeletal category + a separate tree language with interpretation $\mathrm{Fuse}$.
 
 ---
@@ -360,7 +389,35 @@ In code (`Experiments.Fibonacci`):
 - `idBlocks` = `(I_{n1}, I_{nτ})`; cups/caps/fuse/split are concrete `HomBlocks`.
 - `HomDim a b = MultOne a * MultOne b + MultTau a * MultTau b` (derived).
 
-**Singletons (`SFib` / `KnownFib`)** only mark which *trees* are currently Category objects (and the Tensor bifunctor demos). They are not consulted by compose.
+**Singletons (`SFib` / `KnownFib`)** are optional demos. `Object Fib` is only `KnownNat` on `Mult*`.
+
+**Fuse as a functor on morphisms:** `fuseMap` is the identity on `HomBlocks`, under `FuseIdemMult`.
+
+**Tensor bifunctor / monoidal Hom:** `MultOne` / `MultTau` are defined $N$-bilinear on `'Tensor` (and additive on `'Sum`), so
+
+$$
+n_𝟙(a\otimes b)=n_𝟙(a)n_𝟙(b)+n_τ(a)n_τ(b),\quad
+n_τ(a\otimes b)=n_𝟙(a)n_τ(b)+n_τ(a)n_𝟙(b)+n_τ(a)n_τ(b)
+$$
+
+definitionally. Then `tensorBlocks` builds
+
+$$
+R_𝟙=\mathrm{diag}(F_𝟙\otimes G_𝟙,\; F_τ\otimes G_τ),\qquad
+R_τ=\mathrm{diag}(F_𝟙\otimes G_τ,\; F_τ\otimes G_𝟙,\; F_τ\otimes G_τ)
+$$
+
+with basis order matching `Norm` distribute (Ones: $𝟙\otimes𝟙$ then $τ\otimesτ\to𝟙$; Taus: $𝟙\otimesτ$, $τ\otimes𝟙$, $τ\otimesτ\toτ$). `bimap` / `first` / `second` = `tensorFib`.
+
+**Associative / Monoidal / Braided** (Kmett-shaped, under `Experiments.Categorical`):
+
+| Class | Fib `Tensor` |
+| --- | --- |
+| `Monoidal` | `Id = One`; unitors = `idBlocks` |
+| `Associative` | `associate`/`disassociate` = `fmove`/`fmoveInv` for $τττ$; else runtime error until general $F$ |
+| `Braided` | `braid` = `braidFib` (bilinear $R$ on $N$-basis); `rmove` = $τ⊗τ$ special case |
+
+Not `Symmetric` ($R^2\neq\mathrm{id}$). Pentagon/hexagon untested. `KnownFib` is closed under `Tensor`/`Sum`.
 
 **Optional flat view** (not implemented): row-major `blkOne` then row-major `blkTau` yields a vector of length `HomDim`. One generic flatten/unflatten — never a $4\times 4$ object grid.
 
