@@ -18,13 +18,18 @@
 
 -- | Type-level braid, coalesce, and fuse for symbolic atom reps.
 --
--- Sectors are atom-keyed ('IrrepExpr' has only @'Atom@), so unfused tensor and
--- dual spaces are expressed on 'RepExpr' (@'RTensor@ / @'RDual@) and reduced by
--- 'FuseExpr' / 'ToV' rather than by formal @'Tensor@ / @'Dual@ irreps.
+-- 'RepExpr' is the @ToV@ / space layer (unfused Kronecker, duals, 'MorExpr'
+-- packing) — not the categorical object kind. Categorical objects for 'Sym'
+-- are 'Experiments.Fusion.Obj.Obj' trees (@'Atom@ \/ @'Tensor@ \/ @'Sum@);
+-- 'FuseSym' forgets them to a coalesced 'Rep' spine for Hom.
+--
+-- Sectors are keyed by bare @Nat@ (@2j@). Unfused tensor and dual spaces use
+-- 'RepExpr' (@'RTensor@ / @'RDual@) and reduce via 'FuseExpr' / 'ToV'. Nested
+-- Mac Lane parenthesization lives on @Obj@, not on 'RepExpr' (well-formed
+-- @'RTensor@ stays binary on atom @'RSum@ spines).
 module Experiments.Symbolic.TypeLevel
   ( -- * Braid
-    BraidIrrep
-  , BraidMult
+    BraidMult
   , BraidSector
   , Braid
     -- * Unit
@@ -33,7 +38,6 @@ module Experiments.Symbolic.TypeLevel
   , EvalMult
   , AddMult
     -- * Coalesce (sorted merge)
-  , CmpIrrep
   , InsertSector
   , InsertSectorOrd
   , Coalesce
@@ -44,10 +48,6 @@ module Experiments.Symbolic.TypeLevel
   , ToVSpine
   , ToV
   , BraidExpr
-  , FuseExpr
-  , FuseAtoms
-  , FuseAtomSpineOne
-  , FuseAtomSpines
   , DualExpr
   , MorExpr
   , MorExprFused
@@ -55,21 +55,22 @@ module Experiments.Symbolic.TypeLevel
   , CapUnfusedExpr
   , CupFusedRep
   , CapFusedRep
-    -- * Fusion
+    -- * Fusion (CG)
+  , FuseExpr
   , AtomsFromCG
-  , FuseIrrep
   , TagMult
-  , FuseSector
-  , FuseRepRaw
-  , Fuse
+  , FuseAtoms
+  , FuseAtomSpineOne
+  , FuseAtomSpines
   , SymTensor
-  , SObj (..)
-  , FlattenS
+  , FuseSym
     -- * Spine constraints
   , AtomSpine
   ) where
 
 import Data.Kind (Constraint, Type)
+import Experiments.Fusion.Obj (Obj)
+import qualified Experiments.Fusion.Obj as FObj
 import Experiments.SU2 (TensorIrrepRepSU2)
 import Experiments.Symbolic.Expr
 import GHC.TypeLits (CmpNat, KnownNat, Nat, type (*), type (+))
@@ -80,16 +81,12 @@ import Symmetry.Utils (Append)
 -- Braid (swap copy factors on each sector)
 --------------------------------------------------------------------------------
 
--- | Irrep keys are atoms, so braiding leaves them fixed.
-type family BraidIrrep (e :: IrrepExpr) :: IrrepExpr where
-  BraidIrrep ('Atom j) = 'Atom j
-
 type family BraidMult (μ :: MultExpr) :: MultExpr where
   BraidMult ('AtomM m) = 'AtomM m
   BraidMult ('Prod μ1 μ2) = 'Prod (BraidMult μ2) (BraidMult μ1)
 
 type family BraidSector (s :: Sector) :: Sector where
-  BraidSector '(e, μ) = '(BraidIrrep e, BraidMult μ)
+  BraidSector '(j, μ) = '(j, BraidMult μ)
 
 -- | Braid every sector in a spine (swap the @'Prod@ copy factors).
 type family Braid (rs :: Rep) :: Rep where
@@ -97,7 +94,7 @@ type family Braid (rs :: Rep) :: Rep where
   Braid (s ': rs) = BraidSector s ': Braid rs
 
 -- | Monoidal unit: trivial irrep @j = 0@ with unit multiplicity.
-type Unit = '[ '( 'Atom 0, 'AtomM 1)]
+type Unit = '[ '(0, 'AtomM 1)]
 
 --------------------------------------------------------------------------------
 -- Multiplicity evaluation / merge
@@ -113,42 +110,37 @@ type family AddMult (μ1 :: MultExpr) (μ2 :: MultExpr) :: MultExpr where
   AddMult μ1 μ2 = 'AtomM (EvalMult μ1 + EvalMult μ2)
 
 --------------------------------------------------------------------------------
--- Coalesce: sort + merge sectors with equal 'IrrepExpr'
+-- Coalesce: sort + merge sectors with equal irrep label
 --------------------------------------------------------------------------------
 
--- | Total order on atom keys.
-type family CmpIrrep (a :: IrrepExpr) (b :: IrrepExpr) :: Ordering where
-  CmpIrrep ('Atom j) ('Atom k) = CmpNat j k
-
 -- | Insert one sector into an already-coalesced (sorted, merged) spine.
-type family InsertSector (e :: IrrepExpr) (μ :: MultExpr) (rs :: Rep) :: Rep where
-  InsertSector e μ '[] = '[ '(e, μ)]
-  InsertSector e μ ('(e2, μ2) ': rest) =
-    InsertSectorOrd (CmpIrrep e e2) e μ e2 μ2 rest
+type family InsertSector (j :: Nat) (μ :: MultExpr) (rs :: Rep) :: Rep where
+  InsertSector j μ '[] = '[ '(j, μ)]
+  InsertSector j μ ('(j2, μ2) ': rest) =
+    InsertSectorOrd (CmpNat j j2) j μ j2 μ2 rest
 
 type family InsertSectorOrd
   (o :: Ordering)
-  (e :: IrrepExpr) (μ :: MultExpr)
-  (e2 :: IrrepExpr) (μ2 :: MultExpr)
+  (j :: Nat) (μ :: MultExpr)
+  (j2 :: Nat) (μ2 :: MultExpr)
   (rest :: Rep)
   :: Rep
  where
-  InsertSectorOrd 'EQ e μ _ μ2 rest = '(e, AddMult μ μ2) ': rest
-  InsertSectorOrd 'LT e μ e2 μ2 rest = '(e, μ) ': '(e2, μ2) ': rest
-  InsertSectorOrd 'GT e μ e2 μ2 rest = '(e2, μ2) ': InsertSector e μ rest
+  InsertSectorOrd 'EQ j μ _ μ2 rest = '(j, AddMult μ μ2) ': rest
+  InsertSectorOrd 'LT j μ j2 μ2 rest = '(j, μ) ': '(j2, μ2) ': rest
+  InsertSectorOrd 'GT j μ j2 μ2 rest = '(j2, μ2) ': InsertSector j μ rest
 
 -- | Fold @InsertSector@ over a raw spine → sorted, merged 'Rep'.
 type family Coalesce (rs :: Rep) :: Rep where
   Coalesce '[] = '[]
-  Coalesce ('(e, μ) ': rest) = InsertSector e μ (Coalesce rest)
+  Coalesce ('(j, μ) ': rest) = InsertSector j μ (Coalesce rest)
 
--- | Keep only the SU(2) trivial irrep (@'Atom 0@); drop everything else.
--- Typical use: after 'Fuse' \/ 'Coalesce', project to singlets (Hom space).
+-- | Keep only the SU(2) trivial irrep (@0@); drop everything else.
+-- Typical use: after 'Coalesce' \/ 'FuseExpr', project to singlets (Hom space).
 type family FilterTrivial (rs :: Rep) :: Rep where
   FilterTrivial '[] = '[]
-  FilterTrivial ('( 'Atom 0, μ) ': rest) =
-    '( 'Atom 0, μ) ': FilterTrivial rest
-  FilterTrivial ('(e, μ) ': rest) = FilterTrivial rest
+  FilterTrivial ('(0, μ) ': rest) = '(0, μ) ': FilterTrivial rest
+  FilterTrivial ('(j, μ) ': rest) = FilterTrivial rest
 
 --------------------------------------------------------------------------------
 -- Sector spaces (concrete vectors indexed by irrep / multiplicity)
@@ -159,9 +151,9 @@ type family IrrepDim (j :: Nat) :: Nat where
   IrrepDim j = j + 1
 
 -- | Sector space from irrep label + multiplicity.
-type family ToVSector (e :: IrrepExpr) (μ :: MultExpr) :: Type where
-  ToVSector ('Atom j) ('AtomM m) = C m ⊗ C (IrrepDim j)
-  ToVSector ('Atom j) ('Prod ('AtomM m) ('AtomM n)) =
+type family ToVSector (j :: Nat) (μ :: MultExpr) :: Type where
+  ToVSector j ('AtomM m) = C m ⊗ C (IrrepDim j)
+  ToVSector j ('Prod ('AtomM m) ('AtomM n)) =
     (C m ⊗ C n) ⊗ C (IrrepDim j)
 
 -- | Forgetful direct-sum space of a spine: right-nested sector payloads.
@@ -170,9 +162,9 @@ type family ToVSector (e :: IrrepExpr) (μ :: MultExpr) :: Type where
 -- @(ToVSector s1, ToVSpine rest)@ (no @()@ terminator — that breaks
 -- linearmap @Scalar@ / @⊗@). Empty spine is unsupported as an @LSpace@.
 type family ToVSpine (rs :: Rep) :: Type where
-  ToVSpine '[ '(e, μ) ] = ToVSector e μ
-  ToVSpine ('(e, μ) ': s ': rest) =
-    (ToVSector e μ, ToVSpine (s ': rest))
+  ToVSpine '[ '(j, μ) ] = ToVSector j μ
+  ToVSpine ('(j, μ) ': s ': rest) =
+    (ToVSector j μ, ToVSpine (s ': rest))
 
 -- | Space of a 'RepExpr': nested-tuple @⊕@ for sums, @⊗@ for unfused tensors.
 type family ToV (e :: RepExpr) :: Type where
@@ -230,29 +222,12 @@ type CapFusedRep (r :: Rep) = CupFusedRep r
 -- | Tag every CG channel with unit multiplicity (irrep-only fuse).
 type family AtomsFromCG (cg :: [(Nat, Nat)]) :: Rep where
   AtomsFromCG '[] = '[]
-  AtomsFromCG ('(j, _) ': rest) = '( 'Atom j, 'AtomM 1) ': AtomsFromCG rest
-
--- | Fuse one 'IrrepExpr': atoms are already fused.
-type family FuseIrrep (e :: IrrepExpr) :: Rep where
-  FuseIrrep ('Atom j) = '[ '( 'Atom j, 'AtomM 1)]
+  AtomsFromCG ('(j, _) ': rest) = '(j, 'AtomM 1) ': AtomsFromCG rest
 
 -- | Attach a sector multiplicity to every atom in a fused irrep spine.
 type family TagMult (μ :: MultExpr) (rs :: Rep) :: Rep where
   TagMult μ '[] = '[]
-  TagMult μ ('( 'Atom j, _) ': rest) = '( 'Atom j, μ) ': TagMult μ rest
-
--- | Fuse one sector: CG the irrep, tag copies.
-type family FuseSector (s :: Sector) :: Rep where
-  FuseSector '(e, μ) = TagMult μ (FuseIrrep e)
-
--- | Fuse every sector in a spine, append, then coalesce.
-type family FuseRepRaw (rs :: Rep) :: Rep where
-  FuseRepRaw '[] = '[]
-  FuseRepRaw (s ': rest) = Append (FuseSector s) (FuseRepRaw rest)
-
--- | Full fusion of a 'Rep': same keys merged.
-type family Fuse (rs :: Rep) :: Rep where
-  Fuse rs = Coalesce (FuseRepRaw rs)
+  TagMult μ ('(j, _) ': rest) = '(j, μ) ': TagMult μ rest
 
 -- | CG channels for two atoms with attached multiplicity.
 type family FuseAtoms (j1 :: Nat) (j2 :: Nat) (μ :: MultExpr) :: Rep where
@@ -260,7 +235,7 @@ type family FuseAtoms (j1 :: Nat) (j2 :: Nat) (μ :: MultExpr) :: Rep where
 
 type family FuseAtomSpineOne (j1 :: Nat) (μ1 :: MultExpr) (q :: Rep) :: Rep where
   FuseAtomSpineOne _ _ '[] = '[]
-  FuseAtomSpineOne j1 μ1 ('( 'Atom j2, 'AtomM m2) ': rest) =
+  FuseAtomSpineOne j1 μ1 ('(j2, 'AtomM m2) ': rest) =
     Append
       (FuseAtoms j1 j2 ('Prod μ1 ('AtomM m2)))
       (FuseAtomSpineOne j1 μ1 rest)
@@ -268,15 +243,20 @@ type family FuseAtomSpineOne (j1 :: Nat) (μ1 :: MultExpr) (q :: Rep) :: Rep whe
 -- | Distribute atom spines and CG each pair.
 type family FuseAtomSpines (r :: Rep) (q :: Rep) :: Rep where
   FuseAtomSpines '[] _ = '[]
-  FuseAtomSpines ('( 'Atom j1, 'AtomM m1) ': rest) q =
+  FuseAtomSpines ('(j1, 'AtomM m1) ': rest) q =
     Append
       (FuseAtomSpineOne j1 ('AtomM m1) q)
       (FuseAtomSpines rest q)
 
--- | Fuse a 'RepExpr'. @'RTensor@ args must be atom @'RSum@ (non-recursive).
--- Dual-left Hom (@MorExpr@) fuses like primal⊗primal (SU(2) dual≅primal).
+-- | Fuse a 'RepExpr' to a coalesced 'Rep'.
+--
+-- @
+--   'RSum rs              ↦  Coalesce rs          -- already atom spine
+--   'RTensor ('RSum r) ('RSum q)  ↦  CG coalesce   -- real fuse
+--   Dual-left Hom tensors fuse like primal⊗primal (SU(2) dual≅primal)
+-- @
 type family FuseExpr (e :: RepExpr) :: Rep where
-  FuseExpr ('RSum rs) = Fuse rs
+  FuseExpr ('RSum rs) = Coalesce rs
   FuseExpr ('RTensor ('RSum r) ('RSum q)) =
     Coalesce (FuseAtomSpines r q)
   FuseExpr ('RTensor ('RDual ('RSum r)) ('RSum q)) =
@@ -285,20 +265,17 @@ type family FuseExpr (e :: RepExpr) :: Rep where
 -- | Fused monoidal product of atom spines (@CG@ coalesce).
 -- Unitor equations: @Unit ⊗ a = a = a ⊗ Unit@.
 type family SymTensor (a :: Rep) (b :: Rep) :: Rep where
-  SymTensor '[ '( 'Atom 0, 'AtomM 1)] b = b
-  SymTensor a '[ '( 'Atom 0, 'AtomM 1)] = a
+  SymTensor '[ '(0, 'AtomM 1)] b = b
+  SymTensor a '[ '(0, 'AtomM 1)] = a
   SymTensor a b = FuseExpr ('RTensor ('RSum a) ('RSum b))
 
--- | Objects of the symbolic monoidal category: leaf spines and formal tensors.
--- (Type families cannot be unsaturated @Bifunctor@\/@Monoidal@ parameters.)
-data SObj
-  = SLeaf Rep
-  | STensor SObj SObj
-
--- | Forget formal @STensor@ nesting to a coalesced 'Rep' spine.
-type family FlattenS (o :: SObj) :: Rep where
-  FlattenS ('SLeaf r) = r
-  FlattenS ('STensor a b) = SymTensor (FlattenS a) (FlattenS b)
+-- | Forget a fusion-tree object (@Obj Nat@, @2j@ labels) to a coalesced 'Rep'
+-- spine for 'MorExpr' Hom. Analogous to Fib @Fuse@\/@Mults@, but the Hom
+-- packing is Dual-left @ToV@ rather than finite-Irr @HomS@.
+type family FuseSym (a :: Obj Nat) :: Rep where
+  FuseSym ('FObj.Atom j) = '[ '(j, 'AtomM 1)]
+  FuseSym ('FObj.Tensor a b) = SymTensor (FuseSym a) (FuseSym b)
+  FuseSym ('FObj.Sum a b) = Coalesce (Append (FuseSym a) (FuseSym b))
 
 --------------------------------------------------------------------------------
 -- Spine constraints
@@ -307,7 +284,7 @@ type family FlattenS (o :: SObj) :: Rep where
 -- | Constraint: spine is leaf atoms with @'AtomM@ multiplicities (tensor domain).
 type family AtomSpine (rs :: Rep) :: Constraint where
   AtomSpine '[] = ()
-  AtomSpine ('( 'Atom j, 'AtomM m) ': rest) =
+  AtomSpine ('(j, 'AtomM m) ': rest) =
     ( KnownNat j
     , KnownNat m
     , KnownNat (IrrepDim j)

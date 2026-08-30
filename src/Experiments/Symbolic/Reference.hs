@@ -49,7 +49,7 @@ import qualified Data.Vector.Storable as VS
 
 -- | Flat @toArray@ length of one sector (Reference / buffer boundary only).
 type family SectorFlatDim (s :: Sector) :: Nat where
-  SectorFlatDim '( 'Atom j, μ) = EvalMult μ * IrrepDim j
+  SectorFlatDim '(j, μ) = EvalMult μ * IrrepDim j
 
 sectorFlatDim :: forall s. KnownNat (SectorFlatDim s) => Proxy s -> Int
 sectorFlatDim _ =
@@ -70,13 +70,13 @@ instance
   ( KnownNat j
   , KnownNat m
   , KnownNat (IrrepDim j)
-  , KnownNat (SectorFlatDim '( 'Atom j, 'AtomM m))
+  , KnownNat (SectorFlatDim '(j, 'AtomM m))
   , UnpackFusedRep rest
   ) =>
-  UnpackFusedRep ('( 'Atom j, 'AtomM m) ': rest)
+  UnpackFusedRep ('(j, 'AtomM m) ': rest)
   where
   unpackFusedRep flat =
-    let d = sectorFlatDim (Proxy @'( 'Atom j, 'AtomM m))
+    let d = sectorFlatDim (Proxy @'(j, 'AtomM m))
         (here, restFlat) = VS.splitAt d flat
     in RConsAtomAtomM (unsafeFromArray here) (unpackFusedRep @rest restFlat)
 
@@ -85,13 +85,13 @@ instance
   , KnownNat m
   , KnownNat n
   , KnownNat (IrrepDim j)
-  , KnownNat (SectorFlatDim '( 'Atom j, 'Prod ('AtomM m) ('AtomM n)))
+  , KnownNat (SectorFlatDim '(j, 'Prod ('AtomM m) ('AtomM n)))
   , UnpackFusedRep rest
   ) =>
-  UnpackFusedRep ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
+  UnpackFusedRep ('(j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
   unpackFusedRep flat =
-    let d = sectorFlatDim (Proxy @'( 'Atom j, 'Prod ('AtomM m) ('AtomM n)))
+    let d = sectorFlatDim (Proxy @'(j, 'Prod ('AtomM m) ('AtomM n)))
         (here, restFlat) = VS.splitAt d flat
     in RConsAtomProd (unsafeFromArray here) (unpackFusedRep @rest restFlat)
 
@@ -153,10 +153,10 @@ instance
   ( KnownNat j
   , KnownNat m
   , KnownNat (IrrepDim j)
-  , KnownNat (SectorFlatDim '( 'Atom j, 'AtomM m))
+  , KnownNat (SectorFlatDim '(j, 'AtomM m))
   , RepVFlat rest
   ) =>
-  RepVFlat ('( 'Atom j, 'AtomM m) ': rest)
+  RepVFlat ('(j, 'AtomM m) ': rest)
   where
   repVFlat (RConsAtomAtomM v rs) = toArray v VS.++ repVFlat rs
   repVFlat _ = error "repVFlat: spine / constructor mismatch"
@@ -166,10 +166,10 @@ instance
   , KnownNat m
   , KnownNat n
   , KnownNat (IrrepDim j)
-  , KnownNat (SectorFlatDim '( 'Atom j, 'Prod ('AtomM m) ('AtomM n)))
+  , KnownNat (SectorFlatDim '(j, 'Prod ('AtomM m) ('AtomM n)))
   , RepVFlat rest
   ) =>
-  RepVFlat ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
+  RepVFlat ('(j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
   repVFlat (RConsAtomProd v rs) = toArray v VS.++ repVFlat rs
   repVFlat _ = error "repVFlat: spine / constructor mismatch"
@@ -187,7 +187,7 @@ instance
   , KnownNat n
   , KnownNat (IrrepDim j)
   , KnownNat (m * n)
-  , KnownNat (SectorFlatDim '( 'Atom j, 'AtomM (m * n)))
+  , KnownNat (SectorFlatDim '(j, 'AtomM (m * n)))
   , LSpace (C m)
   , LSpace (C n)
   , LSpace (C (IrrepDim j))
@@ -204,7 +204,7 @@ instance
   , Scalar (C (m * n) ⊗ C (IrrepDim j)) ~ Complex Double
   , RepVFlatProdToAtomM rest
   ) =>
-  RepVFlatProdToAtomM ('( 'Atom j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
+  RepVFlatProdToAtomM ('(j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
   where
   repVFlatProdToAtomM (RConsAtomProd v rs) =
     toArray (flattenCopyProd v) VS.++ repVFlatProdToAtomM rs

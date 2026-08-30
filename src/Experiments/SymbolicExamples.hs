@@ -30,6 +30,7 @@ import Experiments.Symbolic.Reference
   , repVFlatProdToAtomM
   , sectorFlatDim
   )
+import GHC.TypeLits (Nat)
 import Math.LinearMap.Category
   ( DualVector
   , pattern LinearFunction
@@ -70,7 +71,7 @@ exRzPi :: SU2Element
 exRzPi = fromJust (su2FromQuaternion 0 0 0 1)
 
 -- | Spin-½, @m = 1@: @|↑⟩@.
-sSpinHalfUp :: ToVSector ('Atom 1) ('AtomM 1)
+sSpinHalfUp :: ToVSector 1 ('AtomM 1)
 sSpinHalfUp =
   unsafeFromArray $
     VS.fromList [1, 0]
@@ -79,7 +80,7 @@ sSpinHalfUp =
 actRepIdentAtomOk :: Bool
 actRepIdentAtomOk =
   let r = RConsAtomAtomM sSpinHalfUp RNil
-            :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+            :: RepV '[ '(1, 'AtomM 1)]
       RConsAtomAtomM v RNil = actRep su2Ident r
    in toArray v == (toArray sSpinHalfUp :: VS.Vector (Complex Double))
 
@@ -87,7 +88,7 @@ actRepIdentAtomOk =
 actRepRzPiSpinHalfOk :: Bool
 actRepRzPiSpinHalfOk =
   let r = RConsAtomAtomM sSpinHalfUp RNil
-            :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+            :: RepV '[ '(1, 'AtomM 1)]
       RConsAtomAtomM v RNil = actRep exRzPi r
       expected = VS.fromList [0 :+ (-1), 0]
    in all (\(a, b) -> magnitude (a - b) < 1e-9)
@@ -98,7 +99,7 @@ actRepRzPiSpinHalfOk =
 actRepRzPiTensorOk :: Bool
 actRepRzPiTensorOk =
   let left = RConsAtomAtomM sSpinHalfUp RNil
-                :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+                :: RepV '[ '(1, 'AtomM 1)]
       right = RConsAtomAtomM sSpinHalfUp RNil
       u = rtensor left right
       u' = rtensor (actRep exRzPi left) (actRep exRzPi right)
@@ -110,7 +111,7 @@ actRepRzPiTensorOk =
 actRepFuseIntertwinesOk :: Bool
 actRepFuseIntertwinesOk =
   let left = RConsAtomAtomM sSpinHalfUp RNil
-                :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+                :: RepV '[ '(1, 'AtomM 1)]
       right = RConsAtomAtomM sSpinHalfUp RNil
       actThenFuse =
         fuseExpr (actRep exRzPi left) (actRep exRzPi right)
@@ -122,13 +123,13 @@ actRepFuseIntertwinesOk =
 --------------------------------------------------------------------------------
 
 -- | @j = 2@, @'AtomM 1@: one copy × @C 3@.
-sTensorRight :: ToVSector ('Atom 2) ('AtomM 1)
+sTensorRight :: ToVSector 2 ('AtomM 1)
 sTensorRight =
   unsafeFromArray $
     VS.fromList [1, 0, 0]
 
 -- | @j = 0@, @'AtomM 1@: vacuum copy × @C 1@.
-sUnitAtom :: ToVSector ('Atom 0) ('AtomM 1)
+sUnitAtom :: ToVSector 0 ('AtomM 1)
 sUnitAtom =
   unsafeFromArray $
     VS.fromList [1]
@@ -137,18 +138,18 @@ sUnitAtom =
 rtensorFlatDimOk :: Bool
 rtensorFlatDimOk =
   let left = RConsAtomAtomM sCoalesce1 RNil
-                :: RepV '[ '( 'Atom 1, 'AtomM 2)]
+                :: RepV '[ '(1, 'AtomM 2)]
       right = RConsAtomAtomM sTensorRight RNil
-                :: RepV '[ '( 'Atom 2, 'AtomM 1)]
+                :: RepV '[ '(2, 'AtomM 1)]
    in VS.length (toArray (rtensor left right)) == 12
 
 -- | 'fuseExpr' on one atom pair agrees with the flat CG oracle.
 fuseExprMatchesReferenceOk :: Bool
 fuseExprMatchesReferenceOk =
   let left = RConsAtomAtomM sCoalesce1 RNil
-                :: RepV '[ '( 'Atom 1, 'AtomM 2)]
+                :: RepV '[ '(1, 'AtomM 2)]
       right = RConsAtomAtomM sTensorRight RNil
-                :: RepV '[ '( 'Atom 2, 'AtomM 1)]
+                :: RepV '[ '(2, 'AtomM 1)]
       pair = repVToV left ⊗ repVToV right :: AtomPairV 1 2 2 1
    in repVFlatApproxEq
         (repVFlatProdToAtomM (fuseExpr left right))
@@ -159,13 +160,13 @@ fuseExprMatchesReferenceOk =
 -- Dual + cup (InnerSpace Riesz DualVector; no euclideanNorm coerce)
 --------------------------------------------------------------------------------
 
-unitAmp :: ToVSector ('Atom 0) ('AtomM 1) -> Double
+unitAmp :: ToVSector 0 ('AtomM 1) -> Double
 unitAmp u = abs (realPart (VS.head (toArray u)))
 
 -- | @cup(x ⊗ dual x) = ‖x‖²@ on spin-½ via 'cupRdual'.
 dualAtomSpinHalfOk :: Bool
 dualAtomSpinHalfOk =
-  let v :: ToVSector ('Atom 1) ('AtomM 1)
+  let v :: ToVSector 1 ('AtomM 1)
       v = unsafeFromArray (VS.fromList [1, 0])
       r = RConsAtomAtomM v RNil
       RConsAtomAtomM u RNil = cupRdual r
@@ -174,7 +175,7 @@ dualAtomSpinHalfOk =
 -- | @j = 0@: @cup(x ⊗ dual x) = |x|²@.
 cupRdualTrivialOk :: Bool
 cupRdualTrivialOk =
-  let x :: ToVSector ('Atom 0) ('AtomM 1)
+  let x :: ToVSector 0 ('AtomM 1)
       x = unsafeFromArray (VS.fromList [3 :+ 4])
       r = RConsAtomAtomM x RNil
       RConsAtomAtomM u RNil = cupRdual r
@@ -183,7 +184,7 @@ cupRdualTrivialOk =
 -- | Multiplicity @m = 2@, @j = 0@.
 cupRdualMultOk :: Bool
 cupRdualMultOk =
-  let x :: ToVSector ('Atom 0) ('AtomM 2)
+  let x :: ToVSector 0 ('AtomM 2)
       x = unsafeFromArray (VS.fromList [1, 2])
       r = RConsAtomAtomM x RNil
       RConsAtomAtomM u RNil = cupRdual r
@@ -192,58 +193,58 @@ cupRdualMultOk =
 -- | Two-sector spine: cup sums the sector pairings (@‖x‖² + ‖y‖²@).
 cupRdualTwoSectorOk :: Bool
 cupRdualTwoSectorOk =
-  let x :: ToVSector ('Atom 0) ('AtomM 1)
+  let x :: ToVSector 0 ('AtomM 1)
       x = unsafeFromArray (VS.fromList [3 :+ 4])
-      y :: ToVSector ('Atom 1) ('AtomM 1)
+      y :: ToVSector 1 ('AtomM 1)
       y = unsafeFromArray (VS.fromList [1, 0])
       r =
         RConsAtomAtomM x (RConsAtomAtomM y RNil)
-          :: RepV '[ '( 'Atom 0, 'AtomM 1), '( 'Atom 1, 'AtomM 1)]
+          :: RepV '[ '(0, 'AtomM 1), '(1, 'AtomM 1)]
       RConsAtomAtomM u RNil =
-        cupRdual @'[ '( 'Atom 0, 'AtomM 1), '( 'Atom 1, 'AtomM 1)] r
+        cupRdual @'[ '(0, 'AtomM 1), '(1, 'AtomM 1)] r
    in abs (unitAmp u - 26) < 1e-9
 
 -- | 'cupUnfused' on @x ⊗ dual x@ agrees with 'cupRdual'.
 cupUnfusedMatchesCupRdualOk :: Bool
 cupUnfusedMatchesCupRdualOk =
-  let v :: ToVSector ('Atom 1) ('AtomM 1)
+  let v :: ToVSector 1 ('AtomM 1)
       v = unsafeFromArray (VS.fromList [1, 0])
-      r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      r = RConsAtomAtomM v RNil :: RepV '[ '(1, 'AtomM 1)]
       RConsAtomAtomM u1 RNil = cupRdual r
       u2 =
-        cupUnfused @'[ '( 'Atom 1, 'AtomM 1)] (repVToV r ⊗ rdual r)
+        cupUnfused @'[ '(1, 'AtomM 1)] (repVToV r ⊗ rdual r)
    in abs (unitAmp u1 - unitAmp u2) < 1e-9
 
 -- | Unfused snake: @cup ∘ cap = dim@ on @j = 0@ (@dim = 1@).
 cupCapUnfusedSnakeTrivialOk :: Bool
 cupCapUnfusedSnakeTrivialOk =
   let u =
-        cupUnfused @'[ '( 'Atom 0, 'AtomM 1)]
-          (capUnfused @'[ '( 'Atom 0, 'AtomM 1)] (unitToVFromScalar 1))
+        cupUnfused @'[ '(0, 'AtomM 1)]
+          (capUnfused @'[ '(0, 'AtomM 1)] (unitToVFromScalar 1))
    in abs (unitAmp u - 1) < 1e-9
 
 -- | Unfused snake on spin-½: @cup ∘ cap = 2@.
 cupCapUnfusedSnakeSpinHalfOk :: Bool
 cupCapUnfusedSnakeSpinHalfOk =
   let u =
-        cupUnfused @'[ '( 'Atom 1, 'AtomM 1)]
-          (capUnfused @'[ '( 'Atom 1, 'AtomM 1)] (unitToVFromScalar 1))
+        cupUnfused @'[ '(1, 'AtomM 1)]
+          (capUnfused @'[ '(1, 'AtomM 1)] (unitToVFromScalar 1))
    in abs (unitAmp u - 2) < 1e-9
 
 -- | Fused cup agrees with unfused on @j = 0@ (CS = id, scale 1).
 cupFusedTrivialOk :: Bool
 cupFusedTrivialOk =
-  let x :: ToVSector ('Atom 0) ('AtomM 1)
+  let x :: ToVSector 0 ('AtomM 1)
       x = unsafeFromArray (VS.fromList [3 :+ 4])
-      r = RConsAtomAtomM x RNil :: RepV '[ '( 'Atom 0, 'AtomM 1)]
+      r = RConsAtomAtomM x RNil :: RepV '[ '(0, 'AtomM 1)]
       uUnf =
-        cupUnfused @'[ '( 'Atom 0, 'AtomM 1)] (repVToV r ⊗ rdual r)
+        cupUnfused @'[ '(0, 'AtomM 1)] (repVToV r ⊗ rdual r)
       RConsAtomAtomM uFus RNil =
-        cupFused @'[ '( 'Atom 0, 'AtomM 1)]
+        cupFused @'[ '(0, 'AtomM 1)]
           ( projectToSymmetric
-              ( fuseExpr @'[ '( 'Atom 0, 'AtomM 1)] @'[ '( 'Atom 0, 'AtomM 1)]
+              ( fuseExpr @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)]
                   r
-                  (vToRepV @'[ '( 'Atom 0, 'AtomM 1)] (undualSpine @'[ '( 'Atom 0, 'AtomM 1)] (rdual r)))
+                  (vToRepV @'[ '(0, 'AtomM 1)] (undualSpine @'[ '(0, 'AtomM 1)] (rdual r)))
               )
           )
    in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
@@ -251,17 +252,17 @@ cupFusedTrivialOk =
 -- | Fused cup on spin-½ agrees with unfused (CS + @√2@ in undual).
 cupFusedSpinHalfCoherentOk :: Bool
 cupFusedSpinHalfCoherentOk =
-  let v :: ToVSector ('Atom 1) ('AtomM 1)
+  let v :: ToVSector 1 ('AtomM 1)
       v = unsafeFromArray (VS.fromList [1, 0])
-      r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      r = RConsAtomAtomM v RNil :: RepV '[ '(1, 'AtomM 1)]
       uUnf =
-        cupUnfused @'[ '( 'Atom 1, 'AtomM 1)] (repVToV r ⊗ rdual r)
+        cupUnfused @'[ '(1, 'AtomM 1)] (repVToV r ⊗ rdual r)
       RConsAtomAtomM uFus RNil =
-        cupFused @'[ '( 'Atom 1, 'AtomM 1)]
+        cupFused @'[ '(1, 'AtomM 1)]
           ( projectToSymmetric
-              ( fuseExpr @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)]
+              ( fuseExpr @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)]
                   r
-                  (vToRepV @'[ '( 'Atom 1, 'AtomM 1)] (undualSpine @'[ '( 'Atom 1, 'AtomM 1)] (rdual r)))
+                  (vToRepV @'[ '(1, 'AtomM 1)] (undualSpine @'[ '(1, 'AtomM 1)] (rdual r)))
               )
           )
    in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
@@ -270,29 +271,29 @@ cupFusedSpinHalfCoherentOk =
 cupCapFusedSnakeTrivialOk :: Bool
 cupCapFusedSnakeTrivialOk =
   let RConsAtomAtomM u RNil =
-        cupFused @'[ '( 'Atom 0, 'AtomM 1)]
-          (capFused @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1))
+        cupFused @'[ '(0, 'AtomM 1)]
+          (capFused @'[ '(0, 'AtomM 1)] (unitFromScalar 1))
    in abs (unitAmp u - 1) < 1e-9
 
 -- | 'cupMiddleFused' on @Fuse(½⊗½)@ agrees with 'cupFused' ∘ project.
 cupMiddleFusedSpinHalfOk :: Bool
 cupMiddleFusedSpinHalfOk =
-  let v :: ToVSector ('Atom 1) ('AtomM 1)
+  let v :: ToVSector 1 ('AtomM 1)
       v = unsafeFromArray (VS.fromList [1, 0])
-      r = RConsAtomAtomM v RNil :: RepV '[ '( 'Atom 1, 'AtomM 1)]
+      r = RConsAtomAtomM v RNil :: RepV '[ '(1, 'AtomM 1)]
       mid =
-        repVToV @(FuseExpr ('RTensor ('RSum '[ '( 'Atom 1, 'AtomM 1)]) ('RSum '[ '( 'Atom 1, 'AtomM 1)])))
-          ( fuseExpr @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)]
+        repVToV @(FuseExpr ('RTensor ('RSum '[ '(1, 'AtomM 1)]) ('RSum '[ '(1, 'AtomM 1)])))
+          ( fuseExpr @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)]
               r
-              (vToRepV @'[ '( 'Atom 1, 'AtomM 1)] (undualSpine @'[ '( 'Atom 1, 'AtomM 1)] (rdual r)))
+              (vToRepV @'[ '(1, 'AtomM 1)] (undualSpine @'[ '(1, 'AtomM 1)] (rdual r)))
           )
-      uMid = cupMiddleFused @'[ '( 'Atom 1, 'AtomM 1)] mid
+      uMid = cupMiddleFused @'[ '(1, 'AtomM 1)] mid
       RConsAtomAtomM uFus RNil =
-        cupFused @'[ '( 'Atom 1, 'AtomM 1)]
+        cupFused @'[ '(1, 'AtomM 1)]
           ( projectToSymmetric
-              ( fuseExpr @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)]
+              ( fuseExpr @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)]
                   r
-                  (vToRepV @'[ '( 'Atom 1, 'AtomM 1)] (undualSpine @'[ '( 'Atom 1, 'AtomM 1)] (rdual r)))
+                  (vToRepV @'[ '(1, 'AtomM 1)] (undualSpine @'[ '(1, 'AtomM 1)] (rdual r)))
               )
           )
    in toVApproxEq (toArray uMid) (toArray (unitToVFromScalar (unitAmp uFus :+ 0)))
@@ -304,34 +305,34 @@ unitorComposeFusedTrivialOk =
         (konst 1 ⊗ konst 1) ⊗ konst (5 :+ 0)
           :: ToV
                ( MorExprFused
-                   '[ '( 'Atom 0, 'AtomM 1)]
-                   '[ '( 'Atom 0, 'AtomM 1)]
+                   '[ '(0, 'AtomM 1)]
+                   '[ '(0, 'AtomM 1)]
                )
       u = unitToVFromScalar 1
    in toVApproxEq
-        (toArray (unitorComposeFused @'[ '( 'Atom 0, 'AtomM 1)] @'[ '( 'Atom 0, 'AtomM 1)] (m ⊗ u)))
+        (toArray (unitorComposeFused @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)] (m ⊗ u)))
         (toArray m)
 
 -- | @(cup ⊗ id)@ then unitor on a packed assoc-shape state: @cup(η_b) = dim b@.
 cupTensorIdUnitorOk :: Bool
 cupTensorIdUnitorOk =
   let packed =
-        rdual @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1)
-          ⊗ ( capUnfused @'[ '( 'Atom 1, 'AtomM 1)] (unitToVFromScalar 1)
-                ⊗ repVToV @'[ '( 'Atom 0, 'AtomM 1)] (unitFromScalar 1)
+        rdual @'[ '(0, 'AtomM 1)] (unitFromScalar 1)
+          ⊗ ( capUnfused @'[ '(1, 'AtomM 1)] (unitToVFromScalar 1)
+                ⊗ repVToV @'[ '(0, 'AtomM 1)] (unitFromScalar 1)
             )
       out =
         unitorCompose
-          @'[ '( 'Atom 0, 'AtomM 1)]
-          @'[ '( 'Atom 0, 'AtomM 1)]
+          @'[ '(0, 'AtomM 1)]
+          @'[ '(0, 'AtomM 1)]
           ( cupTensorIdCompose
-              @'[ '( 'Atom 0, 'AtomM 1)]
-              @'[ '( 'Atom 1, 'AtomM 1)]
-              @'[ '( 'Atom 0, 'AtomM 1)]
+              @'[ '(0, 'AtomM 1)]
+              @'[ '(1, 'AtomM 1)]
+              @'[ '(0, 'AtomM 1)]
               packed
           )
       -- @cup ∘ cap = 2@ on spin-½; result is scale on Dual-left @η@.
-      expected = 2 *^ idMor @'[ '( 'Atom 0, 'AtomM 1)]
+      expected = 2 *^ idMor @'[ '(0, 'AtomM 1)]
    in all (\(x, y) -> magnitude (x - y) < 1e-9)
         (zip (VS.toList (toArray out)) (VS.toList (toArray expected)))
 
@@ -343,27 +344,27 @@ toVApproxEq u v =
 -- | @composeMor id id ≅ id@ on @j = 0@.
 composeMorIdIdOk :: Bool
 composeMorIdIdOk =
-  let i = idMor @'[ '( 'Atom 0, 'AtomM 1)]
+  let i = idMor @'[ '(0, 'AtomM 1)]
    in toVApproxEq
-        (toArray (composeMor @'[ '( 'Atom 0, 'AtomM 1)] @'[ '( 'Atom 0, 'AtomM 1)] @'[ '( 'Atom 0, 'AtomM 1)] i i))
+        (toArray (composeMor @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)] i i))
         (toArray i)
 
 -- | Left unit law: @composeMor id f ≅ f@ on spin-½.
 composeMorLeftUnitOk :: Bool
 composeMorLeftUnitOk =
-  let i = idMor @'[ '( 'Atom 1, 'AtomM 1)]
-      f = (3 :+ 0) *^ idMor @'[ '( 'Atom 1, 'AtomM 1)]
+  let i = idMor @'[ '(1, 'AtomM 1)]
+      f = (3 :+ 0) *^ idMor @'[ '(1, 'AtomM 1)]
    in toVApproxEq
-        (toArray (composeMor @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] i f))
+        (toArray (composeMor @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] i f))
         (toArray f)
 
 -- | Right unit law: @composeMor f id ≅ f@ on spin-½.
 composeMorRightUnitOk :: Bool
 composeMorRightUnitOk =
-  let i = idMor @'[ '( 'Atom 1, 'AtomM 1)]
-      f = (3 :+ 0) *^ idMor @'[ '( 'Atom 1, 'AtomM 1)]
+  let i = idMor @'[ '(1, 'AtomM 1)]
+      f = (3 :+ 0) *^ idMor @'[ '(1, 'AtomM 1)]
    in toVApproxEq
-        (toArray (composeMor @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] @'[ '( 'Atom 1, 'AtomM 1)] f i))
+        (toArray (composeMor @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] f i))
         (toArray f)
 
 -- | Unfused 'composeMor' matches ordinary map composition.
@@ -392,21 +393,21 @@ composeMorMatchesMatMulOk =
         asTensor -+$=> uf
           :: ToV
                ( MorExpr
-                   '[ '( 'Atom 1, 'AtomM 1)]
-                   '[ '( 'Atom 1, 'AtomM 1)]
+                   '[ '(1, 'AtomM 1)]
+                   '[ '(1, 'AtomM 1)]
                )
       gHom =
         asTensor -+$=> ug
           :: ToV
                ( MorExpr
-                   '[ '( 'Atom 1, 'AtomM 1)]
-                   '[ '( 'Atom 2, 'AtomM 1)]
+                   '[ '(1, 'AtomM 1)]
+                   '[ '(2, 'AtomM 1)]
                )
       hHom =
         composeMor
-          @'[ '( 'Atom 1, 'AtomM 1)]
-          @'[ '( 'Atom 1, 'AtomM 1)]
-          @'[ '( 'Atom 2, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(2, 'AtomM 1)]
           fHom
           gHom
       h = fromTensor -+$=> hHom :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
@@ -420,13 +421,13 @@ composeMorMatchesMatMulOk =
 -- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ @√(j+1) · CS@ (pivotal undual).
 undualDualRoundtripOk :: Bool
 undualDualRoundtripOk =
-  let v :: ToVSector ('Atom 1) ('AtomM 1)
+  let v :: ToVSector 1 ('AtomM 1)
       v = unsafeFromArray (VS.fromList [0.6, 0.8])
       -- CS on spin-½: |↑⟩↦|↓⟩, |↓⟩↦−|↑⟩; √2 scale.
       -- @CS (0.6, 0.8) = (−0.8, 0.6)@.
       expected =
         unsafeFromArray (VS.fromList [-(sqrt 2 * 0.8), sqrt 2 * 0.6])
-          :: ToVSector ('Atom 1) ('AtomM 1)
+          :: ToVSector 1 ('AtomM 1)
       v' = undualAtomAtomM @1 @1 (dualAtomAtomM @1 @1 v)
    in VS.and $
         VS.zipWith
@@ -437,16 +438,16 @@ undualDualRoundtripOk =
 -- | 'repVToV' / 'vToRepV' round-trip on a two-sector atom spine.
 repVToVRoundTripOk :: Bool
 repVToVRoundTripOk =
-  let s1 :: ToVSector ('Atom 1) ('AtomM 2)
+  let s1 :: ToVSector 1 ('AtomM 2)
       s1 = unsafeFromArray (VS.fromList [1, 0, 0, 1])
-      s0 :: ToVSector ('Atom 0) ('AtomM 1)
+      s0 :: ToVSector 0 ('AtomM 1)
       s0 = unsafeFromArray (VS.fromList [2 :+ 0])
       r =
         RConsAtomAtomM s1 (RConsAtomAtomM s0 RNil)
-          :: RepV '[ '( 'Atom 1, 'AtomM 2), '( 'Atom 0, 'AtomM 1)]
+          :: RepV '[ '(1, 'AtomM 2), '(0, 'AtomM 1)]
    in repVApproxEq
         r
-        ( vToRepV @'[ '( 'Atom 1, 'AtomM 2), '( 'Atom 0, 'AtomM 1)]
+        ( vToRepV @'[ '(1, 'AtomM 2), '(0, 'AtomM 1)]
             (repVToV r)
         )
         1e-12
@@ -456,20 +457,20 @@ repVToVRoundTripOk =
 --------------------------------------------------------------------------------
 
 -- | @j = 1@, @'AtomM 2@: two copy slots × @C 2@.
-sCoalesce1 :: ToVSector ('Atom 1) ('AtomM 2)
+sCoalesce1 :: ToVSector 1 ('AtomM 2)
 sCoalesce1 =
   unsafeFromArray $
     VS.fromList [1, 0, 0, 1]
 
 -- | @j = 1@, @'AtomM 3@: three copy slots × @C 2@ (flat length @6@).
-sCoalesce2 :: ToVSector ('Atom 1) ('AtomM 3)
+sCoalesce2 :: ToVSector 1 ('AtomM 3)
 sCoalesce2 =
   unsafeFromArray $
     VS.fromList [2, 0, 0, 2, 3, 0]
 
-exCoalesceMerge :: RepV '[ '( 'Atom 1, 'AtomM 5)]
+exCoalesceMerge :: RepV '[ '(1, 'AtomM 5)]
 exCoalesceMerge =
-  coalesce @'[ '( 'Atom 1, 'AtomM 2), '( 'Atom 1, 'AtomM 3)] $
+  coalesce @'[ '(1, 'AtomM 2), '(1, 'AtomM 3)] $
     RConsAtomAtomM sCoalesce1 (RConsAtomAtomM sCoalesce2 RNil)
 
 -- | Merged sector flat length matches coalesced multiplicity × irrep dim.
@@ -477,7 +478,7 @@ coalesceMergeFlatDimOk :: Bool
 coalesceMergeFlatDimOk =
   let RConsAtomAtomM v RNil = exCoalesceMerge
    in VS.length (toArray v)
-        == sectorFlatDim (Proxy @'( 'Atom 1, 'AtomM 5))
+        == sectorFlatDim (Proxy @'(1, 'AtomM 5))
 
 -- | Merge stacks copy slots (via 'TensorNetwork.Categorical.mergeCopyAxis').
 coalesceMergeDirectSumOk :: Bool
@@ -493,8 +494,8 @@ coalescePreservesFlatDimOk =
       v2 = sCoalesce2
       RConsAtomAtomM vMerged RNil =
         coalesce
-          @'[ '( 'Atom 1, 'AtomM 2)
-             , '( 'Atom 1, 'AtomM 3)
+          @'[ '(1, 'AtomM 2)
+             , '(1, 'AtomM 3)
              ]
           (RConsAtomAtomM sCoalesce1 (RConsAtomAtomM sCoalesce2 RNil))
    in VS.length (toArray v1) + VS.length (toArray v2)
@@ -505,17 +506,17 @@ coalescePreservesFlatDimOk =
 --------------------------------------------------------------------------------
 
 -- | @j = 0@, @'AtomM 2@: two copy slots × @C 1@.
-sTrivial :: ToVSector ('Atom 0) ('AtomM 2)
+sTrivial :: ToVSector 0 ('AtomM 2)
 sTrivial =
   unsafeFromArray $
     VS.fromList [4, 5]
 
--- | Keeps only @'Atom 0@; drops @'Atom 1@.
+-- | Keeps only @0@; drops @1@.
 projectToSymmetricOk :: Bool
 projectToSymmetricOk =
   let spine =
         RConsAtomAtomM sCoalesce1 (RConsAtomAtomM sTrivial RNil)
-          :: RepV '[ '( 'Atom 1, 'AtomM 2), '( 'Atom 0, 'AtomM 2)]
+          :: RepV '[ '(1, 'AtomM 2), '(0, 'AtomM 2)]
       RConsAtomAtomM v RNil = projectToSymmetric spine
    in toArray v == VS.fromList [4, 5]
 
@@ -562,8 +563,8 @@ symbolicExamplesOk =
 -- Compile-time smokes (type equalities)
 --------------------------------------------------------------------------------
 
-type family AssertEqIrrep (a :: IrrepExpr) (b :: IrrepExpr) :: Bool where
-  AssertEqIrrep a a = 'True
+type family AssertEqNat (a :: Nat) (b :: Nat) :: Bool where
+  AssertEqNat a a = 'True
 
 type family AssertEqMult (a :: MultExpr) (b :: MultExpr) :: Bool where
   AssertEqMult a a = 'True
@@ -577,7 +578,7 @@ type family AssertEqRep (a :: Rep) (b :: Rep) :: Bool where
 type family AssertEqType (a :: Type) (b :: Type) :: Bool where
   AssertEqType a a = 'True
 
-type SmokeSector = '( 'Atom 1, 'Prod ('AtomM 3) ('AtomM 5))
+type SmokeSector = '(1, 'Prod ('AtomM 3) ('AtomM 5))
 
 type SmokeRep = '[SmokeSector]
 
@@ -585,20 +586,20 @@ type SmokeRep = '[SmokeSector]
 type SmokeBraidSector =
   AssertEqSector
     (BraidSector SmokeSector)
-    '( 'Atom 1, 'Prod ('AtomM 5) ('AtomM 3))
+    '(1, 'Prod ('AtomM 5) ('AtomM 3))
 
 type SmokeBraid =
   AssertEqRep
     (Braid SmokeRep)
-    '[ '( 'Atom 1, 'Prod ('AtomM 5) ('AtomM 3))]
+    '[ '(1, 'Prod ('AtomM 5) ('AtomM 3))]
 
 -- | @MorExpr@: unfused dual⊗codomain space.
 type SmokeMor =
   AssertEqType
     ( ToV
         ( MorExpr
-            '[ '( 'Atom 1, 'AtomM 2)]
-            '[ '( 'Atom 2, 'AtomM 3)]
+            '[ '(1, 'AtomM 2)]
+            '[ '(2, 'AtomM 3)]
         )
     )
     ( DualVector (C 2 ⊗ C 2)
@@ -610,14 +611,14 @@ type SmokeMorFused =
   AssertEqRep
     ( FuseExpr
         ( MorExpr
-            '[ '( 'Atom 1, 'AtomM 1)]
-            '[ '( 'Atom 1, 'AtomM 1)]
+            '[ '(1, 'AtomM 1)]
+            '[ '(1, 'AtomM 1)]
         )
     )
     ( FuseExpr
         ( 'RTensor
-            ('RSum '[ '( 'Atom 1, 'AtomM 1)])
-            ('RSum '[ '( 'Atom 1, 'AtomM 1)])
+            ('RSum '[ '(1, 'AtomM 1)])
+            ('RSum '[ '(1, 'AtomM 1)])
         )
     )
 
@@ -626,10 +627,10 @@ type SmokeComposeAssoc =
   AssertEqType
     ( ToV
         ( 'RTensor
-            ('RDual ('RSum '[ '( 'Atom 0, 'AtomM 1)]))
+            ('RDual ('RSum '[ '(0, 'AtomM 1)]))
             ( 'RTensor
-                (CupUnfusedExpr '[ '( 'Atom 1, 'AtomM 1)])
-                ('RSum '[ '( 'Atom 0, 'AtomM 1)])
+                (CupUnfusedExpr '[ '(1, 'AtomM 1)])
+                ('RSum '[ '(0, 'AtomM 1)])
             )
         )
     )
@@ -639,53 +640,53 @@ type SmokeComposeAssoc =
           )
     )
 
--- | Same @'Atom 1@ sectors coalesce by adding multiplicities.
+-- | Same @1@ sectors coalesce by adding multiplicities.
 type SmokeCoalesceAtoms =
   AssertEqRep
     (Coalesce
-      '[ '( 'Atom 1, 'AtomM 2)
-       , '( 'Atom 1, 'AtomM 3)
+      '[ '(1, 'AtomM 2)
+       , '(1, 'AtomM 3)
        ])
-    '[ '( 'Atom 1, 'AtomM 5)]
+    '[ '(1, 'AtomM 5)]
 
 -- | @'Prod@ multiplicities on the same key collapse to @'AtomM@ of summed dims.
 type SmokeCoalesceProds =
   AssertEqRep
     (Coalesce
-      '[ '( 'Atom 1, 'Prod ('AtomM 2) ('AtomM 3))
-       , '( 'Atom 1, 'Prod ('AtomM 1) ('AtomM 4))
+      '[ '(1, 'Prod ('AtomM 2) ('AtomM 3))
+       , '(1, 'Prod ('AtomM 1) ('AtomM 4))
        ])
-    '[ '( 'Atom 1, 'AtomM 10)]
+    '[ '(1, 'AtomM 10)]
 
 -- | Distinct keys stay sorted by irrep label.
 type SmokeCoalesceSort =
   AssertEqRep
     (Coalesce
-      '[ '( 'Atom 3, 'AtomM 1)
-       , '( 'Atom 2, 'AtomM 1)
+      '[ '(3, 'AtomM 1)
+       , '(2, 'AtomM 1)
        ])
-    '[ '( 'Atom 2, 'AtomM 1)
-     , '( 'Atom 3, 'AtomM 1)
+    '[ '(2, 'AtomM 1)
+     , '(3, 'AtomM 1)
      ]
 
--- | Leaf sector @('Atom 1, 'AtomM 3)@ → @C 3 ⊗ C 2@.
+-- | Leaf sector @(1, 'AtomM 3)@ → @C 3 ⊗ C 2@.
 type SmokeSectorAtom =
   AssertEqType
-    (ToVSector ('Atom 1) ('AtomM 3))
+    (ToVSector 1 ('AtomM 3))
     (C 3 ⊗ C 2)
 
 -- | @'Prod@ copy sector: @(C m ⊗ C n) ⊗ C (j+1)@.
 type SmokeSectorProd =
   AssertEqType
-    (ToVSector ('Atom 1) ('Prod ('AtomM 2) ('AtomM 3)))
+    (ToVSector 1 ('Prod ('AtomM 2) ('AtomM 3)))
     ((C 2 ⊗ C 3) ⊗ C 2)
 
 -- | Atom spine → right-nested sector tuples (no @()@ terminator).
 type SmokeToVSpine =
   AssertEqType
     ( ToVSpine
-        '[ '( 'Atom 1, 'AtomM 2)
-         , '( 'Atom 0, 'AtomM 1)
+        '[ '(1, 'AtomM 2)
+         , '(0, 'AtomM 1)
          ]
     )
     ( C 2 ⊗ C 2
@@ -697,8 +698,8 @@ type SmokeToVRtensor =
   AssertEqType
     ( ToV
         ( 'RTensor
-            ('RSum '[ '( 'Atom 1, 'AtomM 2)])
-            ('RSum '[ '( 'Atom 2, 'AtomM 1)])
+            ('RSum '[ '(1, 'AtomM 2)])
+            ('RSum '[ '(2, 'AtomM 1)])
         )
     )
     ( (C 2 ⊗ C 2)
@@ -709,33 +710,21 @@ type SmokeToVRtensor =
 type SmokeFuseAtoms =
   AssertEqRep
     (FuseAtoms 1 2 ('AtomM 1))
-    '[ '( 'Atom 1, 'AtomM 1)
-     , '( 'Atom 3, 'AtomM 1)
+    '[ '(1, 'AtomM 1)
+     , '(3, 'AtomM 1)
      ]
-
--- | Fusing an atom sector is the identity (modulo the tagged multiplicity).
-type SmokeFuseSector =
-  AssertEqRep
-    (FuseSector '( 'Atom 2, 'AtomM 5))
-    '[ '( 'Atom 2, 'AtomM 5)]
-
--- | Atom sector is unchanged by a whole-spine 'Fuse'.
-type SmokeFuseRepAtom =
-  AssertEqRep
-    (Fuse '[ '( 'Atom 2, 'AtomM 5)])
-    '[ '( 'Atom 2, 'AtomM 5)]
 
 -- | 'FuseExpr' on an unfused atom pair: CG channels tagged with the copy product.
 type SmokeFuseTensor =
   AssertEqRep
     ( FuseExpr
         ( 'RTensor
-            ('RSum '[ '( 'Atom 1, 'AtomM 2)])
-            ('RSum '[ '( 'Atom 2, 'AtomM 3)])
+            ('RSum '[ '(1, 'AtomM 2)])
+            ('RSum '[ '(2, 'AtomM 3)])
         )
     )
-    '[ '( 'Atom 1, 'Prod ('AtomM 2) ('AtomM 3))
-     , '( 'Atom 3, 'Prod ('AtomM 2) ('AtomM 3))
+    '[ '(1, 'Prod ('AtomM 2) ('AtomM 3))
+     , '(3, 'Prod ('AtomM 2) ('AtomM 3))
      ]
 
 -- | @FuseExpr (BraidExpr (RTensor …))@ swaps tensor legs.
@@ -744,13 +733,13 @@ type SmokeFuseBraidTensor =
     ( FuseExpr
         ( BraidExpr
             ( 'RTensor
-                ('RSum '[ '( 'Atom 1, 'AtomM 2)])
-                ('RSum '[ '( 'Atom 2, 'AtomM 3)])
+                ('RSum '[ '(1, 'AtomM 2)])
+                ('RSum '[ '(2, 'AtomM 3)])
             )
         )
     )
-    '[ '( 'Atom 1, 'Prod ('AtomM 3) ('AtomM 2))
-     , '( 'Atom 3, 'Prod ('AtomM 3) ('AtomM 2))
+    '[ '(1, 'Prod ('AtomM 3) ('AtomM 2))
+     , '(3, 'Prod ('AtomM 3) ('AtomM 2))
      ]
 
 -- | 'RmoveTarget' on fused 'FuseExpr' matches braided 'FuseExpr'.
@@ -761,16 +750,16 @@ type SmokeRmoveTarget =
         2
         ( FuseExpr
             ( 'RTensor
-                ('RSum '[ '( 'Atom 1, 'AtomM 2)])
-                ('RSum '[ '( 'Atom 2, 'AtomM 3)])
+                ('RSum '[ '(1, 'AtomM 2)])
+                ('RSum '[ '(2, 'AtomM 3)])
             )
         )
     )
     ( FuseExpr
         ( BraidExpr
             ( 'RTensor
-                ('RSum '[ '( 'Atom 1, 'AtomM 2)])
-                ('RSum '[ '( 'Atom 2, 'AtomM 3)])
+                ('RSum '[ '(1, 'AtomM 2)])
+                ('RSum '[ '(2, 'AtomM 3)])
             )
         )
     )
@@ -785,29 +774,29 @@ type SmokeFusedLeafSym =
 type SmokeFusedLeaf12 =
   AssertEqRep
     (Coalesce (FuseAtoms 1 2 ('AtomM 6)))
-    '[ '( 'Atom 1, 'AtomM 6)
-     , '( 'Atom 3, 'AtomM 6)
+    '[ '(1, 'AtomM 6)
+     , '(3, 'AtomM 6)
      ]
 
--- | 'FilterTrivial' keeps only @'Atom 0@ sectors.
+-- | 'FilterTrivial' keeps only @0@ sectors.
 type SmokeFilterTrivial =
   AssertEqRep
     ( FilterTrivial
-        '[ '( 'Atom 1, 'AtomM 2)
-         , '( 'Atom 0, 'AtomM 3)
-         , '( 'Atom 2, 'Prod ('AtomM 1) ('AtomM 1))
-         , '( 'Atom 0, 'Prod ('AtomM 2) ('AtomM 2))
+        '[ '(1, 'AtomM 2)
+         , '(0, 'AtomM 3)
+         , '(2, 'Prod ('AtomM 1) ('AtomM 1))
+         , '(0, 'Prod ('AtomM 2) ('AtomM 2))
          ]
     )
-    '[ '( 'Atom 0, 'AtomM 3)
-     , '( 'Atom 0, 'Prod ('AtomM 2) ('AtomM 2))
+    '[ '(0, 'AtomM 3)
+     , '(0, 'Prod ('AtomM 2) ('AtomM 2))
      ]
 
 -- | 'RepV' spine type is stable under its own index.
 type SmokeRepVSpine =
   AssertEqType
-    (RepV '[ '( 'Atom 1, 'AtomM 2), '( 'Atom 0, 'Prod ('AtomM 1) ('AtomM 1))])
-    (RepV '[ '( 'Atom 1, 'AtomM 2), '( 'Atom 0, 'Prod ('AtomM 1) ('AtomM 1))])
+    (RepV '[ '(1, 'AtomM 2), '(0, 'Prod ('AtomM 1) ('AtomM 1))])
+    (RepV '[ '(1, 'AtomM 2), '(0, 'Prod ('AtomM 1) ('AtomM 1))])
 
 smokeBraidSector :: Proxy SmokeBraidSector
 smokeBraidSector = Proxy
@@ -847,12 +836,6 @@ smokeToVRtensor = Proxy
 
 smokeFuseAtoms :: Proxy SmokeFuseAtoms
 smokeFuseAtoms = Proxy
-
-smokeFuseSector :: Proxy SmokeFuseSector
-smokeFuseSector = Proxy
-
-smokeFuseRepAtom :: Proxy SmokeFuseRepAtom
-smokeFuseRepAtom = Proxy
 
 smokeFuseTensor :: Proxy SmokeFuseTensor
 smokeFuseTensor = Proxy
