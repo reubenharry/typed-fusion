@@ -18,15 +18,13 @@
 
 -- | Type-level braid, coalesce, and fuse for symbolic atom reps.
 --
--- 'RepExpr' is the @ToV@ / space layer (unfused Kronecker, duals, 'MorExpr'
--- packing) — not the categorical object kind. Categorical objects for 'Sym'
--- are 'Experiments.Fusion.Obj.Obj' trees (@'Atom@ \/ @'Tensor@ \/ @'Sum@);
--- 'FuseSym' forgets them to a coalesced 'Rep' spine for Hom.
+-- Categorical objects for 'HomUnfused' \/ 'HomFused' are
+-- 'Experiments.Fusion.Obj.Obj' trees
+-- (@'Atom@ \/ @'Tensor@ \/ @'Sum@); 'FuseSym' forgets them to a coalesced 'Rep'
+-- spine. Hom \/ cup packing is Dual-left over 'ToVSpine' \/ 'ToVObj' (no parallel
+-- expression AST). Nested Mac Lane parenthesization lives on @Obj@.
 --
--- Sectors are keyed by bare @Nat@ (@2j@). Unfused tensor and dual spaces use
--- 'RepExpr' (@'RTensor@ / @'RDual@) and reduce via 'FuseExpr' / 'ToV'. Nested
--- Mac Lane parenthesization lives on @Obj@, not on 'RepExpr' (well-formed
--- @'RTensor@ stays binary on atom @'RSum@ spines).
+-- Sectors are keyed by bare @Nat@ (@2j@).
 module Experiments.Symbolic.TypeLevel
   ( -- * Braid
     BraidMult
@@ -46,23 +44,16 @@ module Experiments.Symbolic.TypeLevel
   , IrrepDim
   , ToVSector
   , ToVSpine
-  , ToV
-  , BraidExpr
-  , DualExpr
-  , MorExpr
-  , MorExprFused
-  , CupUnfusedExpr
-  , CapUnfusedExpr
-  , CupFusedRep
-  , CapFusedRep
+    -- * Obj spaces (true unfused)
+  , ToVObj
     -- * Fusion (CG)
-  , FuseExpr
+  , FuseRep
+  , FuseHom
   , AtomsFromCG
   , TagMult
   , FuseAtoms
   , FuseAtomSpineOne
   , FuseAtomSpines
-  , SymTensor
   , FuseSym
     -- * Spine constraints
   , AtomSpine
@@ -74,7 +65,7 @@ import qualified Experiments.Fusion.Obj as FObj
 import Experiments.SU2 (TensorIrrepRepSU2)
 import Experiments.Symbolic.Expr
 import GHC.TypeLits (CmpNat, KnownNat, Nat, type (*), type (+))
-import Math.LinearMap.Category (DualVector, type (⊗))
+import Math.LinearMap.Category (type (⊗))
 import Numeric.LinearAlgebra.Static (C)
 import Symmetry.Utils (Append)
 
@@ -136,7 +127,7 @@ type family Coalesce (rs :: Rep) :: Rep where
   Coalesce ('(j, μ) ': rest) = InsertSector j μ (Coalesce rest)
 
 -- | Keep only the SU(2) trivial irrep (@0@); drop everything else.
--- Typical use: after 'Coalesce' \/ 'FuseExpr', project to singlets (Hom space).
+-- Typical use: after 'Coalesce' \/ 'FuseHom', project to singlets (Hom space).
 type family FilterTrivial (rs :: Rep) :: Rep where
   FilterTrivial '[] = '[]
   FilterTrivial ('(0, μ) ': rest) = '(0, μ) ': FilterTrivial rest
@@ -166,54 +157,15 @@ type family ToVSpine (rs :: Rep) :: Type where
   ToVSpine ('(j, μ) ': s ': rest) =
     (ToVSector j μ, ToVSpine (s ': rest))
 
--- | Space of a 'RepExpr': nested-tuple @⊕@ for sums, @⊗@ for unfused tensors.
-type family ToV (e :: RepExpr) :: Type where
-  ToV ('RSum rs) = ToVSpine rs
-  ToV ('RTensor a b) = ToV a ⊗ ToV b
-  ToV ('RDual a) = DualVector (ToV a)
-
--- | Braid a 'RepExpr': swap @'RTensor@ factors.
-type family BraidExpr (e :: RepExpr) :: RepExpr where
-  BraidExpr ('RSum rs) = 'RSum (Braid rs)
-  BraidExpr ('RTensor a b) = 'RTensor b a
-
--- | Dual of a 'RepExpr' (whole-expression dual).
-type family DualExpr (e :: RepExpr) :: RepExpr where
-  DualExpr e = 'RDual e
-
--- | Morphisms @r → q@ as @'RTensor ('RDual ('RSum r)) ('RSum q)@.
-type MorExpr (r :: Rep) (q :: Rep) =
-  'RTensor ('RDual ('RSum r)) ('RSum q)
-
--- | Fused Hom @r → q@: @'RSum@ of @FuseExpr (MorExpr r q)@.
---
--- For SU(2) atom spines, dual≅primal at the type level, so this is the same
--- coalesced CG spine as @FuseExpr ('RTensor ('RSum r) ('RSum q))@.
-type MorExprFused (r :: Rep) (q :: Rep) =
-  'RSum (FuseExpr (MorExpr r q))
-
--- Compact closed cups / caps (primal⊗dual for eval/coev; 'MorExpr' stays Dual-left)
---
--- Unfused: closed in 'ToV' (@RepExpr@ spaces, including @'RSum Unit@).
--- Fused: 'RepV' on singlet spines after dual≅primal and 'FuseExpr'.
--- Cap on ⊕ is the diagonal coevaluation (biproduct natural η).
---
--- Unfused object: @r ⊗ r*@ ('CupUnfusedExpr' / primal⊗dual).
+--------------------------------------------------------------------------------
+-- Obj spaces (true unfused: Tensor = Kronecker, Sum = pair)
 --------------------------------------------------------------------------------
 
--- | Unfused cup/cap object: @r ⊗ r*@ as a 'RepExpr'.
-type CupUnfusedExpr (r :: Rep) =
-  'RTensor ('RSum r) ('RDual ('RSum r))
-
--- | Same object as 'CupUnfusedExpr' (η and ε are opposite maps on it).
-type CapUnfusedExpr (r :: Rep) = CupUnfusedExpr r
-
--- | Fused cup domain: trivial channels of @FuseExpr (r ⊗ r)@ (after dual≅primal).
-type CupFusedRep (r :: Rep) =
-  FilterTrivial (FuseExpr ('RTensor ('RSum r) ('RSum r)))
-
--- | Fused cap codomain: same singlet spine as 'CupFusedRep'.
-type CapFusedRep (r :: Rep) = CupFusedRep r
+-- | Interpret a fusion tree as a nested space (no CG fuse).
+type family ToVObj (a :: Obj Nat) :: Type where
+  ToVObj ('FObj.Atom j) = ToVSector j ('AtomM 1)
+  ToVObj ('FObj.Tensor a b) = ToVObj a ⊗ ToVObj b
+  ToVObj ('FObj.Sum a b) = (ToVObj a, ToVObj b)
 
 --------------------------------------------------------------------------------
 -- Fusion: CG on atom pairs, then coalesced rep
@@ -248,33 +200,22 @@ type family FuseAtomSpines (r :: Rep) (q :: Rep) :: Rep where
       (FuseAtomSpineOne j1 ('AtomM m1) q)
       (FuseAtomSpines rest q)
 
--- | Fuse a 'RepExpr' to a coalesced 'Rep'.
---
--- @
---   'RSum rs              ↦  Coalesce rs          -- already atom spine
---   'RTensor ('RSum r) ('RSum q)  ↦  CG coalesce   -- real fuse
---   Dual-left Hom tensors fuse like primal⊗primal (SU(2) dual≅primal)
--- @
-type family FuseExpr (e :: RepExpr) :: Rep where
-  FuseExpr ('RSum rs) = Coalesce rs
-  FuseExpr ('RTensor ('RSum r) ('RSum q)) =
-    Coalesce (FuseAtomSpines r q)
-  FuseExpr ('RTensor ('RDual ('RSum r)) ('RSum q)) =
-    Coalesce (FuseAtomSpines r q)
+-- | CG coalesce of two atom spines (no unitors). Used by term-level 'fuseExpr',
+-- fused Hom, and cups. For the monoidal product on 'FuseSym', see 'FuseRep'.
+type FuseHom (r :: Rep) (q :: Rep) = Coalesce (FuseAtomSpines r q)
 
--- | Fused monoidal product of atom spines (@CG@ coalesce).
--- Unitor equations: @Unit ⊗ a = a = a ⊗ Unit@.
-type family SymTensor (a :: Rep) (b :: Rep) :: Rep where
-  SymTensor '[ '(0, 'AtomM 1)] b = b
-  SymTensor a '[ '(0, 'AtomM 1)] = a
-  SymTensor a b = FuseExpr ('RTensor ('RSum a) ('RSum b))
+-- | Fused monoidal product of atom spines for 'FuseSym'.
+-- Unitor equations: @Unit ⊗ a = a = a ⊗ Unit@; otherwise 'FuseHom'.
+type family FuseRep (a :: Rep) (b :: Rep) :: Rep where
+  FuseRep '[ '(0, 'AtomM 1)] b = b
+  FuseRep a '[ '(0, 'AtomM 1)] = a
+  FuseRep a b = FuseHom a b
 
 -- | Forget a fusion-tree object (@Obj Nat@, @2j@ labels) to a coalesced 'Rep'
--- spine for 'MorExpr' Hom. Analogous to Fib @Fuse@\/@Mults@, but the Hom
--- packing is Dual-left @ToV@ rather than finite-Irr @HomS@.
+-- spine for Hom. Analogous to Fib @Fuse@\/@Mults@, but Hom is Dual-left @ToVSpine@.
 type family FuseSym (a :: Obj Nat) :: Rep where
   FuseSym ('FObj.Atom j) = '[ '(j, 'AtomM 1)]
-  FuseSym ('FObj.Tensor a b) = SymTensor (FuseSym a) (FuseSym b)
+  FuseSym ('FObj.Tensor a b) = FuseRep (FuseSym a) (FuseSym b)
   FuseSym ('FObj.Sum a b) = Coalesce (Append (FuseSym a) (FuseSym b))
 
 --------------------------------------------------------------------------------

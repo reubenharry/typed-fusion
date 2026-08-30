@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -22,16 +23,15 @@
 -- 'Experiments.Symbolic.TypeLevel'. Flat-buffer oracles:
 -- 'Experiments.Symbolic.Reference'. Examples: 'Experiments.SymbolicExamples'.
 --
--- Sectors are atom-keyed. Unfused tensor / dual spaces are 'RepExpr' values
+-- Sectors are atom-keyed. Unfused tensor / dual spaces are 'ToVSpine' values
 -- ('rtensor' / 'rdual' / 'rmor'), reduced by 'fuseExpr' or paired by
 -- 'cupUnfused' / 'cupRdual' (object @r ⊗ r*@); fused 'cupFused' / 'capFused'
--- on singlets after dual≅primal. Unfused Hom composition: 'composeMor'
--- (monoidal assoc + cup⊗id + unitor); fused Hom: 'composeMorFused' on
--- 'MorExprFused' (tensor + F-move + cup + unitor; steps stubbed).
--- 'Sym' indexes morphisms by fusion trees @Obj Nat@ with Hom
--- @ToV (MorExpr (FuseSym ·) (FuseSym ·))@; 'Category' \/ 'Monoidal' on @Tensor@
--- (associator \/ braid \/ 'bimap' stubbed). 'repVToV' / 'vToRepV' round-trip a
--- 'KnownSymRep' spine through 'ToVSpine'.
+-- on singlets of @FilterTrivial (FuseHom r r)@ after dual≅primal.
+-- 'HomUnfused' \/ 'HomFused' index morphisms by fusion trees @Obj Nat@.
+-- Unfused Hom: @Dual(ToVObj a) ⊗ ToVObj b@ (complete Category, linearmap α / unitors).
+-- Fused Hom: @ToVSpine (FuseHom (FuseSym a) (FuseSym b))@ — coalesced 'Rep' spine
+-- (Category @(. )@ stubbed; needs F-move to compose).
+-- 'repVToV' / 'vToRepV' round-trip a 'KnownSymRep' spine through 'ToVSpine'.
 module Experiments.Symbolic.Core where
 
 import Data.Complex (Complex ((:+)))
@@ -247,7 +247,7 @@ rtensor
      )
   => RepV r
   -> RepV q
-  -> ToV ('RTensor ('RSum r) ('RSum q))
+  -> ToVSpine r ⊗ ToVSpine q
 rtensor x y = repVToV x ⊗ repVToV y
 
 -- | Cons onto a spine (@RCons@; shape from @e@/@μ@).
@@ -611,7 +611,7 @@ coalesce = go (symRepSing @rs)
     go (SRepCons @e @μ _ _ rest) (RCons sv rs) =
       insertSpine @e @μ sv (go rest rs)
 
--- | Fuse @'RTensor ('RSum r) ('RSum q)@ by CG on each atom pair.
+-- | Fuse two atom spines by CG on each atom pair.
 fuseExpr
   :: forall r q
    . ( KnownAtomRep r
@@ -622,7 +622,7 @@ fuseExpr
      )
   => RepV r
   -> RepV q
-  -> RepV (FuseExpr ('RTensor ('RSum r) ('RSum q)))
+  -> RepV (FuseHom r q)
 fuseExpr x y =
   coalesce (fuseAtomSpinesTerm (symRepSing @r) x (symRepSing @q) y)
 
@@ -751,17 +751,17 @@ actRep g = go (symRepSing @rs)
       RCons (actSector e μ g v) (go rest rs)
 
 --------------------------------------------------------------------------------
--- Dual / cup on 'RepExpr' spaces
+-- Dual / cup on spine spaces
 --
--- @'RDual ('RSum rs)@ is @DualVector (ToVSpine rs)@ — no formal dual sector.
+-- Dual of a spine is @DualVector (ToVSpine rs)@ — no formal dual sector.
 --------------------------------------------------------------------------------
 
--- | Unit amplitude as @ToV ('RSum Unit)@ (@C 1 ⊗ C 1@).
-unitToVFromScalar :: Complex Double -> ToV ('RSum Unit)
+-- | Unit amplitude as @ToVSpine Unit@ (@C 1 ⊗ C 1@).
+unitToVFromScalar :: Complex Double -> ToVSpine Unit
 unitToVFromScalar s = s *^ (konst 1 ⊗ konst 1)
 
--- | Read the amplitude from @ToV ('RSum Unit)@.
-unitToVScalar :: ToV ('RSum Unit) -> Complex Double
+-- | Read the amplitude from @ToVSpine Unit@.
+unitToVScalar :: ToVSpine Unit -> Complex Double
 unitToVScalar u = VS.head (toArray u)
 
 -- | Unit element as a 'RepV' spine (fused / atom-spine API).
@@ -798,7 +798,7 @@ rdual
   :: forall rs
    . KnownAtomRep rs
   => RepV rs
-  -> ToV ('RDual ('RSum rs))
+  -> DualVector (ToVSpine rs)
 rdual = go (symRepSing @rs) . repVToV
   where
     go :: forall rs'. SRep rs' -> ToVSpine rs' -> DualVector (ToVSpine rs')
@@ -835,18 +835,19 @@ rmor
      )
   => RepV r
   -> RepV q
-  -> ToV (MorExpr r q)
+  -> (DualVector (ToVSpine r) ⊗ ToVSpine q)
 rmor x y = rdual x ⊗ repVToV y
 
 --------------------------------------------------------------------------------
 -- Cup / cap (compact closed)
 --
--- Unfused: closed in 'ToV' (@RepExpr@ spaces, including @'RSum Unit@).
--- Fused: 'RepV' on singlet spines after dual≅primal + 'FuseExpr'.
+-- Unfused: closed in 'ToVSpine' / Dual-left Hom @Dual r ⊗ q@ / cups @r ⊗ Dual r@
+-- (including @Unit@).
+-- Fused: 'RepV' on singlet spines after dual≅primal + 'FuseHom'.
 -- Cap on ⊕ is the diagonal coevaluation (biproduct natural η).
 --------------------------------------------------------------------------------
 
--- | Unfused evaluation @ε : r ⊗ r* → 𝟙@ (both sides 'ToV').
+-- | Unfused evaluation @ε : r ⊗ r* → 𝟙@.
 cupUnfused
   :: forall r
    . ( KnownAtomRep r
@@ -855,8 +856,8 @@ cupUnfused
      , Scalar (ToVSpine r) ~ Complex Double
      , Scalar (DualVector (ToVSpine r)) ~ Complex Double
      )
-  => ToV (CupUnfusedExpr r)
-  -> ToV ('RSum Unit)
+  => (ToVSpine r ⊗ DualVector (ToVSpine r))
+  -> ToVSpine Unit
 cupUnfused t =
   unitToVFromScalar
     ( getLinearFunction
@@ -873,8 +874,8 @@ capUnfused
      , Scalar (ToVSpine r) ~ Complex Double
      , Scalar (DualVector (ToVSpine r)) ~ Complex Double
      )
-  => ToV ('RSum Unit)
-  -> ToV (CapUnfusedExpr r)
+  => ToVSpine Unit
+  -> (ToVSpine r ⊗ DualVector (ToVSpine r))
 capUnfused u = unitToVScalar u *^ idTensor @(ToVSpine r)
 
 -- | Hom scalar from flat @'AtomM m@ trivial channel.
@@ -945,47 +946,47 @@ instance
   cupTrivial (RCons t RNil) =
     unitFromScalar (cupHomScalar @m t)
 
--- | Fused evaluation on singlets of @FuseExpr(r ⊗ r)@ (dual≅primal).
+-- | Fused evaluation on singlets of @FuseHom r r@ (dual≅primal).
 cupFused
   :: forall r
    . ( KnownAtomRep r
-     , CupTrivial (CupFusedRep r)
+     , CupTrivial (FilterTrivial (FuseHom r r))
      )
-  => RepV (CupFusedRep r)
+  => RepV (FilterTrivial (FuseHom r r))
   -> RepV Unit
 cupFused = cupTrivial
 
--- | Linear extension of 'fuseExpr' @r ⊗ r → FuseExpr (r ⊗ r)@.
+-- | Linear extension of 'fuseExpr' @r ⊗ r → FuseHom r r@.
 fuseExprTensor
   :: forall r
    . ( KnownAtomRep r
      , FuseAtomSpinesTerm r r
      , KnownSymRep (FuseAtomSpines r r)
      , CoalesceSpine (FuseAtomSpines r r)
-     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+     , KnownSymRep (FuseHom r r)
      , LinearSpace (ToVSpine r)
-     , LinearSpace (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , LinearSpace (ToVSpine (FuseHom r r))
      , Scalar (ToVSpine r) ~ Complex Double
-     , Scalar (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , Scalar (ToVSpine (FuseHom r r))
          ~ Complex Double
      )
   => ToVSpine r ⊗ ToVSpine r
-  -> RepV (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+  -> RepV (FuseHom r r)
 fuseExprTensor t =
-  vToRepV @(FuseExpr ('RTensor ('RSum r) ('RSum r))) $
+  vToRepV @(FuseHom r r) $
     (uncurryLinearMap -+$=> fuseCurried) $ t
   where
     fuseCurried ::
       ToVSpine r
         +> ( ToVSpine r
-               +> ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+               +> ToVSpine (FuseHom r r)
            )
     fuseCurried =
       arr . LinearFunction $ \x ->
         arr . LinearFunction $ \y ->
           repVToV $ fuseExpr @r @r (vToRepV @r x) (vToRepV @r y)
 
--- | Fused coevaluation: diagonal @η@ into singlets of @FuseExpr(r ⊗ r)@.
+-- | Fused coevaluation: diagonal @η@ into singlets of @FuseHom r r@.
 --
 -- @projectToSymmetric ∘ fuseExprTensor ∘ (id ⊗ undual) ∘ idTensor@ — biproduct-natural
 -- (off-diagonal blocks vanish under 'FilterTrivial' for SU(2)).
@@ -995,19 +996,19 @@ capFused
      , FuseAtomSpinesTerm r r
      , KnownSymRep (FuseAtomSpines r r)
      , CoalesceSpine (FuseAtomSpines r r)
-     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum r)))
-     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum r) ('RSum r)))
+     , KnownSymRep (FuseHom r r)
+     , ProjectToSymmetric (FuseHom r r)
      , LinearSpace (ToVSpine r)
      , LinearSpace (DualVector (ToVSpine r))
-     , LinearSpace (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , LinearSpace (ToVSpine (FuseHom r r))
      , Scalar (ToVSpine r) ~ Complex Double
      , Scalar (DualVector (ToVSpine r)) ~ Complex Double
-     , Scalar (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , Scalar (ToVSpine (FuseHom r r))
          ~ Complex Double
      , TensorSpace (DualVector (ToVSpine r))
      )
   => RepV Unit
-  -> RepV (CapFusedRep r)
+  -> RepV (FilterTrivial (FuseHom r r))
 capFused u =
   let η = unitScalar u *^ idTensor @(ToVSpine r)
       undualMap =
@@ -1036,17 +1037,22 @@ cupRdual r =
 --
 --   compose f g = unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)
 --
--- Hom elements live in 'ToV' of 'MorExpr' (Dual-left). Identity is coevaluation
+-- Hom elements are Dual-left @Dual r ⊗ q@. Identity is coevaluation
 -- braided into Dual-left packing. 'assocCompose' is monoidal @α@ (no F-move).
 --------------------------------------------------------------------------------
 
--- | Morphisms @a → b@ as Hom-elements @ToV (MorExpr (FuseSym a) (FuseSym b))@.
--- Objects are fusion trees @Obj Nat@ (@2j@); 'FuseSym' forgets to a coalesced
--- 'Rep' spine for Dual-left Hom packing (Fib uses @Mults@; same object shape).
-newtype Sym (a :: Obj Nat) (b :: Obj Nat) = Sym
-  { unSym :: ToV (MorExpr (FuseSym a) (FuseSym b)) }
+-- | Unfused morphisms @a → b@: Dual-left packing on tree spaces
+-- @Dual(ToVObj a) ⊗ ToVObj b@ (@'Tensor@ = Kronecker).
+newtype HomUnfused (a :: Obj Nat) (b :: Obj Nat) = HomUnfused
+  { unHomUnfused :: DualVector (ToVObj a) ⊗ ToVObj b }
 
--- | Identity: @η@ from 'capUnfused', swapped into Dual-left ('MorExpr').
+-- | Fused morphisms @a → b@: CG Hom as a coalesced 'Rep' spine
+-- @ToVSpine (FuseHom (FuseSym a) (FuseSym b))@ (SU(2) dual≅primal).
+-- Composition needs an F-move; Category @(. )@ is stubbed.
+newtype HomFused (a :: Obj Nat) (b :: Obj Nat) = HomFused
+  { unHomFused :: ToVSpine (FuseHom (FuseSym a) (FuseSym b)) }
+
+-- | Identity: @η@ from 'capUnfused', swapped into Dual-left packing.
 idMor
   :: forall a
    . ( KnownAtomRep a
@@ -1055,20 +1061,44 @@ idMor
      , Scalar (ToVSpine a) ~ Complex Double
      , Scalar (DualVector (ToVSpine a)) ~ Complex Double
      )
-  => ToV (MorExpr a a)
+  => DualVector (ToVSpine a) ⊗ ToVSpine a
 idMor = swapMap $ capUnfused @a (unitToVFromScalar 1)
+
+-- | Fused identity: undual Dual-left @η@, then CG-fuse to @FuseHom a a@.
+idMorFused
+  :: forall a
+   . ( KnownAtomRep a
+     , FuseAtomSpinesTerm a a
+     , KnownSymRep (FuseAtomSpines a a)
+     , CoalesceSpine (FuseAtomSpines a a)
+     , KnownSymRep (FuseHom a a)
+     , LinearSpace (ToVSpine a)
+     , LinearSpace (DualVector (ToVSpine a))
+     , LinearSpace (ToVSpine (FuseHom a a))
+     , Scalar (ToVSpine a) ~ Complex Double
+     , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+     , Scalar (ToVSpine (FuseHom a a)) ~ Complex Double
+     , TensorSpace (DualVector (ToVSpine a))
+     )
+  => ToVSpine (FuseHom a a)
+idMorFused =
+  let undualMap =
+        arr (LinearFunction (undualSpine @a))
+          :: DualVector (ToVSpine a) +> ToVSpine a
+      ηPrimal = (undualMap ⊗^ id) $ idMor @a
+   in repVToV @(FuseHom a a) (fuseExprTensor @a ηPrimal)
 
 -- | Step 1: @f ⊗ g@.
 tensorCompose
   :: forall a b c
-   . ( TensorSpace (ToV (MorExpr a b))
-     , TensorSpace (ToV (MorExpr b c))
-     , Scalar (ToV (MorExpr a b)) ~ Complex Double
-     , Scalar (ToV (MorExpr b c)) ~ Complex Double
+   . ( TensorSpace ((DualVector (ToVSpine a) ⊗ ToVSpine b))
+     , TensorSpace ((DualVector (ToVSpine b) ⊗ ToVSpine c))
+     , Scalar ((DualVector (ToVSpine a) ⊗ ToVSpine b)) ~ Complex Double
+     , Scalar ((DualVector (ToVSpine b) ⊗ ToVSpine c)) ~ Complex Double
      )
-  => ToV (MorExpr a b)
-  -> ToV (MorExpr b c)
-  -> ToV ('RTensor (MorExpr a b) (MorExpr b c))
+  => (DualVector (ToVSpine a) ⊗ ToVSpine b)
+  -> (DualVector (ToVSpine b) ⊗ ToVSpine c)
+  -> (DualVector (ToVSpine a) ⊗ ToVSpine b) ⊗ (DualVector (ToVSpine b) ⊗ ToVSpine c)
 tensorCompose = (⊗)
 
 -- | Step 2: reassociate to @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@ (cup-ready middle).
@@ -1095,12 +1125,8 @@ assocCompose
      , TensorSpace (DualVector (ToVSpine b))
      , TensorSpace (ToVSpine c)
      )
-  => ToV ('RTensor (MorExpr a b) (MorExpr b c))
-  -> ToV
-       ( 'RTensor
-           ('RDual ('RSum a))
-           ('RTensor (CupUnfusedExpr b) ('RSum c))
-       )
+  => (DualVector (ToVSpine a) ⊗ ToVSpine b) ⊗ (DualVector (ToVSpine b) ⊗ ToVSpine c)
+  -> DualVector (ToVSpine a) ⊗ ((ToVSpine b ⊗ DualVector (ToVSpine b)) ⊗ ToVSpine c)
 assocCompose t =
   (id ⊗^ lassocMap @(ToVSpine b) @(DualVector (ToVSpine b)) @(ToVSpine c))
     $ ( rassocMap
@@ -1125,6 +1151,19 @@ unitLunit =
     . swapMap
     . (fuseBond @1 @1 ⊗^ id)
 
+-- | Inverse of 'unitLunit': @v → (C 1 ⊗ C 1) ⊗ v@.
+unitLcounit
+  :: forall v
+   . ( LinearSpace v
+     , Scalar v ~ Complex Double
+     , TensorSpace v
+     )
+  => v +> ((C 1 ⊗ C 1) ⊗ v)
+unitLcounit =
+  (splitBond @1 @1 ⊗^ id)
+    . swapMap
+    . arr (LinearFunction (\x -> x ⊗ (konst 1 :: C 1)))
+
 -- | Right unitor for the Unit sector packaging @'v ⊗ (C 1 ⊗ C 1) → v@.
 unitRunit
   :: forall v
@@ -1136,6 +1175,18 @@ unitRunit
 unitRunit =
   runit
     . (id ⊗^ fuseBond @1 @1)
+
+-- | Inverse of 'unitRunit': @v → v ⊗ (C 1 ⊗ C 1)@.
+unitRcounit
+  :: forall v
+   . ( LinearSpace v
+     , Scalar v ~ Complex Double
+     , TensorSpace v
+     )
+  => v +> (v ⊗ (C 1 ⊗ C 1))
+unitRcounit =
+  (id ⊗^ splitBond @1 @1)
+    . arr (LinearFunction (\x -> x ⊗ (konst 1 :: C 1)))
 
 -- | Step 3: @(cup ⊗ id)@ on the middle @b ⊗ Dual b@.
 cupTensorIdCompose
@@ -1153,19 +1204,11 @@ cupTensorIdCompose
      , Scalar (ToVSpine c) ~ Complex Double
      , TensorSpace (DualVector (ToVSpine a))
      , TensorSpace (ToVSpine c)
-     , TensorSpace (ToV (CupUnfusedExpr b))
-     , TensorSpace (ToV ('RSum Unit))
+     , TensorSpace ((ToVSpine b ⊗ DualVector (ToVSpine b)))
+     , TensorSpace (ToVSpine Unit)
      )
-  => ToV
-       ( 'RTensor
-           ('RDual ('RSum a))
-           ('RTensor (CupUnfusedExpr b) ('RSum c))
-       )
-  -> ToV
-       ( 'RTensor
-           ('RDual ('RSum a))
-           ('RTensor ('RSum Unit) ('RSum c))
-       )
+  => DualVector (ToVSpine a) ⊗ ((ToVSpine b ⊗ DualVector (ToVSpine b)) ⊗ ToVSpine c)
+  -> DualVector (ToVSpine a) ⊗ (ToVSpine Unit ⊗ ToVSpine c)
 cupTensorIdCompose t =
   ( id
       ⊗^ ( arr (LinearFunction (cupUnfused @b))
@@ -1184,12 +1227,8 @@ unitorCompose
      , TensorSpace (DualVector (ToVSpine a))
      , TensorSpace (ToVSpine c)
      )
-  => ToV
-       ( 'RTensor
-           ('RDual ('RSum a))
-           ('RTensor ('RSum Unit) ('RSum c))
-       )
-  -> ToV (MorExpr a c)
+  => DualVector (ToVSpine a) ⊗ (ToVSpine Unit ⊗ ToVSpine c)
+  -> (DualVector (ToVSpine a) ⊗ ToVSpine c)
 unitorCompose t =
   (id ⊗^ unitLunit @(ToVSpine c)) $ t
 
@@ -1197,10 +1236,10 @@ unitorCompose t =
 -- @unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)@.
 composeMor
   :: forall a b c
-   . ( TensorSpace (ToV (MorExpr a b))
-     , TensorSpace (ToV (MorExpr b c))
-     , Scalar (ToV (MorExpr a b)) ~ Complex Double
-     , Scalar (ToV (MorExpr b c)) ~ Complex Double
+   . ( TensorSpace ((DualVector (ToVSpine a) ⊗ ToVSpine b))
+     , TensorSpace ((DualVector (ToVSpine b) ⊗ ToVSpine c))
+     , Scalar ((DualVector (ToVSpine a) ⊗ ToVSpine b)) ~ Complex Double
+     , Scalar ((DualVector (ToVSpine b) ⊗ ToVSpine c)) ~ Complex Double
      , KnownAtomRep b
      , LinearSpace (ToVSpine b)
      , LinearSpace (DualVector (ToVSpine b))
@@ -1216,12 +1255,12 @@ composeMor
      , TensorSpace (ToVSpine b)
      , TensorSpace (DualVector (ToVSpine b))
      , TensorSpace (ToVSpine c)
-     , TensorSpace (ToV (CupUnfusedExpr b))
-     , TensorSpace (ToV ('RSum Unit))
+     , TensorSpace ((ToVSpine b ⊗ DualVector (ToVSpine b)))
+     , TensorSpace (ToVSpine Unit)
      )
-  => ToV (MorExpr a b)
-  -> ToV (MorExpr b c)
-  -> ToV (MorExpr a c)
+  => (DualVector (ToVSpine a) ⊗ ToVSpine b)
+  -> (DualVector (ToVSpine b) ⊗ ToVSpine c)
+  -> (DualVector (ToVSpine a) ⊗ ToVSpine c)
 composeMor f g =
   unitorCompose @a @c
     ( cupTensorIdCompose @a @b @c
@@ -1231,215 +1270,413 @@ composeMor f g =
     )
 
 --------------------------------------------------------------------------------
--- Category \/ monoidal structure on 'Sym' (Hom = @ToV (MorExpr · ·)@)
+-- True unfused Hom on Obj trees (ToVObj / Dual-left Hom)
 --------------------------------------------------------------------------------
 
--- | Object constraint for unfused Hom composition ('idMor' \/ 'composeMor').
-type KnownSymHom (a :: Rep) =
-  ( KnownAtomRep a
-  , LinearSpace (ToVSpine a)
-  , LinearSpace (DualVector (ToVSpine a))
-  , Scalar (ToVSpine a) ~ Complex Double
-  , Scalar (DualVector (ToVSpine a)) ~ Complex Double
-  , TensorSpace (ToVSpine a)
-  , TensorSpace (DualVector (ToVSpine a))
-  , TensorSpace (ToV (CupUnfusedExpr a))
-  , TensorSpace (ToV ('RSum Unit))
-  )
+-- | Object spaces for 'HomUnfused': 'ToVObj' is a nested Kronecker / pair space.
+class
+  ( LinearSpace (ToVObj a)
+  , LinearSpace (DualVector (ToVObj a))
+  , Scalar (ToVObj a) ~ Complex Double
+  , Scalar (DualVector (ToVObj a)) ~ Complex Double
+  , TensorSpace (ToVObj a)
+  , TensorSpace (DualVector (ToVObj a))
+  , TensorSpace ((ToVObj a ⊗ DualVector (ToVObj a)))
+  , TensorSpace (ToVObj ('FObj.Atom 0))
+  ) =>
+  KnownToVObj (a :: Obj Nat)
 
-instance Category Sym where
-  type Object Sym a = KnownSymHom (FuseSym a)
+instance
+  ( KnownNat j
+  , KnownNat (IrrepDim j)
+  ) =>
+  KnownToVObj ('FObj.Atom j)
 
-  id :: forall a. Object Sym a => Sym a a
-  id = Sym (idMor @(FuseSym a))
+instance (KnownToVObj a, KnownToVObj b) => KnownToVObj ('FObj.Tensor a b)
+
+instance (KnownToVObj a, KnownToVObj b) => KnownToVObj ('FObj.Sum a b)
+
+-- | Unfused evaluation @ε : a ⊗ a* → 𝟙@ on tree spaces.
+cupUnfusedObj
+  :: forall a
+   . KnownToVObj a
+  => (ToVObj a ⊗ DualVector (ToVObj a))
+  -> ToVObj ('FObj.Atom 0)
+cupUnfusedObj t =
+  unitToVFromScalar
+    ( getLinearFunction
+        trace
+        (fromTensor -+$=> (swapMap $ t))
+    )
+
+-- | Unfused coevaluation @η : 𝟙 → a ⊗ a*@.
+capUnfusedObj
+  :: forall a
+   . KnownToVObj a
+  => ToVObj ('FObj.Atom 0)
+  -> (ToVObj a ⊗ DualVector (ToVObj a))
+capUnfusedObj u = unitToVScalar u *^ idTensor @(ToVObj a)
+
+-- | Identity Hom element on an Obj tree.
+idMorObj
+  :: forall a
+   . KnownToVObj a
+  => (DualVector (ToVObj a) ⊗ ToVObj a)
+idMorObj = swapMap $ capUnfusedObj @a (unitToVFromScalar 1)
+
+-- | Pack a linear map as Dual-left Hom.
+linToHomObj
+  :: forall a b
+   . ( KnownToVObj a
+     , KnownToVObj b
+     )
+  => (ToVObj a +> ToVObj b)
+  -> (DualVector (ToVObj a) ⊗ ToVObj b)
+linToHomObj f = asTensor -+$=> f
+
+tensorComposeObj
+  :: forall a b c
+   . ( TensorSpace ((DualVector (ToVObj a) ⊗ ToVObj b))
+     , TensorSpace ((DualVector (ToVObj b) ⊗ ToVObj c))
+     , Scalar ((DualVector (ToVObj a) ⊗ ToVObj b)) ~ Complex Double
+     , Scalar ((DualVector (ToVObj b) ⊗ ToVObj c)) ~ Complex Double
+     )
+  => (DualVector (ToVObj a) ⊗ ToVObj b)
+  -> (DualVector (ToVObj b) ⊗ ToVObj c)
+  -> (DualVector (ToVObj a) ⊗ ToVObj b) ⊗ (DualVector (ToVObj b) ⊗ ToVObj c)
+tensorComposeObj = (⊗)
+
+assocComposeObj
+  :: forall a b c
+   . ( KnownToVObj a
+     , KnownToVObj b
+     , KnownToVObj c
+     )
+  => (DualVector (ToVObj a) ⊗ ToVObj b) ⊗ (DualVector (ToVObj b) ⊗ ToVObj c)
+  -> DualVector (ToVObj a) ⊗ ((ToVObj b ⊗ DualVector (ToVObj b)) ⊗ ToVObj c)
+assocComposeObj t =
+  (id ⊗^ lassocMap @(ToVObj b) @(DualVector (ToVObj b)) @(ToVObj c))
+    $ ( rassocMap
+          @(DualVector (ToVObj a))
+          @(ToVObj b)
+          @(DualVector (ToVObj b) ⊗ ToVObj c)
+          $ t
+      )
+
+cupTensorIdComposeObj
+  :: forall a b c
+   . ( KnownToVObj a
+     , KnownToVObj b
+     , KnownToVObj c
+     )
+  => DualVector (ToVObj a) ⊗ ((ToVObj b ⊗ DualVector (ToVObj b)) ⊗ ToVObj c)
+  -> DualVector (ToVObj a) ⊗ (ToVObj ('FObj.Atom 0) ⊗ ToVObj c)
+cupTensorIdComposeObj t =
+  (id ⊗^ (arr (LinearFunction (cupUnfusedObj @b)) ⊗^ id)) $ t
+
+unitorComposeObj
+  :: forall a c
+   . ( KnownToVObj a
+     , KnownToVObj c
+     )
+  => DualVector (ToVObj a) ⊗ (ToVObj ('FObj.Atom 0) ⊗ ToVObj c)
+  -> (DualVector (ToVObj a) ⊗ ToVObj c)
+unitorComposeObj t =
+  (id ⊗^ unitLunit @(ToVObj c)) $ t
+
+-- | Unfused Hom composition on Obj trees:
+-- @unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)@.
+composeMorObj
+  :: forall a b c
+   . ( KnownToVObj a
+     , KnownToVObj b
+     , KnownToVObj c
+     , TensorSpace ((DualVector (ToVObj a) ⊗ ToVObj b))
+     , TensorSpace ((DualVector (ToVObj b) ⊗ ToVObj c))
+     , Scalar ((DualVector (ToVObj a) ⊗ ToVObj b)) ~ Complex Double
+     , Scalar ((DualVector (ToVObj b) ⊗ ToVObj c)) ~ Complex Double
+     )
+  => (DualVector (ToVObj a) ⊗ ToVObj b)
+  -> (DualVector (ToVObj b) ⊗ ToVObj c)
+  -> (DualVector (ToVObj a) ⊗ ToVObj c)
+composeMorObj f g =
+  unitorComposeObj @a @c
+    ( cupTensorIdComposeObj @a @b @c
+        ( assocComposeObj @a @b @c
+            (tensorComposeObj @a @b @c f g)
+        )
+    )
+
+--------------------------------------------------------------------------------
+-- Category \/ monoidal structure: HomUnfused (complete) and HomFused (stubbed compose)
+--------------------------------------------------------------------------------
+
+instance Category HomUnfused where
+  type Object HomUnfused a = KnownToVObj a
+
+  id :: forall a. Object HomUnfused a => HomUnfused a a
+  id = HomUnfused (idMorObj @a)
 
   (.)
     :: forall a b c
-     . (Object Sym a, Object Sym b, Object Sym c)
-    => Sym b c
-    -> Sym a b
-    -> Sym a c
-  Sym g . Sym f =
-    Sym (composeMor @(FuseSym a) @(FuseSym b) @(FuseSym c) f g)
+     . (Object HomUnfused a, Object HomUnfused b, Object HomUnfused c)
+    => HomUnfused b c
+    -> HomUnfused a b
+    -> HomUnfused a c
+  HomUnfused g . HomUnfused f =
+    HomUnfused (composeMorObj @a @b @c f g)
 
--- | Tensor of Hom elements (Kronecker + fuse) not yet wired.
-instance PFunctor FObj.Tensor Sym Sym where
-  first _ = undefined
+instance PFunctor FObj.Tensor HomUnfused HomUnfused where
+  first
+    :: forall a b c
+     . ( Object HomUnfused a
+       , Object HomUnfused b
+       , Object HomUnfused c
+       , Object HomUnfused (FObj.Tensor a c)
+       , Object HomUnfused (FObj.Tensor b c)
+       )
+    => HomUnfused a b
+    -> HomUnfused (FObj.Tensor a c) (FObj.Tensor b c)
+  first (HomUnfused f) =
+    HomUnfused $
+      linToHomObj @(FObj.Tensor a c) @(FObj.Tensor b c)
+        ((fromTensor -+$=> f) ⊗^ id)
 
-instance QFunctor FObj.Tensor Sym Sym where
-  second _ = undefined
+instance QFunctor FObj.Tensor HomUnfused HomUnfused where
+  second
+    :: forall a b c
+     . ( Object HomUnfused a
+       , Object HomUnfused b
+       , Object HomUnfused c
+       , Object HomUnfused (FObj.Tensor c a)
+       , Object HomUnfused (FObj.Tensor c b)
+       )
+    => HomUnfused a b
+    -> HomUnfused (FObj.Tensor c a) (FObj.Tensor c b)
+  second (HomUnfused g) =
+    HomUnfused $
+      linToHomObj @(FObj.Tensor c a) @(FObj.Tensor c b)
+        (id ⊗^ (fromTensor -+$=> g))
 
-instance Bifunctor FObj.Tensor Sym Sym Sym where
-  bimap _ _ = undefined
+-- | @bimap f g@ is the Kronecker product of the underlying linear maps,
+-- packed Dual-left: @(unpack f) ⊗^ (unpack g)@.
+instance Bifunctor FObj.Tensor HomUnfused HomUnfused HomUnfused where
+  bimap
+    :: forall a b c d
+     . ( Object HomUnfused a
+       , Object HomUnfused b
+       , Object HomUnfused c
+       , Object HomUnfused d
+       , Object HomUnfused (FObj.Tensor a c)
+       , Object HomUnfused (FObj.Tensor b d)
+       )
+    => HomUnfused a b
+    -> HomUnfused c d
+    -> HomUnfused (FObj.Tensor a c) (FObj.Tensor b d)
+  bimap (HomUnfused f) (HomUnfused g) =
+    HomUnfused $
+      linToHomObj @(FObj.Tensor a c) @(FObj.Tensor b d)
+        ((fromTensor -+$=> f) ⊗^ (fromTensor -+$=> g))
 
--- | Stub: fused F-move associator on @Obj@ trees.
-instance Associative Sym FObj.Tensor where
-  associate = undefined
-  disassociate = undefined
+-- | Object associator is linearmap @α@ (Kronecker reassociation), packed as Hom.
+instance Associative HomUnfused FObj.Tensor where
+  associate
+    :: forall a b c
+     . ( Object HomUnfused a
+       , Object HomUnfused b
+       , Object HomUnfused c
+       , Object HomUnfused (FObj.Tensor a b)
+       , Object HomUnfused (FObj.Tensor b c)
+       , Object HomUnfused (FObj.Tensor (FObj.Tensor a b) c)
+       , Object HomUnfused (FObj.Tensor a (FObj.Tensor b c))
+       )
+    => HomUnfused (FObj.Tensor (FObj.Tensor a b) c) (FObj.Tensor a (FObj.Tensor b c))
+  associate =
+    HomUnfused
+      ( linToHomObj
+          @(FObj.Tensor (FObj.Tensor a b) c)
+          @(FObj.Tensor a (FObj.Tensor b c))
+          (rassocMap @(ToVObj a) @(ToVObj b) @(ToVObj c))
+      )
 
--- | Unitors are identities via @SymTensor Unit r ~ r@ on 'FuseSym'.
-instance Monoidal Sym FObj.Tensor where
-  type Id Sym FObj.Tensor = 'FObj.Atom 0
+  disassociate
+    :: forall a b c
+     . ( Object HomUnfused a
+       , Object HomUnfused b
+       , Object HomUnfused c
+       , Object HomUnfused (FObj.Tensor a b)
+       , Object HomUnfused (FObj.Tensor b c)
+       , Object HomUnfused (FObj.Tensor (FObj.Tensor a b) c)
+       , Object HomUnfused (FObj.Tensor a (FObj.Tensor b c))
+       )
+    => HomUnfused (FObj.Tensor a (FObj.Tensor b c)) (FObj.Tensor (FObj.Tensor a b) c)
+  disassociate =
+    HomUnfused
+      ( linToHomObj
+          @(FObj.Tensor a (FObj.Tensor b c))
+          @(FObj.Tensor (FObj.Tensor a b) c)
+          (lassocMap @(ToVObj a) @(ToVObj b) @(ToVObj c))
+      )
+
+instance Monoidal HomUnfused FObj.Tensor where
+  type Id HomUnfused FObj.Tensor = 'FObj.Atom 0
 
   idl
     :: forall a
-     . ( Object Sym a
-       , Object Sym ('FObj.Atom 0)
-       , Object Sym (FObj.Tensor ('FObj.Atom 0) a)
+     . ( Object HomUnfused a
+       , Object HomUnfused ('FObj.Atom 0)
+       , Object HomUnfused (FObj.Tensor ('FObj.Atom 0) a)
        )
-    => Sym (FObj.Tensor ('FObj.Atom 0) a) a
-  idl = Sym (idMor @(FuseSym a))
+    => HomUnfused (FObj.Tensor ('FObj.Atom 0) a) a
+  idl =
+    HomUnfused
+      (linToHomObj @(FObj.Tensor ('FObj.Atom 0) a) @a (unitLunit @(ToVObj a)))
 
   idr
     :: forall a
-     . ( Object Sym a
-       , Object Sym ('FObj.Atom 0)
-       , Object Sym (FObj.Tensor a ('FObj.Atom 0))
+     . ( Object HomUnfused a
+       , Object HomUnfused ('FObj.Atom 0)
+       , Object HomUnfused (FObj.Tensor a ('FObj.Atom 0))
        )
-    => Sym (FObj.Tensor a ('FObj.Atom 0)) a
-  idr = Sym (idMor @(FuseSym a))
+    => HomUnfused (FObj.Tensor a ('FObj.Atom 0)) a
+  idr =
+    HomUnfused
+      (linToHomObj @(FObj.Tensor a ('FObj.Atom 0)) @a (unitRunit @(ToVObj a)))
 
   coidl
     :: forall a
-     . ( Object Sym a
-       , Object Sym ('FObj.Atom 0)
-       , Object Sym (FObj.Tensor ('FObj.Atom 0) a)
+     . ( Object HomUnfused a
+       , Object HomUnfused ('FObj.Atom 0)
+       , Object HomUnfused (FObj.Tensor ('FObj.Atom 0) a)
        )
-    => Sym a (FObj.Tensor ('FObj.Atom 0) a)
-  coidl = Sym (idMor @(FuseSym a))
+    => HomUnfused a (FObj.Tensor ('FObj.Atom 0) a)
+  coidl =
+    HomUnfused
+      (linToHomObj @a @(FObj.Tensor ('FObj.Atom 0) a) (unitLcounit @(ToVObj a)))
 
   coidr
     :: forall a
-     . ( Object Sym a
-       , Object Sym ('FObj.Atom 0)
-       , Object Sym (FObj.Tensor a ('FObj.Atom 0))
+     . ( Object HomUnfused a
+       , Object HomUnfused ('FObj.Atom 0)
+       , Object HomUnfused (FObj.Tensor a ('FObj.Atom 0))
        )
-    => Sym a (FObj.Tensor a ('FObj.Atom 0))
-  coidr = Sym (idMor @(FuseSym a))
+    => HomUnfused a (FObj.Tensor a ('FObj.Atom 0))
+  coidr =
+    HomUnfused
+      (linToHomObj @a @(FObj.Tensor a ('FObj.Atom 0)) (unitRcounit @(ToVObj a)))
 
--- | Stub: pack fused 'rmove' as a Dual-left Hom element.
-instance Braided Sym FObj.Tensor where
+instance Braided HomUnfused FObj.Tensor where
+  braid = undefined
+
+-- | Object constraint for fused Hom: @FuseHom a a@ identity / cups on the diagonal.
+type KnownHomFused (a :: Rep) =
+  ( KnownAtomRep a
+  , FuseAtomSpinesTerm a a
+  , KnownSymRep (FuseAtomSpines a a)
+  , CoalesceSpine (FuseAtomSpines a a)
+  , KnownSymRep (FuseHom a a)
+  , LinearSpace (ToVSpine a)
+  , LinearSpace (DualVector (ToVSpine a))
+  , LinearSpace (ToVSpine (FuseHom a a))
+  , Scalar (ToVSpine a) ~ Complex Double
+  , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+  , Scalar (ToVSpine (FuseHom a a)) ~ Complex Double
+  , TensorSpace (ToVSpine a)
+  , TensorSpace (DualVector (ToVSpine a))
+  , TensorSpace (ToVSpine (FuseHom a a))
+  )
+
+instance Category HomFused where
+  type Object HomFused a = KnownHomFused (FuseSym a)
+
+  id :: forall a. Object HomFused a => HomFused a a
+  id = HomFused (idMorFused @(FuseSym a))
+
+  (.)
+    :: forall a b c
+     . (Object HomFused a, Object HomFused b, Object HomFused c)
+    => HomFused b c
+    -> HomFused a b
+    -> HomFused a c
+  -- Needs F-move / braiding on @FuseHom@ spines; not Dual-left reassoc.
+  (.) = undefined
+
+instance PFunctor FObj.Tensor HomFused HomFused where
+  first _ = undefined
+
+instance QFunctor FObj.Tensor HomFused HomFused where
+  second _ = undefined
+
+instance Bifunctor FObj.Tensor HomFused HomFused HomFused where
+  bimap _ _ = undefined
+
+instance Associative HomFused FObj.Tensor where
+  associate = undefined
+  disassociate = undefined
+
+instance Monoidal HomFused FObj.Tensor where
+  type Id HomFused FObj.Tensor = 'FObj.Atom 0
+
+  idl
+    :: forall a
+     . ( Object HomFused a
+       , Object HomFused ('FObj.Atom 0)
+       , Object HomFused (FObj.Tensor ('FObj.Atom 0) a)
+       )
+    => HomFused (FObj.Tensor ('FObj.Atom 0) a) a
+  -- @FuseRep@ unitors: @FuseSym (Unit ⊗ a) ~ FuseSym a@.
+  idl = HomFused (idMorFused @(FuseSym a))
+
+  idr
+    :: forall a
+     . ( Object HomFused a
+       , Object HomFused ('FObj.Atom 0)
+       , Object HomFused (FObj.Tensor a ('FObj.Atom 0))
+       )
+    => HomFused (FObj.Tensor a ('FObj.Atom 0)) a
+  idr = HomFused (idMorFused @(FuseSym a))
+
+  coidl
+    :: forall a
+     . ( Object HomFused a
+       , Object HomFused ('FObj.Atom 0)
+       , Object HomFused (FObj.Tensor ('FObj.Atom 0) a)
+       )
+    => HomFused a (FObj.Tensor ('FObj.Atom 0) a)
+  coidl = HomFused (idMorFused @(FuseSym a))
+
+  coidr
+    :: forall a
+     . ( Object HomFused a
+       , Object HomFused ('FObj.Atom 0)
+       , Object HomFused (FObj.Tensor a ('FObj.Atom 0))
+       )
+    => HomFused a (FObj.Tensor a ('FObj.Atom 0))
+  coidr = HomFused (idMorFused @(FuseSym a))
+
+instance Braided HomFused FObj.Tensor where
   braid = undefined
 
 --------------------------------------------------------------------------------
--- Fused composition (Hom spaces already fused)
---
---   composeMorFused f g =
---     unitor ∘ (cup ⊗ id) ∘ fmove ∘ (f ⊗ g)
---
--- Inputs/outputs live in 'MorExprFused' (= @'RSum (FuseExpr (MorExpr · ·))@).
--- 'tensorComposeFused', 'cupComposeFused', 'unitorComposeFused' filled;
--- 'fmoveComposeFused' still stubbed.
+-- Fused cups on @FilterTrivial (FuseHom r r)@ (dual≅primal; not Hom packing)
 --------------------------------------------------------------------------------
 
--- | Fused middle object for the cup: @Fuse(b ⊗ b)@ (dual≅primal).
-type FuseMiddleExpr (b :: Rep) =
-  'RSum (FuseExpr ('RTensor ('RSum b) ('RSum b)))
-
--- | Step 1: @f ⊗ g@ in fused Hom spaces.
-tensorComposeFused
-  :: forall a b c
-   . ( TensorSpace (ToV (MorExprFused a b))
-     , TensorSpace (ToV (MorExprFused b c))
-     , Scalar (ToV (MorExprFused a b)) ~ Complex Double
-     , Scalar (ToV (MorExprFused b c)) ~ Complex Double
-     )
-  => ToV (MorExprFused a b)
-  -> ToV (MorExprFused b c)
-  -> ToV ('RTensor (MorExprFused a b) (MorExprFused b c))
-tensorComposeFused = (⊗)
-
--- | Step 2: SU(2) F-move / recoupling to cup-ready form
--- @Fuse(a*⊗b) ⊗ Fuse(b*⊗c) → Fuse(a*⊗c) ⊗ Fuse(b⊗b)@.
-fmoveComposeFused
-  :: forall a b c
-   . ()
-  => ToV ('RTensor (MorExprFused a b) (MorExprFused b c))
-  -> ToV ('RTensor (MorExprFused a c) (FuseMiddleExpr b))
-fmoveComposeFused = undefined
-
--- | Cup the already-fused middle @Fuse(b⊗b) → Unit@ (project singlets, then
--- 'cupFused').
+-- | Cup the CG-fused middle @FuseHom b b@ after projecting to singlets.
 cupMiddleFused
   :: forall b
    . ( KnownAtomRep b
-     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum b) ('RSum b)))
-     , CupTrivial (CupFusedRep b)
-     , KnownSymRep (FuseExpr ('RTensor ('RSum b) ('RSum b)))
-     , KnownSymRep (CupFusedRep b)
+     , ProjectToSymmetric (FuseHom b b)
+     , CupTrivial (FilterTrivial (FuseHom b b))
+     , KnownSymRep (FuseHom b b)
+     , KnownSymRep (FilterTrivial (FuseHom b b))
      )
-  => ToV (FuseMiddleExpr b)
-  -> ToV ('RSum Unit)
+  => ToVSpine (FuseHom b b)
+  -> ToVSpine Unit
 cupMiddleFused mid =
   cupFusedOnSpine @b $
-    repVToV @(CupFusedRep b) $
+    repVToV @(FilterTrivial (FuseHom b b)) $
       projectToSymmetric $
-        vToRepV @(FuseExpr ('RTensor ('RSum b) ('RSum b))) mid
-
--- | Step 3: @id ⊗ cup@ on @Fuse(a*⊗c) ⊗ Fuse(b⊗b)@.
-cupComposeFused
-  :: forall a b c
-   . ( KnownAtomRep b
-     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum b) ('RSum b)))
-     , CupTrivial (CupFusedRep b)
-     , KnownSymRep (FuseExpr ('RTensor ('RSum b) ('RSum b)))
-     , KnownSymRep (CupFusedRep b)
-     , LinearSpace (ToV (MorExprFused a c))
-     , LinearSpace (ToV (FuseMiddleExpr b))
-     , Scalar (ToV (MorExprFused a c)) ~ Complex Double
-     , Scalar (ToV (FuseMiddleExpr b)) ~ Complex Double
-     , TensorSpace (ToV (MorExprFused a c))
-     , TensorSpace (ToV (FuseMiddleExpr b))
-     , TensorSpace (ToV ('RSum Unit))
-     )
-  => ToV ('RTensor (MorExprFused a c) (FuseMiddleExpr b))
-  -> ToV ('RTensor (MorExprFused a c) ('RSum Unit))
-cupComposeFused t =
-  (id ⊗^ arr (LinearFunction (cupMiddleFused @b))) $ t
-
--- | Step 4: absorb @Unit@ (@Fuse(a*⊗c) ⊗ Unit → Fuse(a*⊗c)@).
-unitorComposeFused
-  :: forall a c
-   . ( LinearSpace (ToV (MorExprFused a c))
-     , Scalar (ToV (MorExprFused a c)) ~ Complex Double
-     , TensorSpace (ToV (MorExprFused a c))
-     )
-  => ToV ('RTensor (MorExprFused a c) ('RSum Unit))
-  -> ToV (MorExprFused a c)
-unitorComposeFused t =
-  unitRunit @(ToV (MorExprFused a c)) $ t
-
--- | Fused Hom composition on 'MorExprFused':
--- @unitor ∘ (cup ⊗ id) ∘ fmove ∘ (f ⊗ g)@.
-composeMorFused
-  :: forall a b c
-   . ( TensorSpace (ToV (MorExprFused a b))
-     , TensorSpace (ToV (MorExprFused b c))
-     , Scalar (ToV (MorExprFused a b)) ~ Complex Double
-     , Scalar (ToV (MorExprFused b c)) ~ Complex Double
-     , KnownAtomRep b
-     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum b) ('RSum b)))
-     , CupTrivial (CupFusedRep b)
-     , KnownSymRep (FuseExpr ('RTensor ('RSum b) ('RSum b)))
-     , KnownSymRep (CupFusedRep b)
-     , LinearSpace (ToV (MorExprFused a c))
-     , LinearSpace (ToV (FuseMiddleExpr b))
-     , Scalar (ToV (MorExprFused a c)) ~ Complex Double
-     , Scalar (ToV (FuseMiddleExpr b)) ~ Complex Double
-     , TensorSpace (ToV (MorExprFused a c))
-     , TensorSpace (ToV (FuseMiddleExpr b))
-     , TensorSpace (ToV ('RSum Unit))
-     )
-  => ToV (MorExprFused a b)
-  -> ToV (MorExprFused b c)
-  -> ToV (MorExprFused a c)
-composeMorFused f g =
-  unitorComposeFused @a @c
-    ( cupComposeFused @a @b @c
-        ( fmoveComposeFused @a @b @c
-            (tensorComposeFused @a @b @c f g)
-        )
-    )
+        vToRepV @(FuseHom b b) mid
 
 -- | Middle step retained from the old fused-cup-on-unfused path.
 fuseMiddleOnCup
@@ -1448,39 +1685,39 @@ fuseMiddleOnCup
      , FuseAtomSpinesTerm r r
      , KnownSymRep (FuseAtomSpines r r)
      , CoalesceSpine (FuseAtomSpines r r)
-     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum r)))
-     , ProjectToSymmetric (FuseExpr ('RTensor ('RSum r) ('RSum r)))
-     , KnownSymRep (CupFusedRep r)
+     , KnownSymRep (FuseHom r r)
+     , ProjectToSymmetric (FuseHom r r)
+     , KnownSymRep (FilterTrivial (FuseHom r r))
      , LinearSpace (ToVSpine r)
      , LinearSpace (DualVector (ToVSpine r))
-     , LinearSpace (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , LinearSpace (ToVSpine (FuseHom r r))
      , Scalar (ToVSpine r) ~ Complex Double
      , Scalar (DualVector (ToVSpine r)) ~ Complex Double
-     , Scalar (ToVSpine (FuseExpr ('RTensor ('RSum r) ('RSum r))))
+     , Scalar (ToVSpine (FuseHom r r))
          ~ Complex Double
      , TensorSpace (DualVector (ToVSpine r))
      )
-  => ToV (CupUnfusedExpr r)
-  -> ToVSpine (CupFusedRep r)
+  => (ToVSpine r ⊗ DualVector (ToVSpine r))
+  -> ToVSpine (FilterTrivial (FuseHom r r))
 fuseMiddleOnCup t =
   let undualMap =
         arr (LinearFunction (undualSpine @r))
           :: DualVector (ToVSpine r) +> ToVSpine r
       ηPrimal = (id ⊗^ undualMap) $ t
-   in repVToV @(CupFusedRep r) $
+   in repVToV @(FilterTrivial (FuseHom r r)) $
         projectToSymmetric (fuseExprTensor @r ηPrimal)
 
 -- | Fused cup on a projected singlet spine → @Unit@.
 cupFusedOnSpine
   :: forall r
    . ( KnownAtomRep r
-     , CupTrivial (CupFusedRep r)
-     , KnownSymRep (CupFusedRep r)
+     , CupTrivial (FilterTrivial (FuseHom r r))
+     , KnownSymRep (FilterTrivial (FuseHom r r))
      )
-  => ToVSpine (CupFusedRep r)
-  -> ToV ('RSum Unit)
+  => ToVSpine (FilterTrivial (FuseHom r r))
+  -> ToVSpine Unit
 cupFusedOnSpine s =
-  repVToV @Unit (cupFused @r (vToRepV @(CupFusedRep r) s))
+  repVToV @Unit (cupFused @r (vToRepV @(FilterTrivial (FuseHom r r)) s))
 
 --------------------------------------------------------------------------------
 -- Braid (copy-axis swap on each sector)
@@ -1497,7 +1734,7 @@ swapCopyProductSector
   -> (C n ⊗ C m) ⊗ C d
 swapCopyProductSector sec = (swapMap ⊗^ id) $ sec
 
--- | Braid an unfused atom pair: @r ⊗ q → q ⊗ r@ (term-level 'BraidExpr').
+-- | Braid an unfused atom pair: @r ⊗ q → q ⊗ r@.
 swapAtomPair
   :: forall j1 j2 m n
    . ( KnownNat j1
@@ -1679,15 +1916,14 @@ rmoveSpine = go (symRepSing @rs)
       RCons (rmoveSector @j1 @j2 se sm v) (go rest rs)
 
 -- | Leaf braiding @r ⊗ s → s ⊗ r@ on a fused pair
--- (@fuseExpr ∘ braidExpr ≅ rmove ∘ fuseExpr@).
+-- (@fuseExpr ∘ braid ≅ rmove ∘ fuseExpr@).
 rmove
   :: forall j1 j2 r s
    . ( KnownNat j1
      , KnownNat j2
-     , KnownSymRep (FuseExpr ('RTensor ('RSum r) ('RSum s)))
-     , RmoveTarget j1 j2 (FuseExpr ('RTensor ('RSum r) ('RSum s)))
-         ~ FuseExpr (BraidExpr ('RTensor ('RSum r) ('RSum s)))
+     , KnownSymRep (FuseHom r s)
+     , RmoveTarget j1 j2 (FuseHom r s) ~ FuseHom s r
      )
-  => RepV (FuseExpr ('RTensor ('RSum r) ('RSum s)))
-  -> RepV (FuseExpr (BraidExpr ('RTensor ('RSum r) ('RSum s))))
-rmove = rmoveSpine @j1 @j2 @(FuseExpr ('RTensor ('RSum r) ('RSum s)))
+  => RepV (FuseHom r s)
+  -> RepV (FuseHom s r)
+rmove = rmoveSpine @j1 @j2 @(FuseHom r s)

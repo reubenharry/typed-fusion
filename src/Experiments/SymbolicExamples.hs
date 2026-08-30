@@ -7,17 +7,20 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
--- Covers 'RepExpr' / 'ToV' / 'fuseExpr' / 'rtensor' / 'cupRdual' / 'composeMor' /
--- 'MorExprFused' (fused compose steps stubbed).
+-- Covers 'ToVSpine' / Dual-left Hom / 'fuseExpr' / 'rtensor' / 'cupRdual' / 'composeMor' /
+-- Dual-left 'HomUnfused'; fused 'HomFused' as @ToVSpine (FuseHom …)@ (compose stubbed).
 module Experiments.SymbolicExamples where
 
 import Control.Arrow.Constrained (($), arr)
-import Control.Category.Constrained.Prelude (id)
+import Control.Category.Constrained.Prelude (Category (..), id)
 import Data.Complex (Complex ((:+)), magnitude, realPart)
 import Data.Kind (Type)
 import Data.Maybe (fromJust)
 import Data.Proxy (Proxy (..))
 import Data.VectorSpace ((*^))
+import Experiments.Categorical.Associative (Associative (..))
+import Experiments.Categorical.Bifunctor (Bifunctor (..))
+import Experiments.Fusion.Obj as FObj
 import Experiments.Symbolic
 import Experiments.Symbolic.Reference
   ( exCoherenceRmove11
@@ -50,7 +53,7 @@ import Symmetry.SU2
 import TensorNetwork.Categorical ((⊗^))
 import qualified Data.Vector.Storable as VS
 
-import Prelude hiding (id, ($))
+import Prelude hiding (id, (.), ($))
 
 -- | Hexagon coherence via Reference CG fuse (see 'Experiments.Symbolic.Reference').
 coherenceRmoveLeafOk :: Bool
@@ -282,7 +285,7 @@ cupMiddleFusedSpinHalfOk =
       v = unsafeFromArray (VS.fromList [1, 0])
       r = RConsAtomAtomM v RNil :: RepV '[ '(1, 'AtomM 1)]
       mid =
-        repVToV @(FuseExpr ('RTensor ('RSum '[ '(1, 'AtomM 1)]) ('RSum '[ '(1, 'AtomM 1)])))
+        repVToV @(FuseHom '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)])
           ( fuseExpr @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)]
               r
               (vToRepV @'[ '(1, 'AtomM 1)] (undualSpine @'[ '(1, 'AtomM 1)] (rdual r)))
@@ -298,19 +301,19 @@ cupMiddleFusedSpinHalfOk =
           )
    in toVApproxEq (toArray uMid) (toArray (unitToVFromScalar (unitAmp uFus :+ 0)))
 
--- | 'unitorComposeFused' absorbs @Unit@ on the right (@m ⊗ 1 ≅ m@).
-unitorComposeFusedTrivialOk :: Bool
-unitorComposeFusedTrivialOk =
-  let m =
-        (konst 1 ⊗ konst 1) ⊗ konst (5 :+ 0)
-          :: ToV
-               ( MorExprFused
-                   '[ '(0, 'AtomM 1)]
-                   '[ '(0, 'AtomM 1)]
-               )
+-- | Right unitor absorbs @Unit@ on Dual-left Hom (@m ⊗ 1 ≅ m@).
+unitRunitMorTrivialOk :: Bool
+unitRunitMorTrivialOk =
+  let m = (5 :+ 0) *^ idMor @'[ '(0, 'AtomM 1)]
       u = unitToVFromScalar 1
    in toVApproxEq
-        (toArray (unitorComposeFused @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)] (m ⊗ u)))
+        (toArray
+           ( unitRunit
+               @( DualVector (ToVSpine '[ '(0, 'AtomM 1)])
+                    ⊗ ToVSpine '[ '(0, 'AtomM 1)]
+                )
+               $ (m ⊗ u)
+           ))
         (toArray m)
 
 -- | @(cup ⊗ id)@ then unitor on a packed assoc-shape state: @cup(η_b) = dim b@.
@@ -391,18 +394,12 @@ composeMorMatchesMatMulOk =
       ug = id ⊗^ gLeg
       fHom =
         asTensor -+$=> uf
-          :: ToV
-               ( MorExpr
-                   '[ '(1, 'AtomM 1)]
-                   '[ '(1, 'AtomM 1)]
-               )
+          :: DualVector (ToVSpine '[ '(1, 'AtomM 1)])
+               ⊗ ToVSpine '[ '(1, 'AtomM 1)]
       gHom =
         asTensor -+$=> ug
-          :: ToV
-               ( MorExpr
-                   '[ '(1, 'AtomM 1)]
-                   '[ '(2, 'AtomM 1)]
-               )
+          :: DualVector (ToVSpine '[ '(1, 'AtomM 1)])
+               ⊗ ToVSpine '[ '(2, 'AtomM 1)]
       hHom =
         composeMor
           @'[ '(1, 'AtomM 1)]
@@ -417,6 +414,90 @@ composeMorMatchesMatMulOk =
       agree x =
         toVApproxEq (toArray (h $ x)) (toArray (ug $ (uf $ x)))
    in all agree xs
+
+-- | @composeMorObj id id ≅ id@ on spin-½ (true unfused Hom).
+composeMorObjIdIdOk :: Bool
+composeMorObjIdIdOk =
+  let i = id :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
+   in toVApproxEq
+        (toArray (unHomUnfused (i . i)))
+        (toArray (unHomUnfused i))
+
+-- | @bimap id id ≅ id@ on @½ ⊗ ½@ (true unfused Hom).
+bimapHomUnfusedIdIdOk :: Bool
+bimapHomUnfusedIdIdOk =
+  let iHalf = id :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
+      iTen =
+        id
+          :: HomUnfused
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+      bi =
+        bimap iHalf iHalf
+          :: HomUnfused
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+   in toVApproxEq (toArray (unHomUnfused bi)) (toArray (unHomUnfused iTen))
+
+-- | @disassociate ∘ associate ≅ id@ as linear maps on @(½ ⊗ ½) ⊗ ½@
+-- (Hom packing of linearmap α / α⁻¹; avoids Hom-compose cost on the smoke).
+associateHomUnfusedRoundtripOk :: Bool
+associateHomUnfusedRoundtripOk =
+  let α =
+        unHomUnfused
+          ( associate
+              :: HomUnfused
+                   ( FObj.Tensor
+                       (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                       ('FObj.Atom 1)
+                   )
+                   ( FObj.Tensor
+                       ('FObj.Atom 1)
+                       (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                   )
+          )
+      αinv =
+        unHomUnfused
+          ( disassociate
+              :: HomUnfused
+                   ( FObj.Tensor
+                       ('FObj.Atom 1)
+                       (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                   )
+                   ( FObj.Tensor
+                       (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                       ('FObj.Atom 1)
+                   )
+          )
+      roundTrip =
+        (fromTensor -+$=> αinv)
+          . (fromTensor -+$=> α)
+            :: ToVObj
+                 ( FObj.Tensor
+                     (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                     ('FObj.Atom 1)
+                 )
+               +> ToVObj
+                    ( FObj.Tensor
+                        (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                        ('FObj.Atom 1)
+                    )
+      iHom =
+        unHomUnfused
+          ( id
+              :: HomUnfused
+                   ( FObj.Tensor
+                       (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                       ('FObj.Atom 1)
+                   )
+                   ( FObj.Tensor
+                       (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+                       ('FObj.Atom 1)
+                   )
+          )
+   in toVApproxEq
+        (toArray (asTensor -+$=> roundTrip))
+        (toArray iHom)
 
 -- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ @√(j+1) · CS@ (pivotal undual).
 undualDualRoundtripOk :: Bool
@@ -544,12 +625,15 @@ symbolicExamplesOk =
     , cupFusedSpinHalfCoherentOk
     , cupCapFusedSnakeTrivialOk
     , cupMiddleFusedSpinHalfOk
-    , unitorComposeFusedTrivialOk
+    , unitRunitMorTrivialOk
     , cupTensorIdUnitorOk
     , composeMorIdIdOk
     , composeMorLeftUnitOk
     , composeMorRightUnitOk
     , composeMorMatchesMatMulOk
+    , composeMorObjIdIdOk
+    , bimapHomUnfusedIdIdOk
+    , associateHomUnfusedRoundtripOk
     , undualDualRoundtripOk
     , repVToVRoundTripOk
     , coalesceMergeFlatDimOk
@@ -593,46 +677,31 @@ type SmokeBraid =
     (Braid SmokeRep)
     '[ '(1, 'Prod ('AtomM 5) ('AtomM 3))]
 
--- | @MorExpr@: unfused dual⊗codomain space.
+-- | Dual-left Hom space: @Dual r ⊗ q@.
 type SmokeMor =
   AssertEqType
-    ( ToV
-        ( MorExpr
-            '[ '(1, 'AtomM 2)]
-            '[ '(2, 'AtomM 3)]
-        )
+    ( DualVector (ToVSpine '[ '(1, 'AtomM 2)])
+        ⊗ ToVSpine '[ '(2, 'AtomM 3)]
     )
     ( DualVector (C 2 ⊗ C 2)
       ⊗ (C 3 ⊗ C 3)
     )
 
--- | @MorExprFused@: Dual-left Hom fuses like primal⊗primal (half → half).
-type SmokeMorFused =
-  AssertEqRep
-    ( FuseExpr
-        ( MorExpr
-            '[ '(1, 'AtomM 1)]
-            '[ '(1, 'AtomM 1)]
-        )
-    )
-    ( FuseExpr
-        ( 'RTensor
-            ('RSum '[ '(1, 'AtomM 1)])
-            ('RSum '[ '(1, 'AtomM 1)])
-        )
-    )
+-- | Fused Hom is @ToVSpine (FuseHom …)@ (coalesced Rep), not Dual-left.
+type SmokeHomFused =
+  AssertEqType
+    (ToVSpine (FuseHom (FuseSym ('FObj.Atom 1)) (FuseSym ('FObj.Atom 1))))
+    (ToVSpine (FuseHom '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)]))
 
 -- | Compose step-2 packing: @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@.
 type SmokeComposeAssoc =
   AssertEqType
-    ( ToV
-        ( 'RTensor
-            ('RDual ('RSum '[ '(0, 'AtomM 1)]))
-            ( 'RTensor
-                (CupUnfusedExpr '[ '(1, 'AtomM 1)])
-                ('RSum '[ '(0, 'AtomM 1)])
+    ( DualVector (ToVSpine '[ '(0, 'AtomM 1)])
+        ⊗ ( ( ToVSpine '[ '(1, 'AtomM 1)]
+                ⊗ DualVector (ToVSpine '[ '(1, 'AtomM 1)])
             )
-        )
+              ⊗ ToVSpine '[ '(0, 'AtomM 1)]
+          )
     )
     ( DualVector (C 1 ⊗ C 1)
         ⊗ ( ((C 1 ⊗ C 2) ⊗ DualVector (C 1 ⊗ C 2))
@@ -693,15 +762,10 @@ type SmokeToVSpine =
     , C 1 ⊗ C 1
     )
 
--- | Unfused atom sums: @ToV (RTensor (RSum r) (RSum q)) = ToVSpine r ⊗ ToVSpine q@.
+-- | Unfused atom-spine tensor: @ToVSpine r ⊗ ToVSpine q@.
 type SmokeToVRtensor =
   AssertEqType
-    ( ToV
-        ( 'RTensor
-            ('RSum '[ '(1, 'AtomM 2)])
-            ('RSum '[ '(2, 'AtomM 1)])
-        )
-    )
+    (ToVSpine '[ '(1, 'AtomM 2)] ⊗ ToVSpine '[ '(2, 'AtomM 1)])
     ( (C 2 ⊗ C 2)
       ⊗ (C 1 ⊗ C 3)
     )
@@ -714,55 +778,27 @@ type SmokeFuseAtoms =
      , '(3, 'AtomM 1)
      ]
 
--- | 'FuseExpr' on an unfused atom pair: CG channels tagged with the copy product.
+-- | 'FuseHom' on an unfused atom pair: CG channels tagged with the copy product.
 type SmokeFuseTensor =
   AssertEqRep
-    ( FuseExpr
-        ( 'RTensor
-            ('RSum '[ '(1, 'AtomM 2)])
-            ('RSum '[ '(2, 'AtomM 3)])
-        )
-    )
+    (FuseHom '[ '(1, 'AtomM 2)] '[ '(2, 'AtomM 3)])
     '[ '(1, 'Prod ('AtomM 2) ('AtomM 3))
      , '(3, 'Prod ('AtomM 2) ('AtomM 3))
      ]
 
--- | @FuseExpr (BraidExpr (RTensor …))@ swaps tensor legs.
+-- | @FuseHom q r@ after braiding legs (swap copy factors on the product).
 type SmokeFuseBraidTensor =
   AssertEqRep
-    ( FuseExpr
-        ( BraidExpr
-            ( 'RTensor
-                ('RSum '[ '(1, 'AtomM 2)])
-                ('RSum '[ '(2, 'AtomM 3)])
-            )
-        )
-    )
+    (FuseHom '[ '(2, 'AtomM 3)] '[ '(1, 'AtomM 2)])
     '[ '(1, 'Prod ('AtomM 3) ('AtomM 2))
      , '(3, 'Prod ('AtomM 3) ('AtomM 2))
      ]
 
--- | 'RmoveTarget' on fused 'FuseExpr' matches braided 'FuseExpr'.
+-- | 'RmoveTarget' on fused 'FuseHom' matches braided 'FuseHom'.
 type SmokeRmoveTarget =
   AssertEqRep
-    ( RmoveTarget
-        1
-        2
-        ( FuseExpr
-            ( 'RTensor
-                ('RSum '[ '(1, 'AtomM 2)])
-                ('RSum '[ '(2, 'AtomM 3)])
-            )
-        )
-    )
-    ( FuseExpr
-        ( BraidExpr
-            ( 'RTensor
-                ('RSum '[ '(1, 'AtomM 2)])
-                ('RSum '[ '(2, 'AtomM 3)])
-            )
-        )
-    )
+    (RmoveTarget 1 2 (FuseHom '[ '(1, 'AtomM 2)] '[ '(2, 'AtomM 3)]))
+    (FuseHom '[ '(2, 'AtomM 3)] '[ '(1, 'AtomM 2)])
 
 -- | Swapped tensor legs yield the same fused atom spine (@SU(2)@ CG symmetry).
 type SmokeFusedLeafSym =
@@ -807,8 +843,8 @@ smokeBraid = Proxy
 smokeMor :: Proxy SmokeMor
 smokeMor = Proxy
 
-smokeMorFused :: Proxy SmokeMorFused
-smokeMorFused = Proxy
+smokeHomFused :: Proxy SmokeHomFused
+smokeHomFused = Proxy
 
 smokeComposeAssoc :: Proxy SmokeComposeAssoc
 smokeComposeAssoc = Proxy

@@ -16,18 +16,15 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
--- | Symbolic SU(2) irrep / multiplicity expression kinds.
+-- | Symbolic SU(2) multiplicity / sector kinds.
 --
--- 'RepExpr' is the @ToV@ / space layer (unfused Kronecker, duals, Hom packing).
--- Categorical objects for the symbolic monoidal category are
--- 'Experiments.Fusion.Obj.Obj' trees (@'Atom@ \/ @'Tensor@ \/ @'Sum@); nested
--- Mac Lane parenthesization lives there, not on 'RepExpr'.
--- Sector keys are bare @Nat@ (@2j@); multiplicity stays a small expression kind.
+-- Categorical objects are 'Experiments.Fusion.Obj.Obj' trees. Sector spines are
+-- coalesced @Rep = [(Nat, MultExpr)]@ (@2j@ keys). Hom packing lives in
+-- 'Experiments.Symbolic.TypeLevel' (Dual-left over 'ToVSpine' \/ 'ToVObj').
 module Experiments.Symbolic.Expr
   ( MultExpr (..)
   , Sector
   , Rep
-  , RepExpr (..)
   ) where
 
 import GHC.TypeLits (Nat)
@@ -40,14 +37,3 @@ data MultExpr
 -- | Sector: irrep label (@2j@ as 'Nat') paired with a multiplicity expression.
 type Sector = (Nat, MultExpr)
 type Rep = [Sector]
-
--- | Expression over coalesced spines: direct sum, unfused tensor, or dual.
---
--- This is /not/ the categorical object kind (see @Obj@ in
--- 'Experiments.Fusion.Obj'). Well-formed @'RTensor@: both arguments are atom
--- @'RSum@ spines (no nested @'RTensor@). Deeper association is temporal
--- (@FuseExpr@ then @'RTensor@ again) or formal on @Obj@ trees via 'FuseSym'.
-data RepExpr
-  = RSum Rep
-  | RTensor RepExpr RepExpr
-  | RDual RepExpr
