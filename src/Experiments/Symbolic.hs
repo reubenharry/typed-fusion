@@ -14,7 +14,8 @@
 --
 -- Unfused composition: 'composeMorObj' \/ 'HomUnfused' on @ToVObj@ trees
 -- (complete Category; linearmap α / unitors). Fused Hom: 'HomFused' as
--- @ToVSpine (FuseHom (FuseSym ·) (FuseSym ·))@ (Category @(. )@ stubbed).
+-- @ToVSpine (FuseHom (FuseSym ·) (FuseSym ·))@; 'composeMorFused' fuses Hom
+-- spines via 'fuseExpr', then stubbed F-move \/ cup ('FuseRep' unitor).
 -- Fused cups/caps: 'cupFused' / 'capFused' on @FilterTrivial (FuseHom r r)@.
 --
 -- Tensor CG fuse uses typed 'Symmetry.CG.SU2.fuseCGChannel' per channel; see

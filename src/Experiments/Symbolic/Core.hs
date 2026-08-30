@@ -30,7 +30,7 @@
 -- 'HomUnfused' \/ 'HomFused' index morphisms by fusion trees @Obj Nat@.
 -- Unfused Hom: @Dual(ToVObj a) ⊗ ToVObj b@ (complete Category, linearmap α / unitors).
 -- Fused Hom: @ToVSpine (FuseHom (FuseSym a) (FuseSym b))@ — coalesced 'Rep' spine
--- (Category @(. )@ stubbed; needs F-move to compose).
+-- ('composeMorFused': fuseExpr then stubbed F-move \/ cup; FuseRep unitor).
 -- 'repVToV' / 'vToRepV' round-trip a 'KnownSymRep' spine through 'ToVSpine'.
 module Experiments.Symbolic.Core where
 
@@ -1656,6 +1656,129 @@ instance Monoidal HomFused FObj.Tensor where
 
 instance Braided HomFused FObj.Tensor where
   braid = undefined
+
+--------------------------------------------------------------------------------
+-- Fused composition on coalesced 'Rep' spines (@ToVSpine (FuseHom · ·)@)
+--
+--   composeMorFused f g =
+--     unitor ∘ cup ∘ fmove ∘ fuseExpr(f, g)
+--
+-- Every intermediate is a fully fused spine (no outer Kronecker of @ToVSpine@s).
+-- Mirror of unfused 'assocCompose': keep factor order @a · b · b · c@ and only
+-- reassociate the fusion tree (no R-move). Wrong target
+-- @Fuse(Fuse(a,c), Fuse(b,b))@ would shuffle @c@ past the @b@s.
+--------------------------------------------------------------------------------
+
+-- | Step 1: CG-fuse the two Hom spines
+-- @FuseHom (FuseHom a b) (FuseHom b c)@.
+tensorComposeFused
+  :: forall a b c
+   . ( KnownAtomRep (FuseHom a b)
+     , KnownAtomRep (FuseHom b c)
+     , FuseAtomSpinesTerm (FuseHom a b) (FuseHom b c)
+     , KnownSymRep (FuseAtomSpines (FuseHom a b) (FuseHom b c))
+     , CoalesceSpine (FuseAtomSpines (FuseHom a b) (FuseHom b c))
+     , KnownSymRep (FuseHom (FuseHom a b) (FuseHom b c))
+     )
+  => ToVSpine (FuseHom a b)
+  -> ToVSpine (FuseHom b c)
+  -> ToVSpine (FuseHom (FuseHom a b) (FuseHom b c))
+tensorComposeFused f g =
+  repVToV @(FuseHom (FuseHom a b) (FuseHom b c)) $
+    fuseExpr
+      @(FuseHom a b)
+      @(FuseHom b c)
+      (vToRepV @(FuseHom a b) f)
+      (vToRepV @(FuseHom b c) g)
+
+-- | Step 2: F-move / associator to cup-ready form (same string order as
+-- 'assocCompose'):
+--
+-- @
+-- Fuse(Fuse(a,b), Fuse(b,c))  ─F→  Fuse(a, Fuse(Fuse(b,b), c))
+-- @
+--
+-- Blocker: SU(2) F-symbols. Not an R-move — do not target
+-- @Fuse(Fuse(a,c), Fuse(b,b))@.
+fmoveComposeFused
+  :: forall a b c
+   . ToVSpine (FuseHom (FuseHom a b) (FuseHom b c))
+  -> ToVSpine (FuseHom a (FuseHom (FuseHom b b) c))
+fmoveComposeFused = undefined
+
+-- | Step 3: cup the middle @FuseHom b b → Unit@, staying fused:
+-- @Fuse(a, Fuse(Fuse(b,b), c)) → Fuse(a, FuseRep(Unit, c))@.
+cupComposeFused
+  :: forall a b c
+   . ToVSpine (FuseHom a (FuseHom (FuseHom b b) c))
+  -> ToVSpine (FuseHom a (FuseRep Unit c))
+cupComposeFused = undefined
+
+-- | Step 4: 'FuseRep' left unitor on the right factor
+-- @Fuse(a, FuseRep(Unit, c)) → Fuse(a, c)@.
+unitorComposeFused
+  :: forall a c
+   . (FuseRep Unit c ~ c)
+  => ToVSpine (FuseHom a (FuseRep Unit c))
+  -> ToVSpine (FuseHom a c)
+unitorComposeFused = id
+
+-- | Fused Hom composition:
+-- @unitor ∘ cup ∘ fmove ∘ fuseExpr(f, g)@.
+composeMorFused
+  :: forall a b c
+   . ( KnownAtomRep (FuseHom a b)
+     , KnownAtomRep (FuseHom b c)
+     , FuseAtomSpinesTerm (FuseHom a b) (FuseHom b c)
+     , KnownSymRep (FuseAtomSpines (FuseHom a b) (FuseHom b c))
+     , CoalesceSpine (FuseAtomSpines (FuseHom a b) (FuseHom b c))
+     , KnownSymRep (FuseHom (FuseHom a b) (FuseHom b c))
+     , FuseRep Unit c ~ c
+     )
+  => ToVSpine (FuseHom a b)
+  -> ToVSpine (FuseHom b c)
+  -> ToVSpine (FuseHom a c)
+composeMorFused f g =
+  unitorComposeFused @a @c
+    ( cupComposeFused @a @b @c
+        ( fmoveComposeFused @a @b @c
+            (tensorComposeFused @a @b @c f g)
+        )
+    )
+
+-- | Obj-indexed wrapper around 'composeMorFused'.
+composeHomFused
+  :: forall a b c
+   . ( Object HomFused a
+     , Object HomFused b
+     , Object HomFused c
+     , KnownAtomRep (FuseHom (FuseSym a) (FuseSym b))
+     , KnownAtomRep (FuseHom (FuseSym b) (FuseSym c))
+     , FuseAtomSpinesTerm
+         (FuseHom (FuseSym a) (FuseSym b))
+         (FuseHom (FuseSym b) (FuseSym c))
+     , KnownSymRep
+         ( FuseAtomSpines
+             (FuseHom (FuseSym a) (FuseSym b))
+             (FuseHom (FuseSym b) (FuseSym c))
+         )
+     , CoalesceSpine
+         ( FuseAtomSpines
+             (FuseHom (FuseSym a) (FuseSym b))
+             (FuseHom (FuseSym b) (FuseSym c))
+         )
+     , KnownSymRep
+         ( FuseHom
+             (FuseHom (FuseSym a) (FuseSym b))
+             (FuseHom (FuseSym b) (FuseSym c))
+         )
+     , FuseRep Unit (FuseSym c) ~ FuseSym c
+     )
+  => HomFused b c
+  -> HomFused a b
+  -> HomFused a c
+composeHomFused (HomFused g) (HomFused f) =
+  HomFused (composeMorFused @(FuseSym a) @(FuseSym b) @(FuseSym c) f g)
 
 --------------------------------------------------------------------------------
 -- Fused cups on @FilterTrivial (FuseHom r r)@ (dual≅primal; not Hom packing)
