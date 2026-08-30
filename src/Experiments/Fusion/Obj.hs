@@ -7,6 +7,9 @@
 {-# LANGUAGE NoStarIsType #-}
 
 -- | Theory-parameterized fusion trees: @Norm@, @Fuse@, @Mult@ from @FuseN@.
+--
+-- @Stabilize@ \/ @Mults@ \/ @Mult@-on-@Tensor@ walk @Irr t@, so they are for
+-- 'FiniteIrr' theories only (Fib, Ising, …).
 module Experiments.Fusion.Obj
   ( Obj (..)
   , FlattenSum
@@ -23,7 +26,7 @@ module Experiments.Fusion.Obj
   ) where
 
 import Data.Kind (Constraint, Type)
-import Experiments.Fusion.Theory (FusionTheory (..), LabelEq)
+import Experiments.Fusion.Theory (FiniteIrr (..), FusionTheory (..), LabelEq)
 import GHC.TypeLits (Nat, type (*), type (+), type (-))
 
 --------------------------------------------------------------------------------

@@ -72,7 +72,7 @@ import Experiments.Categorical.Associative (Associative (..))
 import Experiments.Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
 import Experiments.Categorical.Braided (Braided (..))
 import Experiments.Categorical.Monoidal (Monoidal (..))
-import Experiments.Fusion.Data (FusionData (..))
+import Experiments.Fusion.Data (FusionData (..), fuseOutcomesFinite)
 import Experiments.Fusion.Hom
   ( HomS (..)
   , composeHom
@@ -100,7 +100,7 @@ import Experiments.Fusion.Ops
   , tensorSectors
   , unpackHom
   )
-import Experiments.Fusion.Theory (FusionTheory (..))
+import Experiments.Fusion.Theory (FiniteIrr (..), FusionTheory (..))
 import GHC.TypeLits (KnownNat, Nat, natVal, type (*), type (+))
 import Numeric.LinearAlgebra.Static (M, Sized (fromList), konst)
 import Prelude hiding (id, (.))
@@ -119,14 +119,18 @@ data Simple
 
 instance FusionTheory Simple FibTh where
   type UnitLab FibTh = 'One
-  type Irr FibTh = '[ 'One, 'Tau]
   type FuseN FibTh 'One 'One = '[ '( 'One, 1)]
   type FuseN FibTh 'One 'Tau = '[ '( 'Tau, 1)]
   type FuseN FibTh 'Tau 'One = '[ '( 'Tau, 1)]
   type FuseN FibTh 'Tau 'Tau = '[ '( 'One, 1), '( 'Tau, 1)]
 
-instance FusionData Simple FibTh where
+instance FiniteIrr Simple FibTh where
+  type Irr FibTh = '[ 'One, 'Tau]
   irrVals _ = [One, Tau]
+
+instance FusionData Simple FibTh where
+  type TermLab FibTh = Simple
+  fuseOutcomes = fuseOutcomesFinite
   nSymbol _ One One One = 1
   nSymbol _ One Tau Tau = 1
   nSymbol _ Tau One Tau = 1

@@ -29,7 +29,7 @@ module Experiments.Ising
 import Control.Category.Constrained.Prelude (Category (..))
 import Data.Complex (Complex (..))
 import Data.Proxy (Proxy (..))
-import Experiments.Fusion.Data (FusionData (..))
+import Experiments.Fusion.Data (FusionData (..), fuseOutcomesFinite)
 import Experiments.Fusion.Hom
   ( HomS (..)
   , composeHom
@@ -44,7 +44,7 @@ import Experiments.Fusion.Ops
   , packHom
   , unpackHom
   )
-import Experiments.Fusion.Theory (FusionTheory (..))
+import Experiments.Fusion.Theory (FiniteIrr (..), FusionTheory (..))
 import GHC.TypeLits (KnownNat)
 import qualified Numeric.LinearAlgebra as LA
 import Numeric.LinearAlgebra.Static (M, Sized (fromList), konst)
@@ -64,7 +64,6 @@ data IsingLab
 
 instance FusionTheory IsingLab IsingTh where
   type UnitLab IsingTh = 'Vac
-  type Irr IsingTh = '[ 'Vac, 'Psi, 'Sigma]
   type FuseN IsingTh 'Vac 'Vac = '[ '( 'Vac, 1)]
   type FuseN IsingTh 'Vac 'Psi = '[ '( 'Psi, 1)]
   type FuseN IsingTh 'Vac 'Sigma = '[ '( 'Sigma, 1)]
@@ -75,8 +74,13 @@ instance FusionTheory IsingLab IsingTh where
   type FuseN IsingTh 'Sigma 'Psi = '[ '( 'Sigma, 1)]
   type FuseN IsingTh 'Sigma 'Sigma = '[ '( 'Vac, 1), '( 'Psi, 1)]
 
-instance FusionData IsingLab IsingTh where
+instance FiniteIrr IsingLab IsingTh where
+  type Irr IsingTh = '[ 'Vac, 'Psi, 'Sigma]
   irrVals _ = [Vac, Psi, Sigma]
+
+instance FusionData IsingLab IsingTh where
+  type TermLab IsingTh = IsingLab
+  fuseOutcomes = fuseOutcomesFinite
   nSymbol _ Vac Vac Vac = 1
   nSymbol _ Vac Psi Psi = 1
   nSymbol _ Vac Sigma Sigma = 1

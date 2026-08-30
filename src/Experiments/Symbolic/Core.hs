@@ -40,6 +40,10 @@ import qualified Data.Vector.Storable as VS
 import GHC.TypeLits (CmpNat, KnownNat, Nat, natVal, type (*), type (+))
 import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..))
+import Experiments.Categorical.Associative (Associative (..))
+import Experiments.Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
+import Experiments.Categorical.Braided (Braided (..))
+import Experiments.Categorical.Monoidal (Monoidal (..))
 import Experiments.SU2 (TensorIrrepRepSU2)
 import Experiments.Symbolic.Expr
 import Experiments.Symbolic.TypeLevel
@@ -1068,8 +1072,11 @@ cupRdual r =
 -- braided into Dual-left packing. 'assocCompose' is monoidal @α@ (no F-move).
 --------------------------------------------------------------------------------
 
--- | Morphisms @a → b@ as Hom-elements @ToV (MorExpr a b)@.
-newtype Sym (a :: Rep) (b :: Rep) = Sym {unSym :: ToV (MorExpr a b)}
+-- | Morphisms @a → b@ as Hom-elements @ToV (MorExpr (FlattenS a) (FlattenS b))@.
+-- Objects are 'SObj' (leaf spines + formal 'STensor') so monoidal structure can
+-- use a matchable type constructor (not a type family).
+newtype Sym (a :: SObj) (b :: SObj) = Sym
+  { unSym :: ToV (MorExpr (FlattenS a) (FlattenS b)) }
 
 -- | Identity: @η@ from 'capUnfused', swapped into Dual-left ('MorExpr').
 idMor
@@ -1254,6 +1261,97 @@ composeMor f g =
             (tensorCompose @a @b @c f g)
         )
     )
+
+--------------------------------------------------------------------------------
+-- Category \/ monoidal structure on 'Sym' (Hom = @ToV (MorExpr · ·)@)
+--------------------------------------------------------------------------------
+
+-- | Object constraint for unfused Hom composition ('idMor' \/ 'composeMor').
+type KnownSymHom (a :: Rep) =
+  ( KnownAtomRep a
+  , LinearSpace (ToVSpine a)
+  , LinearSpace (DualVector (ToVSpine a))
+  , Scalar (ToVSpine a) ~ Complex Double
+  , Scalar (DualVector (ToVSpine a)) ~ Complex Double
+  , TensorSpace (ToVSpine a)
+  , TensorSpace (DualVector (ToVSpine a))
+  , TensorSpace (ToV (CupUnfusedExpr a))
+  , TensorSpace (ToV ('RSum Unit))
+  )
+
+instance Category Sym where
+  type Object Sym a = KnownSymHom (FlattenS a)
+
+  id :: forall a. Object Sym a => Sym a a
+  id = Sym (idMor @(FlattenS a))
+
+  (.)
+    :: forall a b c
+     . (Object Sym a, Object Sym b, Object Sym c)
+    => Sym b c
+    -> Sym a b
+    -> Sym a c
+  Sym g . Sym f =
+    Sym (composeMor @(FlattenS a) @(FlattenS b) @(FlattenS c) f g)
+
+-- | Tensor of Hom elements (Kronecker + fuse into @FlattenS@) not yet wired.
+instance PFunctor STensor Sym Sym where
+  first _ = undefined
+
+instance QFunctor STensor Sym Sym where
+  second _ = undefined
+
+instance Bifunctor STensor Sym Sym Sym where
+  bimap _ _ = undefined
+
+-- | Stub: fused F-move associator on @STensor@ spines.
+instance Associative Sym STensor where
+  associate = undefined
+  disassociate = undefined
+
+-- | Unitors are identities via @SymTensor Unit r ~ r@ on 'FlattenS'.
+instance Monoidal Sym STensor where
+  type Id Sym STensor = 'SLeaf Unit
+
+  idl
+    :: forall a
+     . ( Object Sym a
+       , Object Sym ('SLeaf Unit)
+       , Object Sym (STensor ('SLeaf Unit) a)
+       )
+    => Sym (STensor ('SLeaf Unit) a) a
+  idl = Sym (idMor @(FlattenS a))
+
+  idr
+    :: forall a
+     . ( Object Sym a
+       , Object Sym ('SLeaf Unit)
+       , Object Sym (STensor a ('SLeaf Unit))
+       )
+    => Sym (STensor a ('SLeaf Unit)) a
+  idr = Sym (idMor @(FlattenS a))
+
+  coidl
+    :: forall a
+     . ( Object Sym a
+       , Object Sym ('SLeaf Unit)
+       , Object Sym (STensor ('SLeaf Unit) a)
+       )
+    => Sym a (STensor ('SLeaf Unit) a)
+  coidl = Sym (idMor @(FlattenS a))
+
+  coidr
+    :: forall a
+     . ( Object Sym a
+       , Object Sym ('SLeaf Unit)
+       , Object Sym (STensor a ('SLeaf Unit))
+       )
+    => Sym a (STensor a ('SLeaf Unit))
+  coidr = Sym (idMor @(FlattenS a))
+
+-- | Stub: pack fused 'rmove' as a Dual-left Hom element.
+instance Braided Sym STensor where
+  braid = undefined
 
 --------------------------------------------------------------------------------
 -- Fused composition (Hom spaces already fused)

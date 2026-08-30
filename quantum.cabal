@@ -119,6 +119,10 @@ library
         Experiments.Fusion.Data
         Experiments.Fusion.Ops
         Experiments.Fusion.Unbounded
+        Experiments.Fusion.SU2
+        Experiments.Fusion.SU3
+        Experiments.Fusion.U1
+        Experiments.Fusion.Multiplicity
         Experiments.Ising
         Experiments.SU2
         Experiments.Experiment

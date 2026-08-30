@@ -12,9 +12,7 @@
 
 -- | Generic skeletal tensor \/ braid \/ associator from 'FusionData'.
 module Experiments.Fusion.Ops
-  ( unpackHom
-  , packHom
-  , PackHom (..)
+  ( PackHom (..)
   , tensorSectors
   , braidSectors
   , associateSectors
@@ -33,6 +31,7 @@ import Data.List (elemIndex, findIndex)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
 import Experiments.Fusion.Data (FusionData (..))
+import Experiments.Fusion.Theory (FiniteIrr (..))
 import Experiments.Fusion.Hom (HomS (..))
 import GHC.TypeLits (KnownNat, Nat)
 import qualified Numeric.LinearAlgebra as LA
@@ -106,7 +105,7 @@ multOf irr ms s =
 -- | Pairs @(x,y)@ with @N_{xy}^c > 0@, in Irr×Irr order.
 channelPairs
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> lab
   -> [(lab, lab)]
@@ -120,7 +119,7 @@ channelPairs p c =
 
 channelOffset
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -142,7 +141,7 @@ channelOffset p nx ny c x y =
 -- | Index of @x_i ⊗ y_j → c@ in the N-basis for @X ⊗ Y@.
 idxXY
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -170,7 +169,7 @@ copies n = [0 .. n - 1]
 
 tensorSectors
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -199,7 +198,7 @@ tensorSectors p _nx _nz _ny _nw fs gs =
 
 braidSectors
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -248,7 +247,7 @@ braidSectors p na nb =
 
 sectorChargeSize
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -260,7 +259,7 @@ sectorChargeSize p nx ny c =
 
 sectorMult
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -271,7 +270,7 @@ sectorMult p nx ny =
 -- Simpler leftCol using ab mults:
 leftCol'
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -294,7 +293,7 @@ leftCol' p na nb nc a aI b bI c cI e total = do
 
 rightRow'
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -317,7 +316,7 @@ rightRow' p na nb nc a aI b bI c cI f total = do
 
 assocSectorEntries
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> Bool
   -> lab -- ^ total charge
@@ -344,7 +343,7 @@ assocSectorEntries p inv total na nb nc =
 
 buildAssoc
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> Bool
   -> [Int]
@@ -371,7 +370,7 @@ buildAssoc p inv na nb nc =
 
 associateSectors
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -381,7 +380,7 @@ associateSectors p na nb nc = buildAssoc p False na nb nc
 
 disassociateSectors
   :: forall lab t
-   . (FusionData lab t, Eq lab)
+   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
   => Proxy t
   -> [Int]
   -> [Int]

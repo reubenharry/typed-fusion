@@ -62,6 +62,9 @@ module Experiments.Symbolic.TypeLevel
   , FuseSector
   , FuseRepRaw
   , Fuse
+  , SymTensor
+  , SObj (..)
+  , FlattenS
     -- * Spine constraints
   , AtomSpine
   ) where
@@ -278,6 +281,24 @@ type family FuseExpr (e :: RepExpr) :: Rep where
     Coalesce (FuseAtomSpines r q)
   FuseExpr ('RTensor ('RDual ('RSum r)) ('RSum q)) =
     Coalesce (FuseAtomSpines r q)
+
+-- | Fused monoidal product of atom spines (@CG@ coalesce).
+-- Unitor equations: @Unit ⊗ a = a = a ⊗ Unit@.
+type family SymTensor (a :: Rep) (b :: Rep) :: Rep where
+  SymTensor '[ '( 'Atom 0, 'AtomM 1)] b = b
+  SymTensor a '[ '( 'Atom 0, 'AtomM 1)] = a
+  SymTensor a b = FuseExpr ('RTensor ('RSum a) ('RSum b))
+
+-- | Objects of the symbolic monoidal category: leaf spines and formal tensors.
+-- (Type families cannot be unsaturated @Bifunctor@\/@Monoidal@ parameters.)
+data SObj
+  = SLeaf Rep
+  | STensor SObj SObj
+
+-- | Forget formal @STensor@ nesting to a coalesced 'Rep' spine.
+type family FlattenS (o :: SObj) :: Rep where
+  FlattenS ('SLeaf r) = r
+  FlattenS ('STensor a b) = SymTensor (FlattenS a) (FlattenS b)
 
 --------------------------------------------------------------------------------
 -- Spine constraints

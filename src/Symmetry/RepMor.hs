@@ -59,6 +59,10 @@ import Control.Category.Constrained (Category (..))
 import Data.Complex (Complex)
 import Data.Proxy (Proxy (..))
 import Data.VectorSpace ((*^), VectorSpace)
+import Experiments.Categorical.Associative (Associative (..))
+import Experiments.Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
+import Experiments.Categorical.Braided (Braided (..), Symmetric)
+import Experiments.Categorical.Monoidal (Monoidal (..))
 import GHC.TypeLits (KnownNat, type (*))
 import Math.LinearMap.Category
   ( TensorSpace (..), Scalar, LinearSpace (..), LSpace
@@ -266,7 +270,15 @@ data Mor (g :: Group) (a :: RepObj g) (b :: RepObj g) where
     -> Mor g c d
     -> Mor g (a ':⊗: c) (b ':⊗: d)
   MorId :: Mor g a a
-  Comp  :: GObj g b => Mor g b c -> Mor g a b -> Mor g a c
+  Comp
+    :: ( GObj g b
+       , LinearSpace (ToVector g b)
+       , TensorSpace (ToVector g b)
+       , Scalar (ToVector g b) ~ ℂ
+       )
+    => Mor g b c
+    -> Mor g a b
+    -> Mor g a c
 
 type U1Mor = Mor U1
 type SU2Mor = Mor SU2
@@ -674,7 +686,15 @@ fmapSectors (Comp _ _) =
 
 
 instance Category (Mor g) where
-  type Object (Mor g) a = GObj g a
+  -- | Unpack @GObj@ superclasses onto @Object@: associated @Object@ is opaque
+  -- to superclass chasing, so @LinearSpace@ \/ @TensorSpace@ must appear here
+  -- for @LUnit@ \/ @Swap@ \/ @OTimes@.
+  type Object (Mor g) a =
+    ( GObj g a
+    , LinearSpace (ToVector g a)
+    , TensorSpace (ToVector g a)
+    , Scalar (ToVector g a) ~ ℂ
+    )
 
   id :: forall a. Object (Mor g) a => Mor g a a
   id = MorId
@@ -683,3 +703,98 @@ instance Category (Mor g) where
   h . MorId = h
   RepInter k . RepInter f = RepInter (composeG @g k f)
   h . f = Comp h f
+
+--------------------------------------------------------------------------------
+-- Bifunctor \/ Associative \/ Monoidal \/ Braided on unfused @(:⊗:)@
+--------------------------------------------------------------------------------
+
+-- | Structural tensor of morphisms (@OTimes@).
+instance PFunctor (:⊗:) (Mor g) (Mor g) where
+  first
+    :: forall a b c
+     . ( Object (Mor g) a
+       , Object (Mor g) b
+       , Object (Mor g) c
+       , Object (Mor g) (a ':⊗: c)
+       , Object (Mor g) (b ':⊗: c)
+       )
+    => Mor g a b
+    -> Mor g (a ':⊗: c) (b ':⊗: c)
+  first f = OTimes f (id :: Mor g c c)
+
+instance QFunctor (:⊗:) (Mor g) (Mor g) where
+  second
+    :: forall a b c
+     . ( Object (Mor g) a
+       , Object (Mor g) b
+       , Object (Mor g) c
+       , Object (Mor g) (c ':⊗: a)
+       , Object (Mor g) (c ':⊗: b)
+       )
+    => Mor g a b
+    -> Mor g (c ':⊗: a) (c ':⊗: b)
+  second h = OTimes (id :: Mor g c c) h
+
+instance Bifunctor (:⊗:) (Mor g) (Mor g) (Mor g) where
+  bimap = OTimes
+
+-- | Stub: fused F-move associator on @'REP (Tensor …)@ is @FMove@ \/ @fMoveSU2@;
+-- structural Vec @Assoc@\/@AssocInv@ exist but are not yet wired as the
+-- Mac Lane instance (parenthesization of unfused @(:⊗:)@ vs coalesced spines).
+instance Associative (Mor g) (:⊗:) where
+  associate = undefined
+  disassociate = undefined
+
+instance Monoidal (Mor g) (:⊗:) where
+  type Id (Mor g) (:⊗:) = 'I
+
+  idl
+    :: forall a
+     . ( Object (Mor g) a
+       , Object (Mor g) 'I
+       , Object (Mor g) ('I ':⊗: a)
+       )
+    => Mor g ('I ':⊗: a) a
+  idl = LUnit
+
+  idr
+    :: forall a
+     . ( Object (Mor g) a
+       , Object (Mor g) 'I
+       , Object (Mor g) (a ':⊗: 'I)
+       )
+    => Mor g (a ':⊗: 'I) a
+  idr = RUnit
+
+  coidl
+    :: forall a
+     . ( Object (Mor g) a
+       , Object (Mor g) 'I
+       , Object (Mor g) ('I ':⊗: a)
+       )
+    => Mor g a ('I ':⊗: a)
+  coidl = LUnitInv
+
+  coidr
+    :: forall a
+     . ( Object (Mor g) a
+       , Object (Mor g) 'I
+       , Object (Mor g) (a ':⊗: 'I)
+       )
+    => Mor g a (a ':⊗: 'I)
+  coidr = RUnitInv
+
+-- | Unfused Vec braiding (@Swap@). Fused CG braiding on spines is @RMove@.
+instance Braided (Mor g) (:⊗:) where
+  braid
+    :: forall a b
+     . ( Object (Mor g) a
+       , Object (Mor g) b
+       , Object (Mor g) (a ':⊗: b)
+       , Object (Mor g) (b ':⊗: a)
+       )
+    => Mor g (a ':⊗: b) (b ':⊗: a)
+  braid = Swap
+
+-- | @Rep(G)@ forgetful tensor is symmetric (@Swap ∘ Swap = id@).
+instance Symmetric (Mor g) (:⊗:)
