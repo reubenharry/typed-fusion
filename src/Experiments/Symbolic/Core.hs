@@ -34,7 +34,7 @@
 -- 'repVToV' / 'vToRepV' round-trip a 'KnownSymRep' spine through 'ToVSpine'.
 module Experiments.Symbolic.Core where
 
-import Data.Complex (Complex ((:+)))
+import Data.Complex (Complex ((:+)), magnitude)
 import Data.Coerce (coerce)
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
@@ -72,7 +72,21 @@ import Math.LinearMap.Coercion (uncurryLinearMap, (-+$=>))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Numeric.LinearAlgebra.Static (C, konst)
 import Symmetry.Utils (Append)
+import Symmetry.CG.FSymbol (fSymbolHomSU2, fSymbolHomSU2Inv)
 import Symmetry.CG.SU2 (fuseCGChannel)
+import Symmetry.FunctorExperiment
+  ( ApplyIntertwinerG
+  , CollectCompiledGo
+  , IntertwinerG (..)
+  , RepListG
+  , RepLookup
+  , ToCG (..)
+  , intertwinerLinearG
+  )
+import Symmetry.Group (Group (..), RepDimG)
+import Symmetry.HomBlock (HasHomBlock)
+import Symmetry.RepSingleton (KnownRep (..))
+import qualified Symmetry.Tensor as ST
 import Symmetry.SU2 (SU2Element, applyWigner)
 import TensorNetwork.Categorical
   ( flattenCopyProd
@@ -611,6 +625,27 @@ coalesce = go (symRepSing @rs)
     go (SRepCons @e @μ _ _ rest) (RCons sv rs) =
       insertSpine @e @μ sv (go rest rs)
 
+-- | Flatten every sector copy axis to @'AtomM@ (term-level 'FlattenRep').
+class FlattenRepTerm (rs :: Rep) where
+  flattenRepTerm :: RepV rs -> RepV (FlattenRep rs)
+
+instance FlattenRepTerm '[] where
+  flattenRepTerm RNil = RNil
+
+instance
+  ( FlattenCopy j μ
+  , FlattenRepTerm rest
+  , EvalMult μ ~ m
+  , FlattenMult μ ~ 'AtomM m
+  , KnownNat j
+  , KnownNat m
+  , KnownNat (IrrepDim j)
+  ) =>
+  FlattenRepTerm ('(j, μ) ': rest)
+  where
+  flattenRepTerm (RCons v rs) =
+    RCons @j @('AtomM m) (flattenCopy @j @μ v) (flattenRepTerm rs)
+
 -- | Fuse two atom spines by CG on each atom pair.
 fuseExpr
   :: forall r q
@@ -625,6 +660,22 @@ fuseExpr
   -> RepV (FuseHom r q)
 fuseExpr x y =
   coalesce (fuseAtomSpinesTerm (symRepSing @r) x (symRepSing @q) y)
+
+-- | 'fuseExpr' then flatten @'Prod@ → @'AtomM@ (F-move / Symmetry flat layout).
+fuseExprFlat
+  :: forall r q
+   . ( KnownAtomRep r
+     , KnownAtomRep q
+     , FuseAtomSpinesTerm r q
+     , KnownSymRep (FuseAtomSpines r q)
+     , CoalesceSpine (FuseAtomSpines r q)
+     , FlattenRepTerm (FuseHom r q)
+     )
+  => RepV r
+  -> RepV q
+  -> RepV (FuseFlat r q)
+fuseExprFlat x y =
+  flattenRepTerm @(FuseHom r q) (fuseExpr @r @q x y)
 
 -- | Term-level constraints for walking @FuseAtomSpines@.
 type family FuseAtomSpinesTerm (r :: Rep) (q :: Rep) :: Constraint where
@@ -1091,7 +1142,7 @@ idMorFused =
 -- | Step 1: @f ⊗ g@.
 tensorCompose
   :: forall a b c
-   . ( TensorSpace ((DualVector (ToVSpine a) ⊗ ToVSpine b))
+   . ( TensorSpace (DualVector (ToVSpine a) ⊗ ToVSpine b)
      , TensorSpace ((DualVector (ToVSpine b) ⊗ ToVSpine c))
      , Scalar ((DualVector (ToVSpine a) ⊗ ToVSpine b)) ~ Complex Double
      , Scalar ((DualVector (ToVSpine b) ⊗ ToVSpine c)) ~ Complex Double
@@ -1602,13 +1653,94 @@ instance Category HomFused where
   (.) = undefined
 
 instance PFunctor FObj.Tensor HomFused HomFused where
+  -- Via 'bimap' once general fused bimap exists; Schur path: 'bimapHomFusedIrrep'.
   first _ = undefined
 
 instance QFunctor FObj.Tensor HomFused HomFused where
   second _ = undefined
 
+-- | Fused @f ⊗ g@ on irrep endomorphisms (Schur): @α id ⊗ β id = αβ id@ on every
+-- total-@J@ block of @Fuse(a,b)@. No unfuse / refuse densify.
+--
+-- General HomFused @bimap@ (arbitrary Dual-left Hom spines) still needs the
+-- reducible mult-space formula or braid+F after @fuseExpr@; see 'bimapHomFusedIrrep'.
 instance Bifunctor FObj.Tensor HomFused HomFused HomFused where
-  bimap _ _ = undefined
+  bimap
+    :: forall a b c d
+     . ( Object HomFused a
+       , Object HomFused b
+       , Object HomFused c
+       , Object HomFused d
+       , Object HomFused (FObj.Tensor a c)
+       , Object HomFused (FObj.Tensor b d)
+       )
+    => HomFused a b
+    -> HomFused c d
+    -> HomFused (FObj.Tensor a c) (FObj.Tensor b d)
+  -- Blocker: general Dual-left Hom spines (not just Schur scalars on atoms).
+  bimap = undefined
+
+-- | Read the Schur scalar of a fused Hom endomorphism on an atom (@cup@ of the
+-- singlet \/ @cup@ of @id@). For @α · id@, returns @α@.
+homFusedAtomScalar
+  :: forall j
+   . ( Object HomFused ('FObj.Atom j)
+     , CupTrivial (FilterTrivial (FuseHom (Atom1 j) (Atom1 j)))
+     , ProjectToSymmetric (FuseHom (Atom1 j) (Atom1 j))
+     , KnownSymRep (FilterTrivial (FuseHom (Atom1 j) (Atom1 j)))
+     )
+  => HomFused ('FObj.Atom j) ('FObj.Atom j)
+  -> Complex Double
+homFusedAtomScalar (HomFused m) =
+  let u = unitToVScalar (cupMiddleFused @(Atom1 j) m)
+      uId =
+        unitToVScalar
+          (cupMiddleFused @(Atom1 j) (idMorFused @(Atom1 j)))
+   in if magnitude uId < 1e-14 then 0 else u / uId
+
+-- | Object-level fused bimap for irreps: scale every channel of @FuseFlat ja jb@
+-- by @αβ@ (Schur). Codomain equals domain (@α id ⊗ β id@).
+fuseBimapIrrep
+  :: forall ja jb
+   . ( KnownSymRep (FuseFlat (Atom1 ja) (Atom1 jb))
+     , LinearSpace (ToVSpine (FuseFlat (Atom1 ja) (Atom1 jb)))
+     , Scalar (ToVSpine (FuseFlat (Atom1 ja) (Atom1 jb))) ~ Complex Double
+     )
+  => Complex Double
+  -> Complex Double
+  -> ToVSpine (FuseFlat (Atom1 ja) (Atom1 jb))
+  -> ToVSpine (FuseFlat (Atom1 ja) (Atom1 jb))
+fuseBimapIrrep alpha beta = ((alpha * beta) *^)
+
+-- | Hom-level fused bimap for atom endomorphisms (screenshot Schur case):
+-- @Hom(ja,ja) × Hom(jb,jb) → Hom(ja⊗jb, ja⊗jb)@ via @αβ · id@.
+bimapHomFusedIrrep
+  :: forall ja jb
+   . ( Object HomFused ('FObj.Atom ja)
+     , Object HomFused ('FObj.Atom jb)
+     , Object HomFused
+         (FObj.Tensor ('FObj.Atom ja) ('FObj.Atom jb))
+     , CupTrivial (FilterTrivial (FuseHom (Atom1 ja) (Atom1 ja)))
+     , CupTrivial (FilterTrivial (FuseHom (Atom1 jb) (Atom1 jb)))
+     , ProjectToSymmetric (FuseHom (Atom1 ja) (Atom1 ja))
+     , ProjectToSymmetric (FuseHom (Atom1 jb) (Atom1 jb))
+     , KnownSymRep (FilterTrivial (FuseHom (Atom1 ja) (Atom1 ja)))
+     , KnownSymRep (FilterTrivial (FuseHom (Atom1 jb) (Atom1 jb)))
+     )
+  => HomFused ('FObj.Atom ja) ('FObj.Atom ja)
+  -> HomFused ('FObj.Atom jb) ('FObj.Atom jb)
+  -> HomFused
+       (FObj.Tensor ('FObj.Atom ja) ('FObj.Atom jb))
+       (FObj.Tensor ('FObj.Atom ja) ('FObj.Atom jb))
+bimapHomFusedIrrep f g =
+  let alpha = homFusedAtomScalar @ja f
+      beta = homFusedAtomScalar @jb g
+   in HomFused $
+        (alpha * beta)
+          *^ idMorFused
+            @( FuseSym
+                 (FObj.Tensor ('FObj.Atom ja) ('FObj.Atom jb))
+             )
 
 instance Associative HomFused FObj.Tensor where
   associate = undefined
@@ -1658,15 +1790,149 @@ instance Braided HomFused FObj.Tensor where
   braid = undefined
 
 --------------------------------------------------------------------------------
+-- Fused associator primitives (3-leaf) and FuseHom-in-one-leg naturality
+--
+-- Unfused Mac Lane on four factors factors as:
+--
+-- @
+-- (a⊗b) ⊗ (b⊗c)  ─rassoc→  a ⊗ (b ⊗ (b⊗c))  ─id⊗lassoc→  a ⊗ ((b⊗b) ⊗ c)
+-- @
+--
+-- Fused (no inverse CG / no full tensor product):
+--
+-- @
+-- fmoveComposeFused =
+--   fuseMapRight (fmoveInv @b @b @c) ∘ fmove @a @b @(FuseHom b c)
+-- @
+--
+-- 'fuseMapRight' is naturality of @FuseHom a (-)@ on /intertwiners/ (e.g. F-moves),
+-- not a general @fuseBimap f g@ (that would need Split∘(f⊗g)∘Fuse†).
+--------------------------------------------------------------------------------
+
+-- | Apply a Symmetry Schur intertwiner on a Symbolic flat buffer.
+applySymInterFlat
+  :: forall r q
+   . ( RepLookup SU2
+     , HasHomBlock SU2
+     , CollectCompiledGo SU2
+     , KnownRep SU2 r
+     , KnownRep SU2 q
+     , RepListG SU2 r
+     , RepListG SU2 q
+     , ApplyIntertwinerG SU2 r q
+     , KnownNat (RepDimG SU2 r)
+     , KnownNat (RepDimG SU2 q)
+     )
+  => IntertwinerG SU2 r q
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+applySymInterFlat mor vin =
+  case getLinearFunction (intertwinerLinearG mor) (ToCG (unsafeFromArray vin)) of
+    ToCG out -> toArray out
+
+-- | Unit-multiplicity atom spine @'[ '(j, AtomM 1)]@.
+type Atom1 (j :: Nat) = '[ '(j, 'AtomM 1)]
+
+-- | 3-leaf F-move on flattened fused spines (dispatch; atoms via F-symbols).
+class CanFmoveSym (a :: Rep) (b :: Rep) (c :: Rep) where
+  fmoveSym
+    :: ToVSpine (FuseFlat (FuseFlat a b) c)
+    -> ToVSpine (FuseFlat a (FuseFlat b c))
+  fmoveInvSym
+    :: ToVSpine (FuseFlat a (FuseFlat b c))
+    -> ToVSpine (FuseFlat (FuseFlat a b) c)
+
+-- | Atom spines: bridge @toArray@ ↔ @fSymbolHomSU2@ flats (Symmetry.Tensor layout).
+-- Concrete @2j@ triples so 'StaticDimension' \/ 'ToVSpine' reduce (open FuseFlat
+-- nests do not yield 'Dimensional' in a polymorphic @j1,j2,j3@ instance).
+instance CanFmoveSym (Atom1 1) (Atom1 1) (Atom1 1) where
+  fmoveSym v =
+    unsafeFromArray $
+      applySymInterFlat
+        @(ST.Tensor SU2 (ST.Tensor SU2 '[ '(1, 1)] '[ '(1, 1)]) '[ '(1, 1)])
+        @(ST.Tensor SU2 '[ '(1, 1)] (ST.Tensor SU2 '[ '(1, 1)] '[ '(1, 1)]))
+        (fSymbolHomSU2 (Proxy @'[ '(1, 1)]) (Proxy @'[ '(1, 1)]) (Proxy @'[ '(1, 1)]))
+        (toArray v)
+  fmoveInvSym v =
+    unsafeFromArray $
+      applySymInterFlat
+        @(ST.Tensor SU2 '[ '(1, 1)] (ST.Tensor SU2 '[ '(1, 1)] '[ '(1, 1)]))
+        @(ST.Tensor SU2 (ST.Tensor SU2 '[ '(1, 1)] '[ '(1, 1)]) '[ '(1, 1)])
+        (fSymbolHomSU2Inv (Proxy @'[ '(1, 1)]) (Proxy @'[ '(1, 1)]) (Proxy @'[ '(1, 1)]))
+        (toArray v)
+
+-- | Trivial irreps (@j = 0@): F is identity on @C 1@.
+instance CanFmoveSym (Atom1 0) (Atom1 0) (Atom1 0) where
+  fmoveSym v =
+    unsafeFromArray $
+      applySymInterFlat
+        @(ST.Tensor SU2 (ST.Tensor SU2 '[ '(0, 1)] '[ '(0, 1)]) '[ '(0, 1)])
+        @(ST.Tensor SU2 '[ '(0, 1)] (ST.Tensor SU2 '[ '(0, 1)] '[ '(0, 1)]))
+        (fSymbolHomSU2 (Proxy @'[ '(0, 1)]) (Proxy @'[ '(0, 1)]) (Proxy @'[ '(0, 1)]))
+        (toArray v)
+  fmoveInvSym v =
+    unsafeFromArray $
+      applySymInterFlat
+        @(ST.Tensor SU2 '[ '(0, 1)] (ST.Tensor SU2 '[ '(0, 1)] '[ '(0, 1)]))
+        @(ST.Tensor SU2 (ST.Tensor SU2 '[ '(0, 1)] '[ '(0, 1)]) '[ '(0, 1)])
+        (fSymbolHomSU2Inv (Proxy @'[ '(0, 1)]) (Proxy @'[ '(0, 1)]) (Proxy @'[ '(0, 1)]))
+        (toArray v)
+
+-- | 3-leaf F-move (left → right association), matching 'Associative.associate':
+-- @FuseFlat(FuseFlat(a,b), c) → FuseFlat(a, FuseFlat(b,c))@.
+--
+-- Atom spines: Schur F-symbols via 'fSymbolHomSU2' on matching flats.
+-- Hom-compose still uses 'FuseHom' (@'Prod@ cups); wire 'FuseFlat' there next.
+fmove
+  :: forall a b c
+   . CanFmoveSym a b c
+  => ToVSpine (FuseFlat (FuseFlat a b) c)
+  -> ToVSpine (FuseFlat a (FuseFlat b c))
+fmove = fmoveSym @a @b @c
+
+-- | Inverse 3-leaf F-move (right → left), matching 'disassociate':
+-- @FuseFlat(a, FuseFlat(b,c)) → FuseFlat(FuseFlat(a,b), c)@.
+fmoveInv
+  :: forall a b c
+   . CanFmoveSym a b c
+  => ToVSpine (FuseFlat a (FuseFlat b c))
+  -> ToVSpine (FuseFlat (FuseFlat a b) c)
+fmoveInv = fmoveInvSym @a @b @c
+
+-- | Naturality of @FuseHom a (-)@ in the right leg: push an intertwiner
+-- @q → q'@ under an outer fuse with @a@.
+--
+-- Intended for maps that already stay fused (F-moves, Schur-block maps) — not
+-- for arbitrary spine endomorphisms (those need inverse CG).
+--
+-- Blocker: wire as “apply @g@ in the @q@-leg of each CG channel of @a ⊗ q@”
+-- (same idea as F under @id ⊗ -@), matching 'fSymbolHomSU2' layouts.
+fuseMapRight
+  :: forall a q q'
+   . (ToVSpine q -> ToVSpine q')
+  -> ToVSpine (FuseHom a q)
+  -> ToVSpine (FuseHom a q')
+fuseMapRight = undefined
+
+-- | Naturality of @FuseHom (-) b@ in the left leg (dual to 'fuseMapRight').
+fuseMapLeft
+  :: forall a a' b
+   . (ToVSpine a -> ToVSpine a')
+  -> ToVSpine (FuseHom a b)
+  -> ToVSpine (FuseHom a' b)
+fuseMapLeft = undefined
+
+--------------------------------------------------------------------------------
 -- Fused composition on coalesced 'Rep' spines (@ToVSpine (FuseHom · ·)@)
 --
 --   composeMorFused f g =
---     unitor ∘ cup ∘ fmove ∘ fuseExpr(f, g)
+--     unitor ∘ cup ∘ fmoveComposeFused ∘ fuseExpr(f, g)
 --
--- Every intermediate is a fully fused spine (no outer Kronecker of @ToVSpine@s).
--- Mirror of unfused 'assocCompose': keep factor order @a · b · b · c@ and only
--- reassociate the fusion tree (no R-move). Wrong target
--- @Fuse(Fuse(a,c), Fuse(b,b))@ would shuffle @c@ past the @b@s.
+-- Status:
+--   1. tensorComposeFused — done ('fuseExpr')
+--   2. fmoveComposeFused  — 'fuseMapRight fmoveInv ∘ fmove' (primitives stubbed)
+--   3. cupComposeFused    — stub (middle cup after cup-ready association)
+--   4. unitorComposeFused — done ('FuseRep' @Unit ⊗ c = c@)
 --------------------------------------------------------------------------------
 
 -- | Step 1: CG-fuse the two Hom spines
@@ -1691,23 +1957,29 @@ tensorComposeFused f g =
       (vToRepV @(FuseHom a b) f)
       (vToRepV @(FuseHom b c) g)
 
--- | Step 2: F-move / associator to cup-ready form (same string order as
--- 'assocCompose'):
+-- | Step 2: cup-ready association (no R-move). Factors as Mac Lane on four legs:
 --
 -- @
--- Fuse(Fuse(a,b), Fuse(b,c))  ─F→  Fuse(a, Fuse(Fuse(b,b), c))
+-- Fuse(Fuse(a,b), Fuse(b,c))
+--   ─fmove @a @b @(FuseHom b c)→  Fuse(a, Fuse(b, Fuse(b,c)))
+--   ─fuseMapRight (fmoveInv @b @b @c)→  Fuse(a, Fuse(Fuse(b,b), c))
 -- @
 --
--- Blocker: SU(2) F-symbols. Not an R-move — do not target
--- @Fuse(Fuse(a,c), Fuse(b,b))@.
+-- Blocker: Hom-compose pipeline is still on 'FuseHom' (@'Prod@ cups); atom
+-- 'fmove' lives on 'FuseFlat'. Reconcile before de-stubbing.
 fmoveComposeFused
   :: forall a b c
    . ToVSpine (FuseHom (FuseHom a b) (FuseHom b c))
   -> ToVSpine (FuseHom a (FuseHom (FuseHom b b) c))
 fmoveComposeFused = undefined
 
--- | Step 3: cup the middle @FuseHom b b → Unit@, staying fused:
+-- | Step 3: cup the middle @FuseHom b b → Unit@:
 -- @Fuse(a, Fuse(Fuse(b,b), c)) → Fuse(a, FuseRep(Unit, c))@.
+--
+-- Blocker: 'FuseHom'\/'Coalesce' forget the fusion tree into a flat 'Rep', so
+-- there is no nested middle factor to hand to 'cupMiddleFused'. Filling this
+-- needs either a structured (non-flat) intermediate from the F-move, or a
+-- singlet projection expressed in the coalesced multiplicity basis.
 cupComposeFused
   :: forall a b c
    . ToVSpine (FuseHom a (FuseHom (FuseHom b b) c))

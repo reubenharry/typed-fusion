@@ -301,6 +301,49 @@ cupMiddleFusedSpinHalfOk =
           )
    in toVApproxEq (toArray uMid) (toArray (unitToVFromScalar (unitAmp uFus :+ 0)))
 
+-- | Atom F-move roundtrip on three spin-½: @fmoveInv ∘ fmove ≅ id@ and reverse.
+-- Builds left-associated @FuseFlat(FuseFlat(½,½), ½)@ via 'fuseExprFlat'.
+fmoveRoundtripSpinHalfOk :: Bool
+fmoveRoundtripSpinHalfOk =
+  let half =
+        RConsAtomAtomM (unsafeFromArray (VS.fromList [1, 0])) RNil
+          :: RepV '[ '(1, 'AtomM 1)]
+      mid =
+        fuseExprFlat @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] half half
+      leftSpine =
+        fuseExprFlat
+          @(FuseFlat '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)])
+          @'[ '(1, 'AtomM 1)]
+          mid
+          half
+      vL =
+        repVToV
+          @( FuseFlat
+               (FuseFlat '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)])
+               '[ '(1, 'AtomM 1)]
+           )
+          leftSpine
+      vR =
+        fmove
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          vL
+      back =
+        fmoveInv
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          vR
+      forth =
+        fmove
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          @'[ '(1, 'AtomM 1)]
+          back
+   in toVApproxEq (toArray vL) (toArray back)
+        && toVApproxEq (toArray vR) (toArray forth)
+
 -- | Right unitor absorbs @Unit@ on Dual-left Hom (@m ⊗ 1 ≅ m@).
 unitRunitMorTrivialOk :: Bool
 unitRunitMorTrivialOk =
@@ -438,6 +481,36 @@ bimapHomUnfusedIdIdOk =
                (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
                (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
    in toVApproxEq (toArray (unHomUnfused bi)) (toArray (unHomUnfused iTen))
+
+-- | @bimapHomFusedIrrep id id ≅ id@ on @½ ⊗ ½@ (Schur fused bimap).
+bimapHomFusedIrrepIdIdOk :: Bool
+bimapHomFusedIrrepIdIdOk =
+  let iHalf = id :: HomFused ('FObj.Atom 1) ('FObj.Atom 1)
+      iTen =
+        id
+          :: HomFused
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+      bi = bimapHomFusedIrrep @1 @1 iHalf iHalf
+   in toVApproxEq (toArray (unHomFused bi)) (toArray (unHomFused iTen))
+
+-- | Scaled Schur bimap: @(5 id) ⊗ (id) ≅ 5 · id@ on @½ ⊗ ½@.
+bimapHomFusedIrrepScaleOk :: Bool
+bimapHomFusedIrrepScaleOk =
+  let iHalf = id :: HomFused ('FObj.Atom 1) ('FObj.Atom 1)
+      f = HomFused ((5 :+ 0) *^ unHomFused iHalf)
+      iTen =
+        id
+          :: HomFused
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+      bi = bimapHomFusedIrrep @1 @1 f iHalf
+      expect =
+        HomFused ((5 :+ 0) *^ unHomFused iTen)
+          :: HomFused
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+   in toVApproxEq (toArray (unHomFused bi)) (toArray (unHomFused expect))
 
 -- | @disassociate ∘ associate ≅ id@ as linear maps on @(½ ⊗ ½) ⊗ ½@
 -- (Hom packing of linearmap α / α⁻¹; avoids Hom-compose cost on the smoke).
@@ -625,6 +698,7 @@ symbolicExamplesOk =
     , cupFusedSpinHalfCoherentOk
     , cupCapFusedSnakeTrivialOk
     , cupMiddleFusedSpinHalfOk
+    , fmoveRoundtripSpinHalfOk
     , unitRunitMorTrivialOk
     , cupTensorIdUnitorOk
     , composeMorIdIdOk
@@ -633,6 +707,8 @@ symbolicExamplesOk =
     , composeMorMatchesMatMulOk
     , composeMorObjIdIdOk
     , bimapHomUnfusedIdIdOk
+    , bimapHomFusedIrrepIdIdOk
+    , bimapHomFusedIrrepScaleOk
     , associateHomUnfusedRoundtripOk
     , undualDualRoundtripOk
     , repVToVRoundTripOk

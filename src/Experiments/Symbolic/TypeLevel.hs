@@ -35,6 +35,8 @@ module Experiments.Symbolic.TypeLevel
     -- * Multiplicity
   , EvalMult
   , AddMult
+  , FlattenMult
+  , FlattenRep
     -- * Coalesce (sorted merge)
   , InsertSector
   , InsertSectorOrd
@@ -49,6 +51,7 @@ module Experiments.Symbolic.TypeLevel
     -- * Fusion (CG)
   , FuseRep
   , FuseHom
+  , FuseFlat
   , AtomsFromCG
   , TagMult
   , FuseAtoms
@@ -99,6 +102,17 @@ type family EvalMult (μ :: MultExpr) :: Nat where
 -- | Same-key merge: always an @'AtomM@ of summed dimensions.
 type family AddMult (μ1 :: MultExpr) (μ2 :: MultExpr) :: MultExpr where
   AddMult μ1 μ2 = 'AtomM (EvalMult μ1 + EvalMult μ2)
+
+-- | Collapse a multiplicity expression to a flat @'AtomM@.
+type family FlattenMult (μ :: MultExpr) :: MultExpr where
+  FlattenMult μ = 'AtomM (EvalMult μ)
+
+-- | Flatten every sector's copy axis to @'AtomM@ (Symmetry @Nat@ mult layout).
+-- Used by 'FuseFlat' / 'FuseRep' (not by 'FuseHom', which keeps @'Prod@ for cups).
+type family FlattenRep (rs :: Rep) :: Rep where
+  FlattenRep '[] = '[]
+  FlattenRep ('(j, μ) ': rest) =
+    '(j, FlattenMult μ) ': FlattenRep rest
 
 --------------------------------------------------------------------------------
 -- Coalesce: sort + merge sectors with equal irrep label
@@ -200,16 +214,21 @@ type family FuseAtomSpines (r :: Rep) (q :: Rep) :: Rep where
       (FuseAtomSpineOne j1 ('AtomM m1) q)
       (FuseAtomSpines rest q)
 
--- | CG coalesce of two atom spines (no unitors). Used by term-level 'fuseExpr',
--- fused Hom, and cups. For the monoidal product on 'FuseSym', see 'FuseRep'.
+-- | CG coalesce of two atom spines (no unitors).
+--
+-- * 'FuseHom' — raw coalesced fuse; keeps @'Prod@ copy tags (cups / Hom packing).
+-- * 'FuseFlat' — @FlattenRep (FuseHom …)@; Symmetry @'AtomM@ layout (F-move).
+-- * 'FuseRep' — monoidal product on 'FuseSym': unitors + 'FuseFlat' otherwise.
 type FuseHom (r :: Rep) (q :: Rep) = Coalesce (FuseAtomSpines r q)
 
+-- | Flattened fuse: every sector copy axis is @'AtomM@.
+type FuseFlat (r :: Rep) (q :: Rep) = FlattenRep (FuseHom r q)
+
 -- | Fused monoidal product of atom spines for 'FuseSym'.
--- Unitor equations: @Unit ⊗ a = a = a ⊗ Unit@; otherwise 'FuseHom'.
 type family FuseRep (a :: Rep) (b :: Rep) :: Rep where
   FuseRep '[ '(0, 'AtomM 1)] b = b
   FuseRep a '[ '(0, 'AtomM 1)] = a
-  FuseRep a b = FuseHom a b
+  FuseRep a b = FuseFlat a b
 
 -- | Forget a fusion-tree object (@Obj Nat@, @2j@ labels) to a coalesced 'Rep'
 -- spine for Hom. Analogous to Fib @Fuse@\/@Mults@, but Hom is Dual-left @ToVSpine@.
