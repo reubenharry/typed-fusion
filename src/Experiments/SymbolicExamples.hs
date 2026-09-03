@@ -9,6 +9,7 @@
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
 -- Covers 'ToVSpine' / Dual-left Hom / 'fuseExpr' / 'rtensor' / 'cupRdual' / 'composeMor' /
 -- Dual-left 'HomUnfused'; fused 'HomFused' as @ToVSpine (FuseHom …)@ (compose stubbed).
+-- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
 module Experiments.SymbolicExamples where
 
 import Control.Arrow.Constrained (($), arr)
@@ -738,6 +739,12 @@ type family AssertEqRep (a :: Rep) (b :: Rep) :: Bool where
 type family AssertEqType (a :: Type) (b :: Type) :: Bool where
   AssertEqType a a = 'True
 
+type family AssertEqIrrep (a :: Irrep) (b :: Irrep) :: Bool where
+  AssertEqIrrep a a = 'True
+
+type family AssertEqTreeRep (a :: TreeRep) (b :: TreeRep) :: Bool where
+  AssertEqTreeRep a a = 'True
+
 type SmokeSector = '(1, 'Prod ('AtomM 3) ('AtomM 5))
 
 type SmokeRep = '[SmokeSector]
@@ -910,6 +917,38 @@ type SmokeRepVSpine =
     (RepV '[ '(1, 'AtomM 2), '(0, 'Prod ('AtomM 1) ('AtomM 1))])
     (RepV '[ '(1, 'AtomM 2), '(0, 'Prod ('AtomM 1) ('AtomM 1))])
 
+-- | @½ ⊗ ½@ fusion trees: singlet and triplet channels (no coalesce).
+type SmokeFuseTrees =
+  AssertEqTreeRep
+    (FuseTrees ('Leaf 1) ('Leaf 1))
+    '[ 'Node 0 ('Leaf 1) ('Leaf 1)
+     , 'Node 2 ('Leaf 1) ('Leaf 1)
+     ]
+
+-- | Root of a fusion tree is the channel label.
+type SmokeRootNode =
+  AssertEqNat
+    (Root ('Node 0 ('Leaf 1) ('Leaf 1)))
+    0
+
+-- | 'ToVTree' is the root irrep space only (@j=1 ⇒ C 2@; @j=2 ⇒ C 3@).
+type SmokeToVTree =
+  AssertEqType
+    (ToVTree ('Node 2 ('Leaf 1) ('Leaf 1)))
+    (C 3)
+
+-- | 'ToVTreeRep' nests like 'ToVSpine'.
+type SmokeToVTreeRep =
+  AssertEqType
+    (ToVTreeRep (FuseTrees ('Leaf 1) ('Leaf 1)))
+    (C 1, C 3)
+
+-- | List fuse distributes over tree pairs.
+type SmokeFuseTreeRep =
+  AssertEqTreeRep
+    (FuseTreeRep '[ 'Leaf 1] '[ 'Leaf 1])
+    (FuseTrees ('Leaf 1) ('Leaf 1))
+
 smokeBraidSector :: Proxy SmokeBraidSector
 smokeBraidSector = Proxy
 
@@ -969,3 +1008,18 @@ smokeFilterTrivial = Proxy
 
 smokeRepVSpine :: Proxy SmokeRepVSpine
 smokeRepVSpine = Proxy
+
+smokeFuseTrees :: Proxy SmokeFuseTrees
+smokeFuseTrees = Proxy
+
+smokeRootNode :: Proxy SmokeRootNode
+smokeRootNode = Proxy
+
+smokeToVTree :: Proxy SmokeToVTree
+smokeToVTree = Proxy
+
+smokeToVTreeRep :: Proxy SmokeToVTreeRep
+smokeToVTreeRep = Proxy
+
+smokeFuseTreeRep :: Proxy SmokeFuseTreeRep
+smokeFuseTreeRep = Proxy

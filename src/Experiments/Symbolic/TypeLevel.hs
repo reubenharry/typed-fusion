@@ -24,7 +24,8 @@
 -- spine. Hom \/ cup packing is Dual-left over 'ToVSpine' \/ 'ToVObj' (no parallel
 -- expression AST). Nested Mac Lane parenthesization lives on @Obj@.
 --
--- Sectors are keyed by bare @Nat@ (@2j@).
+-- Sectors are keyed by bare @Nat@ (@2j@). Fusion trees ('Irrep' \/ 'TreeRep')
+-- track genealogy in parallel with coalesced 'Rep'.
 module Experiments.Symbolic.TypeLevel
   ( -- * Braid
     BraidMult
@@ -48,6 +49,14 @@ module Experiments.Symbolic.TypeLevel
   , ToVSpine
     -- * Obj spaces (true unfused)
   , ToVObj
+    -- * Fusion trees (genealogy)
+  , Root
+  , ToVTree
+  , ToVTreeRep
+  , NodesFromCG
+  , FuseTrees
+  , FuseTreeRepOne
+  , FuseTreeRep
     -- * Fusion (CG)
   , FuseRep
   , FuseHom
@@ -175,11 +184,54 @@ type family ToVSpine (rs :: Rep) :: Type where
 -- Obj spaces (true unfused: Tensor = Kronecker, Sum = pair)
 --------------------------------------------------------------------------------
 
--- | Interpret a fusion tree as a nested space (no CG fuse).
+-- | Interpret an @Obj@ tree as a nested space (no CG fuse).
 type family ToVObj (a :: Obj Nat) :: Type where
   ToVObj ('FObj.Atom j) = ToVSector j ('AtomM 1)
   ToVObj ('FObj.Tensor a b) = ToVObj a ⊗ ToVObj b
   ToVObj ('FObj.Sum a b) = (ToVObj a, ToVObj b)
+
+--------------------------------------------------------------------------------
+-- Fusion trees: genealogy-preserving Irrep / TreeRep
+--------------------------------------------------------------------------------
+
+-- | Root @2j@ label of a fusion tree.
+type family Root (t :: Irrep) :: Nat where
+  Root ('Leaf j) = j
+  Root ('Node j _ _) = j
+
+-- | Space of one fusion tree: root irrep only (children are type indices).
+type family ToVTree (t :: Irrep) :: Type where
+  ToVTree t = C (IrrepDim (Root t))
+
+-- | Forgetful direct-sum space of a 'TreeRep': right-nested root payloads.
+-- Singleton @'[t]@ is just @ToVTree t@; longer lists nest pairs (same as 'ToVSpine').
+type family ToVTreeRep (ts :: TreeRep) :: Type where
+  ToVTreeRep '[t] = ToVTree t
+  ToVTreeRep (t ': s ': rest) =
+    (ToVTree t, ToVTreeRep (s ': rest))
+
+-- | Attach children @t1@, @t2@ to every CG outcome label.
+type family NodesFromCG (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) :: TreeRep where
+  NodesFromCG _ _ '[] = '[]
+  NodesFromCG t1 t2 ('(j, _) ': rest) =
+    'Node j t1 t2 ': NodesFromCG t1 t2 rest
+
+-- | CG fuse of two fusion trees: one @'Node@ per allowed total @2j@.
+-- Same root ⇒ distinct trees (no coalesce); that /is/ the multiplicity basis.
+type family FuseTrees (t1 :: Irrep) (t2 :: Irrep) :: TreeRep where
+  FuseTrees t1 t2 =
+    NodesFromCG t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
+
+type family FuseTreeRepOne (t1 :: Irrep) (qs :: TreeRep) :: TreeRep where
+  FuseTreeRepOne _ '[] = '[]
+  FuseTreeRepOne t1 (t2 ': rest) =
+    Append (FuseTrees t1 t2) (FuseTreeRepOne t1 rest)
+
+-- | Cartesian fuse of two 'TreeRep' lists (distribute CG over pairs).
+type family FuseTreeRep (rs :: TreeRep) (qs :: TreeRep) :: TreeRep where
+  FuseTreeRep '[] _ = '[]
+  FuseTreeRep (t1 ': rest) qs =
+    Append (FuseTreeRepOne t1 qs) (FuseTreeRep rest qs)
 
 --------------------------------------------------------------------------------
 -- Fusion: CG on atom pairs, then coalesced rep

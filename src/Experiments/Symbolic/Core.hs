@@ -32,6 +32,7 @@
 -- Fused Hom: @ToVSpine (FuseHom (FuseSym a) (FuseSym b))@ — coalesced 'Rep' spine
 -- ('composeMorFused': fuseExpr then stubbed F-move \/ cup; FuseRep unitor).
 -- 'repVToV' / 'vToRepV' round-trip a 'KnownSymRep' spine through 'ToVSpine'.
+-- Phase-1 'Irrep' \/ 'TreeRep' singletons live alongside; Hom not yet rewired onto trees.
 module Experiments.Symbolic.Core where
 
 import Data.Complex (Complex ((:+)), magnitude)
@@ -178,6 +179,73 @@ instance
   , KnownAtomRep rest
   ) =>
   KnownAtomRep ('(j, 'AtomM m) ': rest)
+
+--------------------------------------------------------------------------------
+-- Fusion-tree singletons ('Irrep' / 'TreeRep')
+--------------------------------------------------------------------------------
+
+-- | Singleton for a genealogy-preserving 'Irrep' tree.
+data SIrrepTree (t :: Irrep) where
+  SLeaf
+    :: forall j
+     . ( KnownNat j
+       , KnownNat (IrrepDim j)
+       )
+    => SIrrepTree ('Leaf j)
+  SNode
+    :: forall j l r
+     . ( KnownNat j
+       , KnownNat (IrrepDim j)
+       )
+    => SIrrepTree l
+    -> SIrrepTree r
+    -> SIrrepTree ('Node j l r)
+
+-- | Materialize 'SIrrepTree' for a statically known tree.
+class KnownIrrep (t :: Irrep) where
+  irrepSing :: SIrrepTree t
+
+instance
+  ( KnownNat j
+  , KnownNat (IrrepDim j)
+  ) =>
+  KnownIrrep ('Leaf j)
+  where
+  irrepSing = SLeaf @j
+
+instance
+  ( KnownNat j
+  , KnownNat (IrrepDim j)
+  , KnownIrrep l
+  , KnownIrrep r
+  ) =>
+  KnownIrrep ('Node j l r)
+  where
+  irrepSing = SNode @j (irrepSing @l) (irrepSing @r)
+
+-- | Singleton spine for 'TreeRep'.
+data STreeRep (ts :: TreeRep) where
+  STreeNil :: STreeRep '[]
+  STreeCons
+    :: forall t rest
+     . SIrrepTree t
+    -> STreeRep rest
+    -> STreeRep (t ': rest)
+
+-- | Materialize 'STreeRep' for a statically known tree list.
+class KnownTreeRep (ts :: TreeRep) where
+  treeRepSing :: STreeRep ts
+
+instance KnownTreeRep '[] where
+  treeRepSing = STreeNil
+
+instance
+  ( KnownIrrep t
+  , KnownTreeRep rest
+  ) =>
+  KnownTreeRep (t ': rest)
+  where
+  treeRepSing = STreeCons (irrepSing @t) (treeRepSing @rest)
 
 --------------------------------------------------------------------------------
 -- Term-level spine ('RepV') and fusion
