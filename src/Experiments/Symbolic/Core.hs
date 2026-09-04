@@ -248,6 +248,100 @@ instance
   treeRepSing = STreeCons (irrepSing @t) (treeRepSing @rest)
 
 --------------------------------------------------------------------------------
+-- Term-level fusion trees ('TreeV')
+--------------------------------------------------------------------------------
+
+-- | Spine of root vectors, indexed by type-level 'TreeRep'.
+data TreeV (ts :: TreeRep) where
+  TNil :: TreeV '[]
+  TCons
+    :: forall t rest
+     . ToVTree t
+    -> TreeV rest
+    -> TreeV (t ': rest)
+
+-- | Forgetful map: nonempty 'TreeV' → 'ToVTreeRep'.
+treeVToV :: forall ts. KnownTreeRep ts => TreeV ts -> ToVTreeRep ts
+treeVToV = go (treeRepSing @ts)
+  where
+    go :: forall ts'. STreeRep ts' -> TreeV ts' -> ToVTreeRep ts'
+    go (STreeCons _ STreeNil) (TCons v TNil) = v
+    go (STreeCons _ sRest@(STreeCons {})) (TCons v rest) =
+      (v, go sRest rest)
+    go _ _ = error "treeVToV: expected nonempty KnownTreeRep"
+
+-- | Inverse of 'treeVToV'.
+vToTreeV :: forall ts. KnownTreeRep ts => ToVTreeRep ts -> TreeV ts
+vToTreeV = go (treeRepSing @ts)
+  where
+    go :: forall ts'. STreeRep ts' -> ToVTreeRep ts' -> TreeV ts'
+    go (STreeCons (_ :: SIrrepTree t) STreeNil) v =
+      TCons @t v TNil
+    go (STreeCons (_ :: SIrrepTree t) sRest@(STreeCons {})) (v, rest) =
+      TCons @t v (go sRest rest)
+    go _ _ = error "vToTreeV: expected nonempty KnownTreeRep"
+
+-- | Append two tree spines.
+appendTreeV
+  :: TreeV ts1
+  -> TreeV ts2
+  -> TreeV (Append ts1 ts2)
+appendTreeV TNil r2 = r2
+appendTreeV (TCons v rest) r2 =
+  TCons v (appendTreeV rest r2)
+
+-- | CG one output channel on bare root spaces.
+fuseOneChannelTree
+  :: forall j1 j2 j
+   . ( KnownNat j1
+     , KnownNat j2
+     , KnownNat j
+     , KnownNat (IrrepDim j1)
+     , KnownNat (IrrepDim j2)
+     , KnownNat (IrrepDim j)
+     )
+  => C (IrrepDim j1) ⊗ C (IrrepDim j2)
+  -> C (IrrepDim j)
+fuseOneChannelTree v = fuseCGChannel @j1 @j2 @j $ v
+
+-- | Walk CG channels for a pair of trees → 'TreeV' of @'Node@ outcomes.
+class FuseTreesGo (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) where
+  fuseTreesGo
+    :: C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2))
+    -> TreeV (NodesFromCG t1 t2 cg)
+
+instance FuseTreesGo t1 t2 '[] where
+  fuseTreesGo _ = TNil
+
+instance
+  ( FuseTreesGo t1 t2 rest
+  , KnownNat j
+  , KnownNat (Root t1)
+  , KnownNat (Root t2)
+  , KnownNat (IrrepDim (Root t1))
+  , KnownNat (IrrepDim (Root t2))
+  , KnownNat (IrrepDim j)
+  ) =>
+  FuseTreesGo t1 t2 ('(j, m) ': rest)
+  where
+  fuseTreesGo v =
+    TCons @('Node j t1 t2)
+      (fuseOneChannelTree @(Root t1) @(Root t2) @j v)
+      (fuseTreesGo @t1 @t2 @rest v)
+
+-- | CG-fuse two fusion trees into the channel list 'FuseTrees'.
+fuseTrees
+  :: forall t1 t2
+   . ( KnownIrrep t1
+     , KnownIrrep t2
+     , FuseTreesGo t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
+     )
+  => ToVTree t1 ⊗ ToVTree t2
+  -> TreeV (FuseTrees t1 t2)
+fuseTrees =
+  fuseTreesGo @t1 @t2 @(TensorIrrepRepSU2 (Root t1) (Root t2))
+
+--------------------------------------------------------------------------------
 -- Term-level spine ('RepV') and fusion
 --
 -- Uniform @RCons@: sector shape lives in the type index @'(e, μ)@, not in a
@@ -1967,6 +2061,48 @@ fmoveInv
   -> ToVSpine (FuseFlat (FuseFlat a b) c)
 fmoveInv = fmoveInvSym @a @b @c
 
+--------------------------------------------------------------------------------
+-- Tree-indexed F-move / bimap (genealogy-preserving)
+--
+-- Domain\/codomain are 'FuseAssocL' \/ 'FuseAssocR' — distinct 'TreeRep's that
+-- forget to the same coalesced 'Rep'. Same-root trees stay distinct list
+-- entries (multiplicity basis), so cup can later project on trivial-root
+-- /middle/ subtrees rather than a flat 'AtomM' count.
+--------------------------------------------------------------------------------
+
+-- | 3-leaf F-move on fusion-tree spines.
+--
+-- Domain\/codomain are distinct 'TreeRep's ('FuseAssocL' \/ 'FuseAssocR') that
+-- 'ForgetTreeRep' to the same coalesced 'Rep'. Term-level F-symbol wiring
+-- (pack tree multiplicity ↔ flat copy×irrep) is next; see Assoc smokes.
+class CanFmoveTrees (a :: TreeRep) (b :: TreeRep) (c :: TreeRep) where
+  fmoveTrees
+    :: TreeV (FuseAssocL a b c)
+    -> TreeV (FuseAssocR a b c)
+  fmoveInvTrees
+    :: TreeV (FuseAssocR a b c)
+    -> TreeV (FuseAssocL a b c)
+
+-- | Naturality of @FuseTreeRep a (-)@ in the right leg.
+--
+-- Tree shape makes the intent well-typed: each outer @'Node@ stores which
+-- right-child tree it came from. Implementing the lift still needs the
+-- CG-channel naturality of @g@ (same Schur data as flat 'fuseMapRight').
+fuseMapRightTrees
+  :: forall a q q'
+   . (ToVTreeRep q -> ToVTreeRep q')
+  -> ToVTreeRep (FuseTreeRep a q)
+  -> ToVTreeRep (FuseTreeRep a q')
+fuseMapRightTrees = undefined
+
+-- | Naturality of @FuseTreeRep (-) b@ in the left leg.
+fuseMapLeftTrees
+  :: forall a a' b
+   . (ToVTreeRep a -> ToVTreeRep a')
+  -> ToVTreeRep (FuseTreeRep a b)
+  -> ToVTreeRep (FuseTreeRep a' b)
+fuseMapLeftTrees = undefined
+
 -- | Naturality of @FuseHom a (-)@ in the right leg: push an intertwiner
 -- @q → q'@ under an outer fuse with @a@.
 --
@@ -1975,6 +2111,7 @@ fmoveInv = fmoveInvSym @a @b @c
 --
 -- Blocker: wire as “apply @g@ in the @q@-leg of each CG channel of @a ⊗ q@”
 -- (same idea as F under @id ⊗ -@), matching 'fSymbolHomSU2' layouts.
+-- Prefer 'fuseMapRightTrees' once Hom is rewired onto 'TreeRep'.
 fuseMapRight
   :: forall a q q'
    . (ToVSpine q -> ToVSpine q')

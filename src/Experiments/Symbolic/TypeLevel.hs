@@ -57,6 +57,10 @@ module Experiments.Symbolic.TypeLevel
   , FuseTrees
   , FuseTreeRepOne
   , FuseTreeRep
+  , ForgetTreeRep
+  , FuseAssocL
+  , FuseAssocR
+  , FilterTrivialTrees
     -- * Fusion (CG)
   , FuseRep
   , FuseHom
@@ -232,6 +236,29 @@ type family FuseTreeRep (rs :: TreeRep) (qs :: TreeRep) :: TreeRep where
   FuseTreeRep '[] _ = '[]
   FuseTreeRep (t1 ': rest) qs =
     Append (FuseTreeRepOne t1 qs) (FuseTreeRep rest qs)
+
+-- | Forget genealogy: count trees by root into a coalesced 'Rep' (@'AtomM@).
+-- Lossy — same-root trees become copy multiplicity.
+type family ForgetTreeRep (ts :: TreeRep) :: Rep where
+  ForgetTreeRep '[] = '[]
+  ForgetTreeRep (t ': rest) =
+    InsertSector (Root t) ('AtomM 1) (ForgetTreeRep rest)
+
+-- | Left-associated triple fuse: @(a ⊗ b) ⊗ c@.
+type FuseAssocL (a :: TreeRep) (b :: TreeRep) (c :: TreeRep) =
+  FuseTreeRep (FuseTreeRep a b) c
+
+-- | Right-associated triple fuse: @a ⊗ (b ⊗ c)@.
+type FuseAssocR (a :: TreeRep) (b :: TreeRep) (c :: TreeRep) =
+  FuseTreeRep a (FuseTreeRep b c)
+
+-- | Keep only trees whose root is the trivial irrep (@0@).
+type family FilterTrivialTrees (ts :: TreeRep) :: TreeRep where
+  FilterTrivialTrees '[] = '[]
+  FilterTrivialTrees ('Leaf 0 ': rest) = 'Leaf 0 ': FilterTrivialTrees rest
+  FilterTrivialTrees ('Node 0 l r ': rest) =
+    'Node 0 l r ': FilterTrivialTrees rest
+  FilterTrivialTrees (_ ': rest) = FilterTrivialTrees rest
 
 --------------------------------------------------------------------------------
 -- Fusion: CG on atom pairs, then coalesced rep

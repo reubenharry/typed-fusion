@@ -949,6 +949,36 @@ type SmokeFuseTreeRep =
     (FuseTreeRep '[ 'Leaf 1] '[ 'Leaf 1])
     (FuseTrees ('Leaf 1) ('Leaf 1))
 
+-- | Left-assoc @½⊗½⊗½@: intermediate @0@ then @2@ channels.
+type SmokeFuseAssocL =
+  AssertEqTreeRep
+    (FuseAssocL '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1])
+    '[ 'Node 1 ('Node 0 ('Leaf 1) ('Leaf 1)) ('Leaf 1)
+     , 'Node 1 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 1)
+     , 'Node 3 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 1)
+     ]
+
+-- | Right-assoc @½⊗½⊗½@: same roots, different intermediate parenthesization.
+type SmokeFuseAssocR =
+  AssertEqTreeRep
+    (FuseAssocR '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1])
+    '[ 'Node 1 ('Leaf 1) ('Node 0 ('Leaf 1) ('Leaf 1))
+     , 'Node 1 ('Leaf 1) ('Node 2 ('Leaf 1) ('Leaf 1))
+     , 'Node 3 ('Leaf 1) ('Node 2 ('Leaf 1) ('Leaf 1))
+     ]
+
+-- | Left and right associations forget to the same coalesced 'Rep'.
+type SmokeForgetAssocLR =
+  AssertEqRep
+    (ForgetTreeRep (FuseAssocL '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1]))
+    (ForgetTreeRep (FuseAssocR '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1]))
+
+-- | Tree forget matches flat CG coalesce for the triple.
+type SmokeForgetEqFuseFlat =
+  AssertEqRep
+    (ForgetTreeRep (FuseAssocL '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1]))
+    (FuseFlat (FuseFlat (Atom1 1) (Atom1 1)) (Atom1 1))
+
 smokeBraidSector :: Proxy SmokeBraidSector
 smokeBraidSector = Proxy
 
@@ -1023,3 +1053,15 @@ smokeToVTreeRep = Proxy
 
 smokeFuseTreeRep :: Proxy SmokeFuseTreeRep
 smokeFuseTreeRep = Proxy
+
+smokeFuseAssocL :: Proxy SmokeFuseAssocL
+smokeFuseAssocL = Proxy
+
+smokeFuseAssocR :: Proxy SmokeFuseAssocR
+smokeFuseAssocR = Proxy
+
+smokeForgetAssocLR :: Proxy SmokeForgetAssocLR
+smokeForgetAssocLR = Proxy
+
+smokeForgetEqFuseFlat :: Proxy SmokeForgetEqFuseFlat
+smokeForgetEqFuseFlat = Proxy
