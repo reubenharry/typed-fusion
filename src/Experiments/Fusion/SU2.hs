@@ -16,6 +16,16 @@ module Experiments.Fusion.SU2
   , su2FuseOutcomes
   , su2RPhase
   , su2FSymbol
+  , allowedE
+  , allowedF
+  , fMultEntry
+  , canFuseTJ
+  , leftSectors
+  , rightSectors
+  , denseFAtoms
+  , fmoveAtomsFlat
+  , packAtomsFlat
+  , unpackAtomsFlat
   ) where
 
 import Control.Monad.ST (runST)
@@ -295,6 +305,23 @@ denseFAtoms a b c =
       mR = matFromMap nR dimP (fuseRightAtoms a b c)
    in mR LA.<> LA.tr mL
 
+-- | Apply dense F (or @Fᵀ ≈ F⁻¹@) on left\/right sector flats from
+-- 'leftSectors' \/ 'rightSectors'. Label-driven — no per-triple typed flats.
+fmoveAtomsFlat
+  :: Bool
+  -> Int
+  -> Int
+  -> Int
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fmoveAtomsFlat inv a b c vin =
+  let mat = denseFAtoms a b c
+      v = VS.convert vin :: LA.Vector (Complex Double)
+      v' =
+        if inv
+          then LA.tr mat LA.#> v
+          else mat LA.#> v
+   in VS.convert v'
 
 -- | Sector layout of left-fused @((a⊗b)⊗c)@: @(tj, mult, flat offset)@.
 leftSectors :: Int -> Int -> Int -> [(Int, Int, Int)]
@@ -324,6 +351,60 @@ rightSectors a b c =
       offs =
         scanl (+) 0 [m * (j + 1) | j <- sortedJs, let m = multByJ Map.! j]
    in zip3 sortedJs [multByJ Map.! j | j <- sortedJs] offs
+
+-- | Pack @(d, mid, irrep)@ channels into a left\/right sector flat.
+packAtomsFlat
+  :: [(Int, Int, Int)]
+  -> (Int -> [Int])
+  -> [(Int, Int, VS.Vector (Complex Double))]
+  -> VS.Vector (Complex Double)
+packAtomsFlat secs midsOf chans =
+  let total =
+        case secs of
+          [] -> 0
+          _ ->
+            let (d, m, off) = last secs
+             in off + m * (d + 1)
+      byKey = Map.fromList [((d, mid), v) | (d, mid, v) <- chans]
+   in VS.create $ do
+        vout <- MVS.new total
+        MVS.set vout 0
+        mapM_
+          ( \(d, _mult, off) ->
+              let dim = d + 1
+                  mids = midsOf d
+               in mapM_
+                    ( \(ei, mid) ->
+                        case Map.lookup (d, mid) byKey of
+                          Nothing -> pure ()
+                          Just vec ->
+                            mapM_
+                              ( \i ->
+                                  MVS.write
+                                    vout
+                                    (off + ei * dim + i)
+                                    (vec VS.! i)
+                              )
+                              [0 .. dim - 1]
+                    )
+                    (zip [0 :: Int ..] mids)
+          )
+          secs
+        pure vout
+
+-- | Inverse of 'packAtomsFlat'.
+unpackAtomsFlat
+  :: [(Int, Int, Int)]
+  -> (Int -> [Int])
+  -> VS.Vector (Complex Double)
+  -> [(Int, Int, VS.Vector (Complex Double))]
+unpackAtomsFlat secs midsOf buf =
+  [ (d, mid, VS.slice (off + ei * dim) dim buf)
+  | (d, _mult, off) <- secs
+  , let dim = d + 1
+        mids = midsOf d
+  , (ei, mid) <- zip [0 :: Int ..] mids
+  ]
 
 -- | Multiplicity-block entry @M_{f e} = [F^{abc}_d]_{ef}@ from dense F
 -- (rows = right intermediate @f@, cols = left @e@; Schur expands as @⊗ I_{d+1}@).

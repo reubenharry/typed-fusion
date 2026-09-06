@@ -35,12 +35,12 @@
 -- Phase-1 'Irrep' \/ 'TreeRep' singletons live alongside; Hom not yet rewired onto trees.
 module Experiments.Symbolic.Core where
 
-import Data.Complex (Complex ((:+)), magnitude)
+import Data.Complex (Complex ((:+)), conjugate, magnitude, realPart)
 import Data.Coerce (coerce)
 import Data.Kind (Constraint, Type)
-import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
-import Data.VectorSpace (AdditiveGroup (zeroV, (^+^), (^-^)), InnerSpace ((<.>)), Scalar, VectorSpace ((*^)))
+import Data.VectorSpace (AdditiveGroup (zeroV, (^+^), (^-^)), InnerSpace ((<.>)), Scalar, VectorSpace ((*^)), sumV)
 import qualified Data.Vector.Storable as VS
 import GHC.TypeLits (CmpNat, KnownNat, Nat, natVal, type (*), type (+))
 import Control.Arrow.Constrained (($), arr)
@@ -51,7 +51,16 @@ import Experiments.Categorical.Braided (Braided (..))
 import Experiments.Categorical.Monoidal (Monoidal (..))
 import Experiments.Fusion.Obj (Obj)
 import qualified Experiments.Fusion.Obj as FObj
-import Experiments.Fusion.SU2 (su2FSymbol)
+import Experiments.Fusion.SU2
+  ( allowedE
+  , allowedF
+  , fMultEntry
+  , fmoveAtomsFlat
+  , leftSectors
+  , packAtomsFlat
+  , rightSectors
+  , unpackAtomsFlat
+  )
 import Experiments.SU2 (TensorIrrepRepSU2)
 import Experiments.Symbolic.Expr
 import Experiments.Symbolic.TypeLevel
@@ -79,9 +88,11 @@ import Symmetry.Utils (Append)
 import Symmetry.CG.FSymbol (fSymbolHomSU2, fSymbolHomSU2Inv)
 import Symmetry.CG.SU2
   ( fuseCGChannel
-  , fuseLeafAssocHalf
+  , fuseMapLeftFlatSectors
+  , fuseMapRightFlatSectors
+  , fmoveFlatSectors
+  , sectorsFromPairs
   , unfuseCGChannel
-  , unfuseLeafAssocHalf
   )
 import Symmetry.FunctorExperiment
   ( ApplyIntertwinerG
@@ -2171,6 +2182,34 @@ type AssocL000 =
 type AssocR000 =
   '[ 'Node 0 ('Leaf 0) ('Node 0 ('Leaf 0) ('Leaf 0))]
 
+-- | @½⊗½⊗0@: totals @d∈{0,2}@, singleton multiplicity each.
+type AssocL110 =
+  '[ 'Node 0 ('Node 0 ('Leaf 1) ('Leaf 1)) ('Leaf 0)
+   , 'Node 2 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 0)
+   ]
+
+type AssocR110 =
+  '[ 'Node 0 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 0))
+   , 'Node 2 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 0))
+   ]
+
+-- | @½⊗½⊗1@: totals @d∈{0,2,4}@; @d=2@ has mult @[0,2]@ (left) \/ @[1,3]@ (right).
+-- Tree order follows 'FuseAssocL' (not sorted by @d@): @d=2,e=0@ then @d=0@ then
+-- @d=2,e=2@ then @d=4@.
+type AssocL112 =
+  '[ 'Node 2 ('Node 0 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
+   , 'Node 0 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
+   , 'Node 2 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
+   , 'Node 4 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
+   ]
+
+type AssocR112 =
+  '[ 'Node 0 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 2))
+   , 'Node 2 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 2))
+   , 'Node 2 ('Leaf 1) ('Node 3 ('Leaf 1) ('Leaf 2))
+   , 'Node 4 ('Leaf 1) ('Node 3 ('Leaf 1) ('Leaf 2))
+   ]
+
 -- | 3-leaf F-move on fusion-tree spines.
 class CanFmoveTrees (a :: TreeRep) (b :: TreeRep) (c :: TreeRep) where
   fmoveTrees
@@ -2180,25 +2219,259 @@ class CanFmoveTrees (a :: TreeRep) (b :: TreeRep) (c :: TreeRep) where
     :: TreeV (FuseAssocR a b c)
     -> TreeV (FuseAssocL a b c)
 
+--------------------------------------------------------------------------------
+-- Label-driven atom F-move (general; no per-triple FlatXXX)
+--------------------------------------------------------------------------------
+
+rootLab :: SIrrepTree t -> Int
+rootLab (SLeaf @j) = fromIntegral (natVal (Proxy @j))
+rootLab (SNode @j _ _) = fromIntegral (natVal (Proxy @j))
+
+-- | Collect left-assoc channels @(d, e, irrep)@ from @((a⊗b)_e ⊗ c)_d@.
+collectAssocL
+  :: STreeRep ts
+  -> TreeV ts
+  -> [(Int, Int, VS.Vector (Complex Double))]
+collectAssocL STreeNil TNil = []
+collectAssocL (STreeCons t rest) (TCons v rs) =
+  case t of
+    SNode @d left _right ->
+      case left of
+        SNode {} ->
+          ( fromIntegral (natVal (Proxy @d))
+          , rootLab left
+          , toArray v
+          )
+            : collectAssocL rest rs
+        SLeaf {} ->
+          error "collectAssocL: expected Node intermediate"
+    SLeaf {} ->
+      error "collectAssocL: leaf in association spine"
+
+-- | Collect right-assoc channels @(d, f, irrep)@ from @(a ⊗ (b⊗c)_f)_d@.
+collectAssocR
+  :: STreeRep ts
+  -> TreeV ts
+  -> [(Int, Int, VS.Vector (Complex Double))]
+collectAssocR STreeNil TNil = []
+collectAssocR (STreeCons t rest) (TCons v rs) =
+  case t of
+    SNode @d _left right ->
+      case right of
+        SNode {} ->
+          ( fromIntegral (natVal (Proxy @d))
+          , rootLab right
+          , toArray v
+          )
+            : collectAssocR rest rs
+        SLeaf {} ->
+          error "collectAssocR: expected Node intermediate"
+    SLeaf {} ->
+      error "collectAssocR: leaf in association spine"
+
+scatterAssocL
+  :: STreeRep ts
+  -> Map.Map (Int, Int) (VS.Vector (Complex Double))
+  -> TreeV ts
+scatterAssocL STreeNil _ = TNil
+scatterAssocL (STreeCons (t :: SIrrepTree u) rest) m =
+  case t of
+    SNode @d left _ ->
+      let key = (fromIntegral (natVal (Proxy @d)), rootLab left)
+       in TCons @u
+            (unsafeFromArray (m Map.! key))
+            (scatterAssocL rest m)
+    SLeaf {} ->
+      error "scatterAssocL: leaf in association spine"
+
+scatterAssocR
+  :: STreeRep ts
+  -> Map.Map (Int, Int) (VS.Vector (Complex Double))
+  -> TreeV ts
+scatterAssocR STreeNil _ = TNil
+scatterAssocR (STreeCons (t :: SIrrepTree u) rest) m =
+  case t of
+    SNode @d _ right ->
+      let key = (fromIntegral (natVal (Proxy @d)), rootLab right)
+       in TCons @u
+            (unsafeFromArray (m Map.! key))
+            (scatterAssocR rest m)
+    SLeaf {} ->
+      error "scatterAssocR: leaf in association spine"
+
+-- | General 3-atom F-move on association trees: pack → dense F → scatter.
+-- Works for any 'FuseAssocL' \/ 'FuseAssocR' of single-leaf spines.
+fmoveTreesAtoms
+  :: forall ls rs
+   . (KnownTreeRep ls, KnownTreeRep rs)
+  => Int
+  -> Int
+  -> Int
+  -> TreeV ls
+  -> TreeV rs
+fmoveTreesAtoms a b c tv =
+  let chans = collectAssocL (treeRepSing @ls) tv
+      buf =
+        packAtomsFlat
+          (leftSectors a b c)
+          (\d -> allowedE a b c d)
+          chans
+      buf' = fmoveAtomsFlat False a b c buf
+      out =
+        unpackAtomsFlat
+          (rightSectors a b c)
+          (\d -> allowedF a b c d)
+          buf'
+   in scatterAssocR
+        (treeRepSing @rs)
+        (Map.fromList [((d, f), v) | (d, f, v) <- out])
+
+fmoveInvTreesAtoms
+  :: forall rs ls
+   . (KnownTreeRep rs, KnownTreeRep ls)
+  => Int
+  -> Int
+  -> Int
+  -> TreeV rs
+  -> TreeV ls
+fmoveInvTreesAtoms a b c tv =
+  let chans = collectAssocR (treeRepSing @rs) tv
+      buf =
+        packAtomsFlat
+          (rightSectors a b c)
+          (\d -> allowedF a b c d)
+          chans
+      buf' = fmoveAtomsFlat True a b c buf
+      out =
+        unpackAtomsFlat
+          (leftSectors a b c)
+          (\d -> allowedE a b c d)
+          buf'
+   in scatterAssocL
+        (treeRepSing @ls)
+        (Map.fromList [((d, e), v) | (d, e, v) <- out])
+
+-- | Atom-leaf triple F-move from type-level @2j@ (one line per 'CanFmoveTrees' instance).
+fmoveTreesLeaves
+  :: forall ja jb jc
+   . ( KnownNat ja
+     , KnownNat jb
+     , KnownNat jc
+     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownTreeRep (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     )
+  => TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  -> TreeV (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+fmoveTreesLeaves =
+  fmoveTreesAtoms
+    @(FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+    @(FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+    (fromIntegral (natVal (Proxy @ja)))
+    (fromIntegral (natVal (Proxy @jb)))
+    (fromIntegral (natVal (Proxy @jc)))
+
+fmoveInvTreesLeaves
+  :: forall ja jb jc
+   . ( KnownNat ja
+     , KnownNat jb
+     , KnownNat jc
+     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownTreeRep (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     )
+  => TreeV (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  -> TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+fmoveInvTreesLeaves =
+  fmoveInvTreesAtoms
+    @(FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+    @(FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+    (fromIntegral (natVal (Proxy @ja)))
+    (fromIntegral (natVal (Proxy @jb)))
+    (fromIntegral (natVal (Proxy @jc)))
+
+-- | Standard basis vector of @C n@.
+cnBasis :: forall n. KnownNat n => Int -> C n
+cnBasis i =
+  let n = fromIntegral (natVal (Proxy @n)) :: Int
+   in unsafeFromArray $
+        VS.generate n $ \j -> if j == i then 1 :+ 0 else 0
+
 -- | Standard basis vector of @C 2@.
 c2Basis :: Int -> C 2
-c2Basis i =
-  unsafeFromArray $
-    VS.fromList
-      [ if j == i then 1 :+ 0 else 0
-      | j <- [0 :: Int, 1]
-      ]
+c2Basis = cnBasis @2
 
 c1Basis :: C 1
-c1Basis = unsafeFromArray (VS.fromList [1 :+ 0])
+c1Basis = cnBasis @1 0
 
 c3Basis :: Int -> C 3
-c3Basis i =
-  unsafeFromArray $
-    VS.fromList
-      [ if j == i then 1 :+ 0 else 0
-      | j <- [0 :: Int, 1, 2]
-      ]
+c3Basis = cnBasis @3
+
+-- | Multiplicity matrix @[F^{abc}_d]@ (or @F⁻¹ ≈ Fᵀ@ for real SU(2)) as @C n +> C n@.
+--
+-- @dom@ \/ @cod@ are intermediate @2j@ labels in basis order (@allowedE@ →
+-- @allowedF@ for forward; swapped for inverse). Forward:
+-- @{cod}_j = Σ_i F_{dom_i,cod_j} in_i@. Inverse uses the transpose in the
+-- same @(e,f)@ matrix (@F_{cod_j,dom_i}@) — required when @allowedE@ and
+-- @allowedF@ are different label sets (e.g. @½⊗½⊗0@).
+fmoveMult
+  :: forall n
+   . ( KnownNat n
+     , HilbertSpace (C n)
+     , InnerSpace (C n)
+     , Scalar (C n) ~ Complex Double
+     , AdditiveGroup (C n)
+     )
+  => Bool
+  -> Int
+  -> Int
+  -> Int
+  -> Int
+  -> [Int]
+  -> [Int]
+  -> C n +> C n
+fmoveMult inv a b c d dom cod =
+  arr $ LinearFunction $ \v ->
+    let n = fromIntegral (natVal (Proxy @n)) :: Int
+        coeffs = [ cnBasis @n i <.> v | i <- [0 .. n - 1] ]
+        amp i j =
+          if inv
+            then fMultEntry a b c d (cod !! j) (dom !! i)
+            else fMultEntry a b c d (dom !! i) (cod !! j)
+        outAt j =
+          sum
+            [ amp i j * (coeffs !! i)
+            | i <- [0 .. n - 1]
+            ]
+     in sumV
+          [ outAt j *^ cnBasis @n j
+          | j <- [0 .. n - 1]
+          ]
+
+-- | @F^{abc}_d ⊗ id@ (or inverse) on @C n ⊗ C (IrrepDim d)@.
+-- @n@ must equal @length (allowedE a b c d)@ (= @length (allowedF …)@).
+fmoveSector
+  :: forall n d
+   . ( KnownNat n
+     , KnownNat d
+     , KnownNat (IrrepDim d)
+     , HilbertSpace (C n)
+     , InnerSpace (C n)
+     , Scalar (C n) ~ Complex Double
+     , AdditiveGroup (C n)
+     , TensorSpace (C (IrrepDim d))
+     , LSpace (C n)
+     , LSpace (C (IrrepDim d))
+     )
+  => Bool
+  -> Int
+  -> Int
+  -> Int
+  -> (C n ⊗ C (IrrepDim d)) +> (C n ⊗ C (IrrepDim d))
+fmoveSector inv a b c =
+  let d = fromIntegral (natVal (Proxy @d)) :: Int
+      es = allowedE a b c d
+      fs = allowedF a b c d
+      (dom, cod) = if inv then (fs, es) else (es, fs)
+   in fmoveMult @n inv a b c d dom cod ⊗^ id
 
 -- | F-blocked layout for @½⊗½⊗½@: group by @(a,b,c,d)=(1,1,1,d)@.
 type Flat111 = (C 2 ⊗ C 2, C 1 ⊗ C 4)
@@ -2255,42 +2528,6 @@ contractC2Left e sec =
       c1 = e <.> c2Basis 1
    in (c0 *^ a0) ^+^ (c1 *^ a1)
 
--- | @F^{111}_1@ on multiplicity @[0,2]@ (typed @C 2@, no buffers).
-fMult111d1 :: Bool -> C 2 +> C 2
-fMult111d1 inv =
-  arr $ LinearFunction $ \v ->
-    let c0 = c2Basis 0 <.> v
-        c1 = c2Basis 1 <.> v
-     in if inv
-          then
-            -- domain f=[0,2], codomain e=[0,2]; out_e = Σ_f F⁻¹_ef in_f
-            let o0 =
-                  fromMaybe 0 (lookup 0 (su2FSymbol True 1 1 1 1 0)) * c0
-                    + fromMaybe 0 (lookup 2 (su2FSymbol True 1 1 1 1 0)) * c1
-                o1 =
-                  fromMaybe 0 (lookup 0 (su2FSymbol True 1 1 1 1 2)) * c0
-                    + fromMaybe 0 (lookup 2 (su2FSymbol True 1 1 1 1 2)) * c1
-             in (o0 *^ c2Basis 0) ^+^ (o1 *^ c2Basis 1)
-          else
-            let o0 =
-                  fromMaybe 0 (lookup 0 (su2FSymbol False 1 1 1 1 0)) * c0
-                    + fromMaybe 0 (lookup 0 (su2FSymbol False 1 1 1 1 2)) * c1
-                o1 =
-                  fromMaybe 0 (lookup 2 (su2FSymbol False 1 1 1 1 0)) * c0
-                    + fromMaybe 0 (lookup 2 (su2FSymbol False 1 1 1 1 2)) * c1
-             in (o0 *^ c2Basis 0) ^+^ (o1 *^ c2Basis 1)
-
--- | @F^{111}_3@ on singleton multiplicity (@C 1@).
-fMult111d3 :: Bool -> C 1 +> C 1
-fMult111d3 inv =
-  arr $ LinearFunction $ \v ->
-    let amp =
-          if inv
-            then fromMaybe 0 (lookup 2 (su2FSymbol True 1 1 1 3 2))
-            else fromMaybe 0 (lookup 2 (su2FSymbol False 1 1 1 3 2))
-        c = c1Basis <.> v
-     in (amp * c) *^ c1Basis
-
 packFlat111 :: (C 2, (C 2, C 4)) -> Flat111
 packFlat111 (v0, (v2, v3)) =
   (packTwoCopy @2 v0 v2, c1Basis ⊗ v3)
@@ -2300,49 +2537,127 @@ unpackFlat111 (sec1, sec3) =
   case unpackTwoCopy @2 sec1 of
     (v0, v2) -> (v0, (v2, fuseBond @1 @4 $ sec3))
 
+-- | @½⊗½⊗½@ F-move via polymorphic 'fmoveSector' (@F ⊗ id@ per total @d@).
 fmoveFlat111 :: Flat111 -> Flat111
 fmoveFlat111 (sec1, sec3) =
-  ( (fMult111d1 False ⊗^ id) $ sec1
-  , (fMult111d3 False ⊗^ id) $ sec3
+  ( fmoveSector @2 @1 False 1 1 1 $ sec1
+  , fmoveSector @1 @3 False 1 1 1 $ sec3
   )
 
 fmoveInvFlat111 :: Flat111 -> Flat111
 fmoveInvFlat111 (sec1, sec3) =
-  ( (fMult111d1 True ⊗^ id) $ sec1
-  , (fMult111d3 True ⊗^ id) $ sec3
+  ( fmoveSector @2 @1 True 1 1 1 $ sec1
+  , fmoveSector @1 @3 True 1 1 1 $ sec3
   )
 
--- | Triple-leaf F-move via typed F-blocks (@F ⊗ id@), no 'VS.Vector'.
+-- | F-blocked @½⊗½⊗0@: @d=0@ (@C 1⊗C 1@) and @d=2@ (@C 1⊗C 3@).
+type Flat110 = (C 1 ⊗ C 1, C 1 ⊗ C 3)
+
+packFlat110 :: (C 1, C 3) -> Flat110
+packFlat110 (v0, v2) = (c1Basis ⊗ v0, c1Basis ⊗ v2)
+
+unpackFlat110 :: Flat110 -> (C 1, C 3)
+unpackFlat110 (sec0, sec2) =
+  (fuseBond @1 @1 $ sec0, fuseBond @1 @3 $ sec2)
+
+fmoveFlat110 :: Flat110 -> Flat110
+fmoveFlat110 (sec0, sec2) =
+  ( fmoveSector @1 @0 False 1 1 0 $ sec0
+  , fmoveSector @1 @2 False 1 1 0 $ sec2
+  )
+
+fmoveInvFlat110 :: Flat110 -> Flat110
+fmoveInvFlat110 (sec0, sec2) =
+  ( fmoveSector @1 @0 True 1 1 0 $ sec0
+  , fmoveSector @1 @2 True 1 1 0 $ sec2
+  )
+
+-- | F-blocked @½⊗½⊗1@: @d=0,2,4@ with mult-2 on @d=2@.
+type Flat112 = (C 1 ⊗ C 1, (C 2 ⊗ C 3, C 1 ⊗ C 5))
+
+-- | Left-assoc tree payload ↔ F-blocks (regroup by @d@).
+packFlat112L :: (C 3, (C 1, (C 3, C 5))) -> Flat112
+packFlat112L (v2e0, (v0, (v2e2, v4))) =
+  (c1Basis ⊗ v0, (packTwoCopy @3 v2e0 v2e2, c1Basis ⊗ v4))
+
+unpackFlat112L :: Flat112 -> (C 3, (C 1, (C 3, C 5)))
+unpackFlat112L (sec0, (sec2, sec4)) =
+  case unpackTwoCopy @3 sec2 of
+    (v2e0, v2e2) ->
+      (v2e0, (fuseBond @1 @1 $ sec0, (v2e2, fuseBond @1 @5 $ sec4)))
+
+-- | Right-assoc tree payload ↔ F-blocks (same sectors, 'FuseAssocR' order).
+packFlat112R :: (C 1, (C 3, (C 3, C 5))) -> Flat112
+packFlat112R (v0, (v2f1, (v2f3, v4))) =
+  (c1Basis ⊗ v0, (packTwoCopy @3 v2f1 v2f3, c1Basis ⊗ v4))
+
+unpackFlat112R :: Flat112 -> (C 1, (C 3, (C 3, C 5)))
+unpackFlat112R (sec0, (sec2, sec4)) =
+  case unpackTwoCopy @3 sec2 of
+    (v2f1, v2f3) ->
+      (fuseBond @1 @1 $ sec0, (v2f1, (v2f3, fuseBond @1 @5 $ sec4)))
+
+fmoveFlat112 :: Flat112 -> Flat112
+fmoveFlat112 (sec0, (sec2, sec4)) =
+  ( fmoveSector @1 @0 False 1 1 2 $ sec0
+  , ( fmoveSector @2 @2 False 1 1 2 $ sec2
+    , fmoveSector @1 @4 False 1 1 2 $ sec4
+    )
+  )
+
+fmoveInvFlat112 :: Flat112 -> Flat112
+fmoveInvFlat112 (sec0, (sec2, sec4)) =
+  ( fmoveSector @1 @0 True 1 1 2 $ sec0
+  , ( fmoveSector @2 @2 True 1 1 2 $ sec2
+    , fmoveSector @1 @4 True 1 1 2 $ sec4
+    )
+  )
+
+-- | Triple-leaf F-move via label-driven 'fmoveTreesLeaves'.
 fmoveTrees111 :: TreeV AssocL111 -> TreeV AssocR111
-fmoveTrees111 =
-  vToTreeV @AssocR111
-    . unpackFlat111
-    . fmoveFlat111
-    . packFlat111
-    . treeVToV @AssocL111
+fmoveTrees111 = fmoveTreesLeaves @1 @1 @1
 
 fmoveInvTrees111 :: TreeV AssocR111 -> TreeV AssocL111
-fmoveInvTrees111 =
-  vToTreeV @AssocL111
-    . unpackFlat111
-    . fmoveInvFlat111
-    . packFlat111
-    . treeVToV @AssocR111
+fmoveInvTrees111 = fmoveInvTreesLeaves @1 @1 @1
 
--- | Trivial @0⊗0⊗0@: F is id on the single block.
 fmoveTrees000 :: TreeV AssocL000 -> TreeV AssocR000
-fmoveTrees000 = vToTreeV @AssocR000 . treeVToV @AssocL000
+fmoveTrees000 = fmoveTreesLeaves @0 @0 @0
 
 fmoveInvTrees000 :: TreeV AssocR000 -> TreeV AssocL000
-fmoveInvTrees000 = vToTreeV @AssocL000 . treeVToV @AssocR000
+fmoveInvTrees000 = fmoveInvTreesLeaves @0 @0 @0
+
+fmoveTrees110 :: TreeV AssocL110 -> TreeV AssocR110
+fmoveTrees110 = fmoveTreesLeaves @1 @1 @0
+
+fmoveInvTrees110 :: TreeV AssocR110 -> TreeV AssocL110
+fmoveInvTrees110 = fmoveInvTreesLeaves @1 @1 @0
+
+fmoveTrees112 :: TreeV AssocL112 -> TreeV AssocR112
+fmoveTrees112 = fmoveTreesLeaves @1 @1 @2
+
+fmoveInvTrees112 :: TreeV AssocR112 -> TreeV AssocL112
+fmoveInvTrees112 = fmoveInvTreesLeaves @1 @1 @2
 
 instance CanFmoveTrees '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1] where
-  fmoveTrees = fmoveTrees111
-  fmoveInvTrees = fmoveInvTrees111
+  fmoveTrees = fmoveTreesLeaves @1 @1 @1
+  fmoveInvTrees = fmoveInvTreesLeaves @1 @1 @1
 
 instance CanFmoveTrees '[ 'Leaf 0] '[ 'Leaf 0] '[ 'Leaf 0] where
-  fmoveTrees = fmoveTrees000
-  fmoveInvTrees = fmoveInvTrees000
+  fmoveTrees = fmoveTreesLeaves @0 @0 @0
+  fmoveInvTrees = fmoveInvTreesLeaves @0 @0 @0
+
+instance CanFmoveTrees '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 0] where
+  fmoveTrees = fmoveTreesLeaves @1 @1 @0
+  fmoveInvTrees = fmoveInvTreesLeaves @1 @1 @0
+
+instance CanFmoveTrees '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 2] where
+  fmoveTrees = fmoveTreesLeaves @1 @1 @2
+  fmoveInvTrees = fmoveInvTreesLeaves @1 @1 @2
+
+-- | Extra closed instance: @½⊗1⊗½@ — no new FlatXXX, only 'fmoveTreesLeaves'.
+instance CanFmoveTrees '[ 'Leaf 1] '[ 'Leaf 2] '[ 'Leaf 1] where
+  fmoveTrees = fmoveTreesLeaves @1 @2 @1
+  fmoveInvTrees = fmoveInvTreesLeaves @1 @2 @1
 
 -- | Nested unfused @a ⊗ q@ before CG (layout for Fuse-right naturality).
 data TensorTrees (a :: TreeRep) (q :: TreeRep) where
@@ -2583,23 +2898,22 @@ assoc8ToFlat111 v =
   let buf = toArray v
    in (unsafeFromArray (VS.take 4 buf), unsafeFromArray (VS.drop 4 buf))
 
--- | @F⁻¹@ on the Assoc-½⊗½⊗½ factor as @C 8@ (@F ⊗ id@ via 'Flat111').
+-- | @F⁻¹@ on the Assoc-½⊗½⊗½ factor as @C 8@ — same layout as 'leftSectors' 111.
 fmoveInvAssoc8 :: C 8 -> C 8
 fmoveInvAssoc8 =
-  flat111ToAssoc8 . fmoveInvFlat111 . assoc8ToFlat111
+  unsafeFromArray . fmoveAtomsFlat True 1 1 1 . toArray
 
--- | @Fuse(id, F-inv)@ on general Mid: unfuse @½ ⊗ Assoc8@ → @id ⊗ F⁻¹@ → refuse.
+fmoveAssoc8 :: C 8 -> C 8
+fmoveAssoc8 =
+  unsafeFromArray . fmoveAtomsFlat False 1 1 1 . toArray
+
+-- | @Fuse(id, F-inv)@ on general Mid — instance of 'fuseMapRight'.
 --
 -- Must not go through rank-1 'TensorTrees' / 'splitSeparable2': Hom-compose Mid
 -- (e.g. singlet channel alone) is entangled across the leaf\/assoc cut.
 fuseMapRightFinv111 :: TreeV Mid111 -> TreeV CupR111
-fuseMapRightFinv111 tv =
-  let mid16 = flattenHom16 (packMid111 (treeVToV @Mid111 tv))
-      unfused = unfuseLeafAssocHalf $ mid16
-      mapped =
-        (id ⊗^ arr (LinearFunction fmoveInvAssoc8)) $ unfused
-      out16 = fuseLeafAssocHalf $ mapped
-   in vToTreeV @CupR111 (unpackMid111 (unflattenHom16 out16))
+fuseMapRightFinv111 =
+  fuseMapRight @Leaf1 @AssocR111 @AssocL111 fmoveInvTrees111
 
 -- | Rank-1 special case: 'unfuseMid111' → map F-inv → 'fuseTensorTrees'.
 fuseMapRightFinvProduct111 :: TreeV Mid111 -> TreeV CupR111
@@ -2628,18 +2942,159 @@ checkFmoveTrees111 tv =
    in approxAssoc111 viaFlat viaTrees
         && approxAssoc111 (treeVToV @AssocL111 tv) roundtrip
 
--- | Outer F via typed Schur @ToCG@ on @C 16@ (@flattenHom16@ is the Schur boundary).
+approxAssoc110 :: (C 1, C 3) -> (C 1, C 3) -> Bool
+approxAssoc110 (u0, u2) (v0, v2) =
+  let close a b =
+        let d = a ^-^ b
+         in magnitude (d <.> d) < 1e-18
+   in close u0 v0 && close u2 v2
+
+checkFmoveTrees110 :: TreeV AssocL110 -> Bool
+checkFmoveTrees110 tv =
+  let packed = packFlat110 (treeVToV @AssocL110 tv)
+      viaFlat = unpackFlat110 (fmoveFlat110 packed)
+      viaTrees = treeVToV @AssocR110 (fmoveTrees110 tv)
+      roundtrip =
+        treeVToV @AssocL110 (fmoveInvTrees110 (fmoveTrees110 tv))
+   in approxAssoc110 viaFlat viaTrees
+        && approxAssoc110 (treeVToV @AssocL110 tv) roundtrip
+
+approxAssoc112L
+  :: (C 3, (C 1, (C 3, C 5)))
+  -> (C 3, (C 1, (C 3, C 5)))
+  -> Bool
+approxAssoc112L (u2e0, (u0, (u2e2, u4))) (v2e0, (v0, (v2e2, v4))) =
+  let close a b =
+        let d = a ^-^ b
+         in magnitude (d <.> d) < 1e-18
+   in close u2e0 v2e0 && close u0 v0 && close u2e2 v2e2 && close u4 v4
+
+approxAssoc112R
+  :: (C 1, (C 3, (C 3, C 5)))
+  -> (C 1, (C 3, (C 3, C 5)))
+  -> Bool
+approxAssoc112R (u0, (u2f1, (u2f3, u4))) (v0, (v2f1, (v2f3, v4))) =
+  let close a b =
+        let d = a ^-^ b
+         in magnitude (d <.> d) < 1e-18
+   in close u0 v0 && close u2f1 v2f1 && close u2f3 v2f3 && close u4 v4
+
+checkFmoveTrees112 :: TreeV AssocL112 -> Bool
+checkFmoveTrees112 tv =
+  let packed = packFlat112L (treeVToV @AssocL112 tv)
+      viaFlat = unpackFlat112R (fmoveFlat112 packed)
+      viaTrees = treeVToV @AssocR112 (fmoveTrees112 tv)
+      roundtrip =
+        treeVToV @AssocL112 (fmoveInvTrees112 (fmoveTrees112 tv))
+   in approxAssoc112R viaFlat viaTrees
+        && approxAssoc112L (treeVToV @AssocL112 tv) roundtrip
+
+approxTreeV
+  :: forall ts
+   . KnownTreeRep ts
+  => TreeV ts
+  -> TreeV ts
+  -> Bool
+approxTreeV = go (treeRepSing @ts)
+  where
+    closeVec a b =
+      let da = toArray a
+          db = toArray b
+       in VS.all (\z -> magnitude z < 1e-9) (VS.zipWith (-) da db)
+    go :: STreeRep ts' -> TreeV ts' -> TreeV ts' -> Bool
+    go STreeNil TNil TNil = True
+    go (STreeCons t rest) (TCons a as) (TCons b bs) =
+      case t of
+        SLeaf {} -> closeVec a b && go rest as bs
+        SNode {} -> closeVec a b && go rest as bs
+    go _ _ _ = False
+
+-- | Round-trip only (no typed Flat): works for any atom-leaf triple.
+checkFmoveTreesLeaves
+  :: forall ja jb jc
+   . ( KnownNat ja
+     , KnownNat jb
+     , KnownNat jc
+     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownTreeRep (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     )
+  => TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  -> Bool
+checkFmoveTreesLeaves tv =
+  let rt = fmoveInvTreesLeaves @ja @jb @jc (fmoveTreesLeaves @ja @jb @jc tv)
+   in approxTreeV
+        @(FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+        tv
+        rt
+
+-- | Deterministic sample on left-assoc atom spine (sector flats → scatter).
+sampleAssocLLeaves
+  :: forall ja jb jc
+   . ( KnownNat ja
+     , KnownNat jb
+     , KnownNat jc
+     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     )
+  => TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+sampleAssocLLeaves =
+  let a = fromIntegral (natVal (Proxy @ja)) :: Int
+      b = fromIntegral (natVal (Proxy @jb)) :: Int
+      c = fromIntegral (natVal (Proxy @jc)) :: Int
+      chans =
+        [ ( d
+          , e
+          , VS.replicate
+              (d + 1)
+              ((0.1 * fromIntegral (d + e + 1)) :+ 0)
+          )
+        | (d, _, _) <- leftSectors a b c
+        , e <- allowedE a b c d
+        ]
+   in scatterAssocL
+        (treeRepSing @(FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc]))
+        (Map.fromList [((d, e), v) | (d, e, v) <- chans])
+
+-- | Outer F on association trees: forget flat → dense F → unpack.
+-- Same densification as 'fSymbolHomSU2', without Schur / 'KnownRep' on Group 'Rep'.
+fmoveOuterTrees
+  :: forall a b c
+   . ( KnownTreeRep a
+     , KnownTreeRep b
+     , KnownTreeRep c
+     , KnownTreeRep (FuseAssocL a b c)
+     , KnownTreeRep (FuseAssocR a b c)
+     )
+  => TreeV (FuseAssocL a b c)
+  -> TreeV (FuseAssocR a b c)
+fmoveOuterTrees tv =
+  let secsA = sectorsFromPairs (forgetSectorPairs (treeRepSing @a))
+      secsB = sectorsFromPairs (forgetSectorPairs (treeRepSing @b))
+      secsC = sectorsFromPairs (forgetSectorPairs (treeRepSing @c))
+      vin = treeVToForgetFlat @(FuseAssocL a b c) tv
+      vout = fmoveFlatSectors False secsA secsB secsC vin
+   in forgetFlatToTreeV @(FuseAssocR a b c) vout
+
+fmoveInvOuterTrees
+  :: forall a b c
+   . ( KnownTreeRep a
+     , KnownTreeRep b
+     , KnownTreeRep c
+     , KnownTreeRep (FuseAssocL a b c)
+     , KnownTreeRep (FuseAssocR a b c)
+     )
+  => TreeV (FuseAssocR a b c)
+  -> TreeV (FuseAssocL a b c)
+fmoveInvOuterTrees tv =
+  let secsA = sectorsFromPairs (forgetSectorPairs (treeRepSing @a))
+      secsB = sectorsFromPairs (forgetSectorPairs (treeRepSing @b))
+      secsC = sectorsFromPairs (forgetSectorPairs (treeRepSing @c))
+      vin = treeVToForgetFlat @(FuseAssocR a b c) tv
+      vout = fmoveFlatSectors True secsA secsB secsC vin
+   in forgetFlatToTreeV @(FuseAssocL a b c) vout
+
+-- | Outer Hom F for Leaf-½: @FuseAssocL Leaf1 Leaf1 Hom11 → FuseAssocR …@.
 fmoveOuter111 :: TreeV Dom111 -> TreeV Mid111
-fmoveOuter111 tv =
-  let mor =
-        fSymbolHomSU2
-          (Proxy @'[ '(1, 1)])
-          (Proxy @'[ '(1, 1)])
-          (Proxy @'[ '(0, 1), '(2, 1)])
-      ToCG out =
-        getLinearFunction (intertwinerLinearG mor) $
-          ToCG (flattenHom16 (packDom111 (treeVToV @Dom111 tv)))
-   in vToTreeV @Mid111 (unpackMid111 (unflattenHom16 out))
+fmoveOuter111 = fmoveOuterTrees @Leaf1 @Leaf1 @Hom11
 
 --------------------------------------------------------------------------------
 -- Tree Hom composition (analogues of 'composeMorFused' steps)
@@ -2825,19 +3280,198 @@ checkComposeMorTrees111 =
         && approxHom11 fid f
         && approxHom11 idf f
 
+-- | Outer F round-trip on Dom = Fuse(id,id): @F⁻¹ ∘ F ≈ id@.
+checkFmoveOuter111 :: Bool
+checkFmoveOuter111 =
+  let dom = fuseTreeRepTerm @Hom11 @Hom11 idHom11 idHom11
+      mid = fmoveOuter111 dom
+      back = fmoveInvOuterTrees @Leaf1 @Leaf1 @Hom11 mid
+      close u v =
+        let bu = treeVToForgetFlat @Dom111 u
+            bv = treeVToForgetFlat @Dom111 v
+            err =
+              VS.sum $
+                VS.zipWith
+                  (\x y -> let d = x - y in realPart (d * conjugate d))
+                  bu
+                  bv
+         in err < 1e-12
+   in close dom back
+
+-- | 'fuseMapLeft id' is the identity on Mid.
+checkFuseMapLeftId111 :: Bool
+checkFuseMapLeftId111 =
+  let mid =
+        fmoveOuter111 (fuseTreeRepTerm @Hom11 @Hom11 idHom11 idHom11)
+      mid' = fuseMapLeft @Leaf1 @Leaf1 @AssocR111 id mid
+      close u v =
+        let bu = treeVToForgetFlat @Mid111 u
+            bv = treeVToForgetFlat @Mid111 v
+            err =
+              VS.sum $
+                VS.zipWith
+                  (\x y -> let d = x - y in realPart (d * conjugate d))
+                  bu
+                  bv
+         in err < 1e-12
+   in close mid mid'
+
+-- | Forgetful coalesced flat of a 'TreeV' (same layout as 'fuseSU2Flat' output /
+-- 'ForgetTreeRep'): sectors sorted by root @2j@, multiplicity = spine order.
+treeVToForgetFlat
+  :: forall ts
+   . KnownTreeRep ts
+  => TreeV ts
+  -> VS.Vector (Complex Double)
+treeVToForgetFlat = packRootChannels . collectRootChannels (treeRepSing @ts)
+
+collectRootChannels
+  :: STreeRep ts
+  -> TreeV ts
+  -> [(Int, VS.Vector (Complex Double))]
+collectRootChannels STreeNil TNil = []
+collectRootChannels (STreeCons t rest) (TCons v rs) =
+  case t of
+    SLeaf @j ->
+      (fromIntegral (natVal (Proxy @j)), toArray v)
+        : collectRootChannels rest rs
+    SNode @j _ _ ->
+      (fromIntegral (natVal (Proxy @j)), toArray v)
+        : collectRootChannels rest rs
+collectRootChannels _ _ =
+  error "collectRootChannels: TreeV / STreeRep mismatch"
+
+packRootChannels
+  :: [(Int, VS.Vector (Complex Double))]
+  -> VS.Vector (Complex Double)
+packRootChannels chans =
+  let byJ =
+        Prelude.foldl
+          (\m (j, v) -> Map.insertWith (flip (++)) j [v] m)
+          Map.empty
+          chans
+   in VS.concat [VS.concat vs | (_, vs) <- Map.toAscList byJ]
+
+-- | Inverse of 'treeVToForgetFlat' for a known spine (pops mult copies in spine order).
+forgetFlatToTreeV
+  :: forall ts
+   . KnownTreeRep ts
+  => VS.Vector (Complex Double)
+  -> TreeV ts
+forgetFlatToTreeV buf =
+  let s = treeRepSing @ts
+      byJ0 = splitForgetByRoots (treeRootList s) buf
+   in scatterRootChannels s byJ0
+
+splitForgetByRoots
+  :: [Int]
+  -> VS.Vector (Complex Double)
+  -> Map.Map Int [VS.Vector (Complex Double)]
+splitForgetByRoots roots buf =
+  let counts =
+        Prelude.foldl
+          (\m j -> Map.insertWith (+) j 1 m)
+          Map.empty
+          roots
+      sortedJs = Map.keys counts
+      offsets =
+        Map.fromList $
+          zip
+            sortedJs
+            (scanl (+) 0 [counts Map.! j * (j + 1) | j <- sortedJs])
+      sliceJ j =
+        let mult = counts Map.! j
+            d = j + 1
+            off = offsets Map.! j
+         in [ VS.slice (off + μ * d) d buf
+            | μ <- [0 .. mult - 1]
+            ]
+   in Map.fromList [(j, sliceJ j) | j <- sortedJs]
+
+scatterRootChannels
+  :: STreeRep ts
+  -> Map.Map Int [VS.Vector (Complex Double)]
+  -> TreeV ts
+scatterRootChannels STreeNil _ = TNil
+scatterRootChannels (STreeCons (t :: SIrrepTree u) rest) m =
+  case t of
+    SLeaf @j ->
+      let tj = fromIntegral (natVal (Proxy @j)) :: Int
+       in case Map.lookup tj m of
+            Just (v : vs) ->
+              TCons @u
+                (unsafeFromArray v)
+                (scatterRootChannels rest (Map.insert tj vs m))
+            _ ->
+              error "scatterRootChannels: missing multiplicity slot"
+    SNode @j _ _ ->
+      let tj = fromIntegral (natVal (Proxy @j)) :: Int
+       in case Map.lookup tj m of
+            Just (v : vs) ->
+              TCons @u
+                (unsafeFromArray v)
+                (scatterRootChannels rest (Map.insert tj vs m))
+            _ ->
+              error "scatterRootChannels: missing multiplicity slot"
+
+-- | Naturality of @Fuse(a, –)@: @refuse ∘ (id ⊗ f) ∘ unfuse@ on fusion trees.
+--
+-- @f@ may be any intertwiner on the right tree spine (e.g. F-move). The
+-- forgetful flat is only the CG \/ Kronecker domain — not a FuseHom legacy path.
 fuseMapRight
   :: forall a q q'
-   . (ToVSpine q -> ToVSpine q')
-  -> ToVSpine (FuseHom a q)
-  -> ToVSpine (FuseHom a q')
-fuseMapRight = undefined
+   . ( KnownTreeRep a
+     , KnownTreeRep q
+     , KnownTreeRep q'
+     , KnownTreeRep (FuseTreeRep a q)
+     , KnownTreeRep (FuseTreeRep a q')
+     )
+  => (TreeV q -> TreeV q')
+  -> TreeV (FuseTreeRep a q)
+  -> TreeV (FuseTreeRep a q')
+fuseMapRight f tv =
+  let secsA = sectorsFromPairs (forgetSectorPairs (treeRepSing @a))
+      secsQ = sectorsFromPairs (forgetSectorPairs (treeRepSing @q))
+      secsQ' = sectorsFromPairs (forgetSectorPairs (treeRepSing @q'))
+      fFlat =
+        treeVToForgetFlat @q' . f . forgetFlatToTreeV @q
+      vin = treeVToForgetFlat @(FuseTreeRep a q) tv
+      vout = fuseMapRightFlatSectors secsA secsQ secsQ' fFlat vin
+   in forgetFlatToTreeV @(FuseTreeRep a q') vout
+
+-- | Coalesced @(tj, multiplicity)@ pairs matching 'ForgetTreeRep' / 'fuseSU2Flat'.
+forgetSectorPairs :: STreeRep ts -> [(Int, Int)]
+forgetSectorPairs =
+  Map.toAscList
+    . Prelude.foldl
+      (\m j -> Map.insertWith (+) j 1 m)
+      Map.empty
+    . treeRootList
+
+treeRootList :: STreeRep ts -> [Int]
+treeRootList STreeNil = []
+treeRootList (STreeCons t rest) = rootLab t : treeRootList rest
 
 fuseMapLeft
   :: forall a a' b
-   . (ToVSpine a -> ToVSpine a')
-  -> ToVSpine (FuseHom a b)
-  -> ToVSpine (FuseHom a' b)
-fuseMapLeft = undefined
+   . ( KnownTreeRep a
+     , KnownTreeRep a'
+     , KnownTreeRep b
+     , KnownTreeRep (FuseTreeRep a b)
+     , KnownTreeRep (FuseTreeRep a' b)
+     )
+  => (TreeV a -> TreeV a')
+  -> TreeV (FuseTreeRep a b)
+  -> TreeV (FuseTreeRep a' b)
+fuseMapLeft f tv =
+  let secsA = sectorsFromPairs (forgetSectorPairs (treeRepSing @a))
+      secsA' = sectorsFromPairs (forgetSectorPairs (treeRepSing @a'))
+      secsB = sectorsFromPairs (forgetSectorPairs (treeRepSing @b))
+      fFlat =
+        treeVToForgetFlat @a' . f . forgetFlatToTreeV @a
+      vin = treeVToForgetFlat @(FuseTreeRep a b) tv
+      vout = fuseMapLeftFlatSectors secsA secsA' secsB fFlat vin
+   in forgetFlatToTreeV @(FuseTreeRep a' b) vout
 
 --------------------------------------------------------------------------------
 -- Fused composition on coalesced 'Rep' spines (@ToVSpine (FuseHom · ·)@)

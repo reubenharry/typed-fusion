@@ -24,6 +24,17 @@
 -- Built by highest-weight + @J−@ (Condon–Shortley).
 module Symmetry.CG.SU2
   ( fuseSU2Flat
+  , fuseSU2FlatSectors
+  , unfuseSU2Flat
+  , unfuseSU2FlatSectors
+  , fuseMapRightFlat
+  , fuseMapRightFlatSectors
+  , fuseMapLeftFlatSectors
+  , fuseTreeLeftSectors
+  , fuseTreeRightSectors
+  , fmoveFlatSectors
+  , fusedSectorPairs
+  , sectorsFromPairs
   , fuseCGChannel
   , unfuseCGChannel
   , unfuseLeafAssocHalf
@@ -54,6 +65,7 @@ import Numeric.LinearAlgebra.Static (C)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
+import qualified Numeric.LinearAlgebra as LA
 import Symmetry.Group (Group (SU2))
 import Symmetry.RepSingleton (KnownRep (..), SRep (..), repSing)
 
@@ -268,10 +280,17 @@ fuseSU2Flat
   -> SRep SU2 q
   -> VS.Vector (Complex Double)
   -> VS.Vector (Complex Double)
-fuseSU2Flat sr sq vin =
-  let secsR = sectorsSU2 sr
-      secsQ = sectorsSU2 sq
-      dimQ = repDimOf secsQ
+fuseSU2Flat sr sq =
+  fuseSU2FlatSectors (sectorsSU2 sr) (sectorsSU2 sq)
+
+-- | Sector-list form of 'fuseSU2Flat' (@(tj, multiplicity, offset)@ spines).
+fuseSU2FlatSectors
+  :: [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fuseSU2FlatSectors secsR secsQ vin =
+  let dimQ = repDimOf secsQ
       -- CG walk contributions (stable order within each output @tj@).
       contribs =
         [ (tjOut, m1 * m2, tj1, m1, off1, tj2, m2, off2)
@@ -336,6 +355,234 @@ fuseSU2Flat sr sq vin =
       z' <- f z x
       foldM f z' xs
 
+-- | @(tj, multiplicity)@ → offset spine for 'fuseSU2FlatSectors'.
+sectorsFromPairs :: [(Int, Int)] -> [(Int, Int, Int)]
+sectorsFromPairs = go 0
+  where
+    go _ [] = []
+    go !off ((tj, m) : rest) =
+      (tj, m, off) : go (off + m * (tj + 1)) rest
+
+-- | Inverse of 'fuseSU2Flat' (real CG ⇒ transpose): fused multiplet layout →
+-- Kronecker product @Forget(r) ⊗ Forget(q)@ (@iR * dimQ + iQ@). Same total
+-- dimension — unitary isomorphism, not an embedding into a larger space.
+unfuseSU2Flat
+  :: SRep SU2 r
+  -> SRep SU2 q
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+unfuseSU2Flat sr sq =
+  unfuseSU2FlatSectors (sectorsSU2 sr) (sectorsSU2 sq)
+
+unfuseSU2FlatSectors
+  :: [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+unfuseSU2FlatSectors secsR secsQ vout =
+  let dimIn = repDimOf secsR * repDimOf secsQ
+      e i = VS.generate dimIn (\j -> if j == i then 1 else 0)
+   in VS.generate dimIn $ \i ->
+        VS.sum $ VS.zipWith (*) (fuseSU2FlatSectors secsR secsQ (e i)) vout
+
+-- | Naturality of fuse on the right: @refuse ∘ (id ⊗ f) ∘ unfuse@.
+-- @f@ acts on the forgetful flat of @q@ (@dimQ → dimQ'@).
+fuseMapRightFlat
+  :: SRep SU2 r
+  -> SRep SU2 q
+  -> SRep SU2 q'
+  -> (VS.Vector (Complex Double) -> VS.Vector (Complex Double))
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fuseMapRightFlat sr sq sq' =
+  fuseMapRightFlatSectors (sectorsSU2 sr) (sectorsSU2 sq) (sectorsSU2 sq')
+
+-- | Sector-list form of 'fuseMapRightFlat'.
+fuseMapRightFlatSectors
+  :: [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> (VS.Vector (Complex Double) -> VS.Vector (Complex Double))
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fuseMapRightFlatSectors secsR secsQ secsQ' f vin =
+  let unfused = unfuseSU2FlatSectors secsR secsQ vin
+      dimQ = repDimOf secsQ
+      dimR = repDimOf secsR
+      mapped =
+        VS.concat
+          [ f (VS.slice (iR * dimQ) dimQ unfused)
+          | iR <- [0 .. dimR - 1]
+          ]
+   in fuseSU2FlatSectors secsR secsQ' mapped
+
+-- | Naturality of fuse on the left: @refuse ∘ (f ⊗ id) ∘ unfuse@.
+fuseMapLeftFlatSectors
+  :: [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> (VS.Vector (Complex Double) -> VS.Vector (Complex Double))
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fuseMapLeftFlatSectors secsR secsR' secsQ f vin =
+  let unfused = unfuseSU2FlatSectors secsR secsQ vin
+      dimQ = repDimOf secsQ
+      dimR = repDimOf secsR
+      dimR' = repDimOf secsR'
+      mapped = runST $ do
+        m <- MVS.replicate (dimR' * dimQ) 0
+        mapM_
+          ( \iQ -> do
+              let fiber =
+                    VS.generate dimR $ \iR -> unfused VS.! (iR * dimQ + iQ)
+                  fiber' = f fiber
+              mapM_
+                ( \iR' ->
+                    MVS.write m (iR' * dimQ + iQ) (fiber' VS.! iR')
+                )
+                [0 .. dimR' - 1]
+          )
+          [0 .. dimQ - 1]
+        VS.freeze m
+   in fuseSU2FlatSectors secsR' secsQ mapped
+
+-- | Output @(tj, multiplicity)@ pairs of CG-fusing two forgetful spines.
+fusedSectorPairs :: [(Int, Int)] -> [(Int, Int)] -> [(Int, Int)]
+fusedSectorPairs r q =
+  Map.toAscList $
+    Map.fromListWith
+      (+)
+      [ (tjOut, m1 * m2)
+      | (tj1, m1) <- r
+      , (tj2, m2) <- q
+      , tjOut <- fusionChannels tj1 tj2
+      ]
+
+-- | @((r⊗q)⊗s)@ product flat → left-fused coalesced flat (sector lists).
+fuseTreeLeftSectors
+  :: [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fuseTreeLeftSectors secsR secsQ secsS vin =
+  let dr = repDimOf secsR
+      dq = repDimOf secsQ
+      ds = repDimOf secsS
+      dimRQ = dr * dq
+      secsRQ =
+        sectorsFromPairs
+          (fusedSectorPairs (pairsOf secsR) (pairsOf secsQ))
+      dimRqF = repDimOf secsRQ
+      mid = runST $ do
+        m <- MVS.new (dimRqF * ds)
+        mapM_
+          ( \iS -> do
+              let fiber =
+                    VS.generate dimRQ $ \iRq ->
+                      vin VS.! (iRq * ds + iS)
+                  fused = fuseSU2FlatSectors secsR secsQ fiber
+              mapM_
+                ( \iRq' ->
+                    MVS.write m (iRq' * ds + iS) (fused VS.! iRq')
+                )
+                [0 .. dimRqF - 1]
+          )
+          [0 .. ds - 1]
+        VS.freeze m
+   in fuseSU2FlatSectors secsRQ secsS mid
+  where
+    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
+
+-- | @(r⊗(q⊗s))@ product flat → right-fused coalesced flat (sector lists).
+fuseTreeRightSectors
+  :: [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fuseTreeRightSectors secsR secsQ secsS vin =
+  let dr = repDimOf secsR
+      dq = repDimOf secsQ
+      ds = repDimOf secsS
+      dimQS = dq * ds
+      secsQS =
+        sectorsFromPairs
+          (fusedSectorPairs (pairsOf secsQ) (pairsOf secsS))
+      dimQsF = repDimOf secsQS
+      mid = runST $ do
+        m <- MVS.new (dr * dimQsF)
+        mapM_
+          ( \iR -> do
+              let fiber =
+                    VS.generate dimQS $ \iQs ->
+                      vin VS.! (iR * dimQS + iQs)
+                  fused = fuseSU2FlatSectors secsQ secsS fiber
+              mapM_
+                ( \iQs' ->
+                    MVS.write m (iR * dimQsF + iQs') (fused VS.! iQs')
+                )
+                [0 .. dimQsF - 1]
+          )
+          [0 .. dr - 1]
+        VS.freeze m
+   in fuseSU2FlatSectors secsR secsQS mid
+  where
+    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
+
+matFromMapSecs
+  :: Int
+  -> Int
+  -> (VS.Vector (Complex Double) -> VS.Vector (Complex Double))
+  -> LA.Matrix (Complex Double)
+matFromMapSecs _nRows nCols f =
+  LA.fromColumns
+    [ VS.convert (f (e i))
+    | i <- [0 .. nCols - 1]
+    ]
+  where
+    e i = VS.generate nCols $ \j -> if i == j then 1 else 0
+
+-- | Dense F (or @Fᵀ ≈ F⁻¹@) on left\/right coalesced flats of @r⊗q⊗s@.
+-- Same densification as 'Symmetry.CG.FSymbol.denseFMove', sector-list driven.
+fmoveFlatSectors
+  :: Bool
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fmoveFlatSectors inv secsR secsQ secsS vin =
+  let dr = repDimOf secsR
+      dq = repDimOf secsQ
+      ds = repDimOf secsS
+      dimP = dr * dq * ds
+      secsRQ =
+        sectorsFromPairs
+          (fusedSectorPairs (pairsOf secsR) (pairsOf secsQ))
+      secsQS =
+        sectorsFromPairs
+          (fusedSectorPairs (pairsOf secsQ) (pairsOf secsS))
+      secsL =
+        sectorsFromPairs
+          (fusedSectorPairs (pairsOf secsRQ) (pairsOf secsS))
+      secsRight =
+        sectorsFromPairs
+          (fusedSectorPairs (pairsOf secsR) (pairsOf secsQS))
+      dimL = repDimOf secsL
+      dimRight = repDimOf secsRight
+      mL = matFromMapSecs dimL dimP (fuseTreeLeftSectors secsR secsQ secsS)
+      mR = matFromMapSecs dimRight dimP (fuseTreeRightSectors secsR secsQ secsS)
+      mat = mR LA.<> LA.tr mL
+      v = VS.convert vin :: LA.Vector (Complex Double)
+      v' =
+        if inv
+          then LA.tr mat LA.#> v
+          else mat LA.#> v
+   in VS.convert v'
+  where
+    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
+
 -- | Typed unfuse for @½ ⊗ Assoc(½⊗½⊗½)@ flats: @C 16 → C 2 ⊗ C 8@ (real CG ⇒ transpose of fuse).
 unfuseLeafAssocHalf :: C 16 +> (C 2 ⊗ C 8)
 unfuseLeafAssocHalf = arr (LinearFunction go)
@@ -344,14 +591,7 @@ unfuseLeafAssocHalf = arr (LinearFunction go)
     go vout =
       let sr = repSing @SU2 @'[ '(1, 1)]
           sq = repSing @SU2 @'[ '(1, 2), '(3, 1)]
-          w = toArray vout
-          dim = VS.length w
-          e i = VS.generate dim (\j -> if j == i then 1 else 0)
-          vin =
-            VS.generate dim $ \i ->
-              let fi = fuseSU2Flat sr sq (e i)
-               in VS.sum $ VS.zipWith (*) fi w
-       in unsafeFromArray vin
+       in unsafeFromArray (unfuseSU2Flat sr sq (toArray vout))
 
 -- | Inverse of 'unfuseLeafAssocHalf'.
 fuseLeafAssocHalf :: (C 2 ⊗ C 8) +> C 16

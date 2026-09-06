@@ -990,6 +990,26 @@ type SmokeAssocR111 =
     (FuseAssocR '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1])
     AssocR111
 
+type SmokeAssocL110 =
+  AssertEqTreeRep
+    (FuseAssocL '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 0])
+    AssocL110
+
+type SmokeAssocR110 =
+  AssertEqTreeRep
+    (FuseAssocR '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 0])
+    AssocR110
+
+type SmokeAssocL112 =
+  AssertEqTreeRep
+    (FuseAssocL '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 2])
+    AssocL112
+
+type SmokeAssocR112 =
+  AssertEqTreeRep
+    (FuseAssocR '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 2])
+    AssocR112
+
 -- | Concrete Leaf-½ Hom-compose spines match 'FuseTreeRep' expansions.
 type SmokeHom11 =
   AssertEqTreeRep
@@ -1146,6 +1166,18 @@ smokeAssocL111 = Proxy
 smokeAssocR111 :: Proxy SmokeAssocR111
 smokeAssocR111 = Proxy
 
+smokeAssocL110 :: Proxy SmokeAssocL110
+smokeAssocL110 = Proxy
+
+smokeAssocR110 :: Proxy SmokeAssocR110
+smokeAssocR110 = Proxy
+
+smokeAssocL112 :: Proxy SmokeAssocL112
+smokeAssocL112 = Proxy
+
+smokeAssocR112 :: Proxy SmokeAssocR112
+smokeAssocR112 = Proxy
+
 smokeHom11 :: Proxy SmokeHom11
 smokeHom11 = Proxy
 
@@ -1187,16 +1219,29 @@ sampleAssocL111 :: TreeV AssocL111
 sampleAssocL111 =
   vToTreeV @AssocL111 (konst 1, (konst 0.5, konst 0.25))
 
--- | Generic tree F-move agrees with typed Flat111 path; @F⁻¹ ∘ F ≈ id@.
+sampleAssocL110 :: TreeV AssocL110
+sampleAssocL110 =
+  vToTreeV @AssocL110 (konst 1, konst 0.5)
+
+sampleAssocL112 :: TreeV AssocL112
+sampleAssocL112 =
+  vToTreeV @AssocL112 (konst 1, (konst 0.5, (konst 0.25, konst 0.125)))
+
+-- | Generic tree F-move agrees with typed Flat path; @F⁻¹ ∘ F ≈ id@.
+-- Also round-trips a new triple (@½⊗1⊗½@) with no FlatXXX — only 'fmoveTreesLeaves'.
 fmoveTreesSelfTest :: Bool
-fmoveTreesSelfTest = checkFmoveTrees111 sampleAssocL111
+fmoveTreesSelfTest =
+  checkFmoveTrees111 sampleAssocL111
+    && checkFmoveTrees110 sampleAssocL110
+    && checkFmoveTrees112 sampleAssocL112
+    && checkFmoveTreesLeaves @1 @2 @1 (sampleAssocLLeaves @1 @2 @1)
 
 -- | Force the F-move self-test at module load (fails loud if broken).
 fmoveTreesSelfTestOk :: ()
 fmoveTreesSelfTestOk =
   if fmoveTreesSelfTest
     then ()
-    else error "fmoveTreesSelfTest failed: tree F ⧸ Flat111 or round-trip"
+    else error "fmoveTreesSelfTest failed: tree F ⧸ Flat or round-trip"
 
 -- | Pure Mid from 'TensorTrees': product path and general 'fuseMapRightFinv111' agree.
 fuseMapRightFinvSelfTest :: Bool
@@ -1232,7 +1277,10 @@ fuseMapRightFinvSelfTest =
 -- | Full Leaf-½ Hom compose ladder: @id∘id ≈ id@ and unit laws.
 composeMorTreesSelfTest :: Bool
 composeMorTreesSelfTest =
-  checkComposeMorTrees111 && checkComposeMorTrees000
+  checkComposeMorTrees111
+    && checkComposeMorTrees000
+    && checkFmoveOuter111
+    && checkFuseMapLeftId111
 
 composeMorTreesSelfTestOk :: ()
 composeMorTreesSelfTestOk =
