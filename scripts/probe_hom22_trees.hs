@@ -18,17 +18,17 @@ import qualified Data.Vector.Storable as VS
 
 dumpTrees
   :: forall ts
-   . KnownTreeRep ts
+   . KnownRep ts
   => String
-  -> TreeV ts
+  -> RepV ts
   -> IO ()
 dumpTrees label tv = do
   putStrLn $ "=== " ++ label ++ " ==="
-  go 0 (treeRepSing @ts) tv
+  go 0 (repSing @ts) tv
   where
-    go :: Int -> STreeRep ts' -> TreeV ts' -> IO ()
-    go _ STreeNil TNil = pure ()
-    go i (STreeCons t rest) (TCons v rs) = do
+    go :: Int -> SRep ts' -> RepV ts' -> IO ()
+    go _ SRepNil RNil = pure ()
+    go i (SRepCons t rest) (RCons v rs) = do
       let arr :: VS.Vector (Complex Double)
           arr = case t of
             SLeaf {} -> toArray v
@@ -57,24 +57,24 @@ dumpTrees label tv = do
       SLeaf {} -> False
     isCupKeep _ = False
 
-f22 :: TreeV Hom22
+f22 :: RepV Hom22
 f22 =
-  TCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
-    TCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
-      TCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) TNil
+  RCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
+    RCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
+      RCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) RNil
 
 main :: IO ()
 main = do
-  let domFid = fuseTreeRepTerm @Hom22 @Hom22 f22 idHom22
+  let domFid = fuseRepTerm @Hom22 @Hom22 f22 idHom22
       outerFid = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domFid
       cupFid = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerFid
-      domIdf = fuseTreeRepTerm @Hom22 @Hom22 idHom22 f22
+      domIdf = fuseRepTerm @Hom22 @Hom22 idHom22 f22
       outerIdf = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domIdf
       cupIdf = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerIdf
-  dumpTrees @(FuseTreeRep Hom22 Hom22) "dom Fid (f⊗id)" domFid
+  dumpTrees @(FuseRep Hom22 Hom22) "dom Fid (f⊗id)" domFid
   dumpTrees "outer Fid" outerFid
   dumpTrees "cupR Fid (after id⊗F)" cupFid
   putStrLn ""
-  dumpTrees @(FuseTreeRep Hom22 Hom22) "dom Idf (id⊗f)" domIdf
+  dumpTrees @(FuseRep Hom22 Hom22) "dom Idf (id⊗f)" domIdf
   dumpTrees "outer Idf" outerIdf
   dumpTrees "cupR Idf (after id⊗F)" cupIdf

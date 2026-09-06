@@ -17,17 +17,14 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
--- | Term-level symbolic SU(2) reps: singletons, 'RepV', coalesce / cup.
+-- | Term-level symbolic SU(2): singletons, 'RepV', cups, Hom.
 --
 -- Type kinds and families live in 'Experiments.Symbolic.Expr' /
--- 'Experiments.Symbolic.TypeLevel'. Flat-buffer oracles:
--- 'Experiments.Symbolic.Reference'. Examples: 'Experiments.SymbolicExamples'.
+-- 'Experiments.Symbolic.TypeLevel'. Examples: 'Experiments.SymbolicExamples'.
 --
--- Layers: 'Obj' → 'HomUnfused' (Kronecker); coalesced 'Rep'/'RepV' (sector
--- algebra, unfused cups on 'ToVSpine'); genealogy 'TreeRep'/'TreeV' →
+-- Layers: 'Obj' → 'HomUnfused' (Kronecker); genealogy 'Rep'/'RepV' →
 -- 'HomFused' via 'fuseTrees' / 'composeHomTrees' (five Mac Lane steps).
--- Cups: 'cupFused' / 'capFused' on singlet trees; 'cupUnfused' / 'cupRdual'
--- on spines.
+-- Cups: 'cupFused' / 'capFused' on singlet trees.
 module Experiments.Symbolic.Core where
 
 import Data.Complex (Complex ((:+)), conjugate, magnitude, realPart)
@@ -38,7 +35,7 @@ import Data.Proxy (Proxy (..))
 import Data.Type.Equality ((:~:) (Refl))
 import Data.VectorSpace (AdditiveGroup (zeroV, (^-^)), InnerSpace ((<.>)), Scalar, VectorSpace ((*^)))
 import qualified Data.Vector.Storable as VS
-import GHC.TypeLits (CmpNat, KnownNat, Nat, natVal, sameNat, type (*), type (+))
+import GHC.TypeLits (KnownNat, Nat, natVal, sameNat, type (+))
 import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..))
 import Experiments.Categorical.Associative (Associative (..))
@@ -84,12 +81,9 @@ import Symmetry.CG.SU2
   , fuseMapLeftFlatSectors
   , fuseMapRightFlatSectors
   )
-import Symmetry.SU2 (SU2Element, applyWigner)
 import TensorNetwork.Categorical
-  ( flattenCopyProd
-  , fuseBond
+  ( fuseBond
   , lassocMap
-  , mergeCopyAxis
   , rassocMap
   , runit
   , splitBond
@@ -108,75 +102,8 @@ data SIrrep (j :: Nat) where
        )
     => SIrrep j
 
--- | Singleton for 'MultExpr'.
-data SMult (μ :: MultExpr) where
-  SMultAtom
-    :: forall m
-     . KnownNat m
-    => SMult ('AtomM m)
-  SMultProd
-    :: SMult μ1
-    -> SMult μ2
-    -> SMult ('Prod μ1 μ2)
-
--- | General spine singleton: one 'SIrrep'/'SMult' pair per sector.
-data SRep (rs :: Rep) where
-  SRepNil :: SRep '[]
-  SRepCons
-    :: forall e μ rest
-     . SIrrep e
-    -> SMult μ
-    -> SRep rest
-    -> SRep ('(e, μ) ': rest)
-
--- | Materialize 'SRep' for a statically known spine.
-class KnownSymRep (rs :: Rep) where
-  symRepSing :: SRep rs
-
-instance KnownSymRep '[] where
-  symRepSing = SRepNil
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat (IrrepDim j)
-  , KnownSymRep rest
-  ) =>
-  KnownSymRep ('(j, 'AtomM m) ': rest)
-  where
-  symRepSing =
-    SRepCons (SAtomI @j) (SMultAtom @m) (symRepSing @rest)
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat n
-  , KnownNat (IrrepDim j)
-  , KnownSymRep rest
-  ) =>
-  KnownSymRep ('(j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
-  where
-  symRepSing =
-    SRepCons
-      (SAtomI @j)
-      (SMultProd (SMultAtom @m) (SMultAtom @n))
-      (symRepSing @rest)
-
--- | Flat-multiplicity atom spine (subset of 'KnownSymRep'). Walks use 'symRepSing'.
-class KnownSymRep rs => KnownAtomRep (rs :: Rep)
-
-instance KnownAtomRep '[]
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat (IrrepDim j)
-  , KnownAtomRep rest
-  ) =>
-  KnownAtomRep ('(j, 'AtomM m) ': rest)
-
 --------------------------------------------------------------------------------
--- Fusion-tree singletons ('Irrep' / 'TreeRep')
+-- Fusion-tree singletons ('Irrep' / 'Rep')
 --------------------------------------------------------------------------------
 
 -- | Singleton for a genealogy-preserving 'Irrep' tree.
@@ -218,81 +145,81 @@ instance
   where
   irrepSing = SNode @j (irrepSing @l) (irrepSing @r)
 
--- | Singleton spine for 'TreeRep'.
-data STreeRep (ts :: TreeRep) where
-  STreeNil :: STreeRep '[]
-  STreeCons
+-- | Singleton spine for 'Rep'.
+data SRep (ts :: Rep) where
+  SRepNil :: SRep '[]
+  SRepCons
     :: forall t rest
      . SIrrepTree t
-    -> STreeRep rest
-    -> STreeRep (t ': rest)
+    -> SRep rest
+    -> SRep (t ': rest)
 
--- | Materialize 'STreeRep' for a statically known tree list.
-class KnownTreeRep (ts :: TreeRep) where
-  treeRepSing :: STreeRep ts
+-- | Materialize 'SRep' for a statically known tree list.
+class KnownRep (ts :: Rep) where
+  repSing :: SRep ts
 
-instance KnownTreeRep '[] where
-  treeRepSing = STreeNil
+instance KnownRep '[] where
+  repSing = SRepNil
 
 instance
   ( KnownIrrep t
-  , KnownTreeRep rest
+  , KnownRep rest
   ) =>
-  KnownTreeRep (t ': rest)
+  KnownRep (t ': rest)
   where
-  treeRepSing = STreeCons (irrepSing @t) (treeRepSing @rest)
+  repSing = SRepCons (irrepSing @t) (repSing @rest)
 
 --------------------------------------------------------------------------------
--- Term-level fusion trees ('TreeV')
+-- Term-level fusion trees ('RepV')
 --------------------------------------------------------------------------------
 
--- | Spine of root vectors, indexed by type-level 'TreeRep'.
-data TreeV (ts :: TreeRep) where
-  TNil :: TreeV '[]
-  TCons
+-- | Spine of root vectors, indexed by type-level 'Rep'.
+data RepV (ts :: Rep) where
+  RNil :: RepV '[]
+  RCons
     :: forall t rest
      . ToVTree t
-    -> TreeV rest
-    -> TreeV (t ': rest)
+    -> RepV rest
+    -> RepV (t ': rest)
 
--- | Forgetful map: nonempty 'TreeV' → 'ToVTreeRep'.
-treeVToV :: forall ts. KnownTreeRep ts => TreeV ts -> ToVTreeRep ts
-treeVToV = go (treeRepSing @ts)
+-- | Forgetful map: nonempty 'RepV' → 'ToVRep'.
+repVToV :: forall ts. KnownRep ts => RepV ts -> ToVRep ts
+repVToV = go (repSing @ts)
   where
-    go :: forall ts'. STreeRep ts' -> TreeV ts' -> ToVTreeRep ts'
-    go (STreeCons _ STreeNil) (TCons v TNil) = v
-    go (STreeCons _ sRest@(STreeCons {})) (TCons v rest) =
+    go :: forall ts'. SRep ts' -> RepV ts' -> ToVRep ts'
+    go (SRepCons _ SRepNil) (RCons v RNil) = v
+    go (SRepCons _ sRest@(SRepCons {})) (RCons v rest) =
       (v, go sRest rest)
-    go _ _ = error "treeVToV: expected nonempty KnownTreeRep"
+    go _ _ = error "repVToV: expected nonempty KnownRep"
 
--- | Inverse of 'treeVToV'.
-vToTreeV :: forall ts. KnownTreeRep ts => ToVTreeRep ts -> TreeV ts
-vToTreeV = go (treeRepSing @ts)
+-- | Inverse of 'repVToV'.
+vToRepV :: forall ts. KnownRep ts => ToVRep ts -> RepV ts
+vToRepV = go (repSing @ts)
   where
-    go :: forall ts'. STreeRep ts' -> ToVTreeRep ts' -> TreeV ts'
-    go (STreeCons (_ :: SIrrepTree t) STreeNil) v =
-      TCons @t v TNil
-    go (STreeCons (_ :: SIrrepTree t) sRest@(STreeCons {})) (v, rest) =
-      TCons @t v (go sRest rest)
-    go _ _ = error "vToTreeV: expected nonempty KnownTreeRep"
+    go :: forall ts'. SRep ts' -> ToVRep ts' -> RepV ts'
+    go (SRepCons (_ :: SIrrepTree t) SRepNil) v =
+      RCons @t v RNil
+    go (SRepCons (_ :: SIrrepTree t) sRest@(SRepCons {})) (v, rest) =
+      RCons @t v (go sRest rest)
+    go _ _ = error "vToRepV: expected nonempty KnownRep"
 
 -- | Append two tree spines.
-appendTreeV
-  :: TreeV ts1
-  -> TreeV ts2
-  -> TreeV (Append ts1 ts2)
-appendTreeV TNil r2 = r2
-appendTreeV (TCons v rest) r2 =
-  TCons v (appendTreeV rest r2)
+appendRepV
+  :: RepV ts1
+  -> RepV ts2
+  -> RepV (Append ts1 ts2)
+appendRepV RNil r2 = r2
+appendRepV (RCons v rest) r2 =
+  RCons v (appendRepV rest r2)
 
--- | Walk CG channels for a pair of trees → 'TreeV' of @'Node@ outcomes.
+-- | Walk CG channels for a pair of trees → 'RepV' of @'Node@ outcomes.
 class FuseTreesGo (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) where
   fuseTreesGo
     :: C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2))
-    -> TreeV (NodesFromCG t1 t2 cg)
+    -> RepV (NodesFromCG t1 t2 cg)
 
 instance FuseTreesGo t1 t2 '[] where
-  fuseTreesGo _ = TNil
+  fuseTreesGo _ = RNil
 
 instance
   ( FuseTreesGo t1 t2 rest
@@ -306,7 +233,7 @@ instance
   FuseTreesGo t1 t2 ('(j, m) ': rest)
   where
   fuseTreesGo v =
-    TCons @('Node j t1 t2)
+    RCons @('Node j t1 t2)
       (fuseCGChannel @(Root t1) @(Root t2) @j $ v)
       (fuseTreesGo @t1 @t2 @rest v)
 
@@ -318,21 +245,21 @@ fuseTrees
      , FuseTreesGo t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
      )
   => ToVTree t1 ⊗ ToVTree t2
-  -> TreeV (FuseTrees t1 t2)
+  -> RepV (FuseTrees t1 t2)
 fuseTrees =
   fuseTreesGo @t1 @t2 @(TensorIrrepRepSU2 (Root t1) (Root t2))
 
--- | Constraints for walking 'FuseTreeRep' at the term level.
-type family FuseTreeRepTermC (rs :: TreeRep) (qs :: TreeRep) :: Constraint where
-  FuseTreeRepTermC '[] _ = ()
-  FuseTreeRepTermC (t1 ': rest) qs =
-    ( FuseTreeRepOneTermC t1 qs
-    , FuseTreeRepTermC rest qs
+-- | Constraints for walking 'FuseRep' at the term level.
+type family FuseRepTermC (rs :: Rep) (qs :: Rep) :: Constraint where
+  FuseRepTermC '[] _ = ()
+  FuseRepTermC (t1 ': rest) qs =
+    ( FuseRepOneTermC t1 qs
+    , FuseRepTermC rest qs
     )
 
-type family FuseTreeRepOneTermC (t1 :: Irrep) (qs :: TreeRep) :: Constraint where
-  FuseTreeRepOneTermC _ '[] = ()
-  FuseTreeRepOneTermC t1 (t2 ': rest) =
+type family FuseRepOneTermC (t1 :: Irrep) (qs :: Rep) :: Constraint where
+  FuseRepOneTermC _ '[] = ()
+  FuseRepOneTermC t1 (t2 ': rest) =
     ( KnownIrrep t1
     , KnownIrrep t2
     , KnownNat (Root t1)
@@ -344,166 +271,64 @@ type family FuseTreeRepOneTermC (t1 :: Irrep) (qs :: TreeRep) :: Constraint wher
     , Scalar (C (IrrepDim (Root t1))) ~ Complex Double
     , Scalar (C (IrrepDim (Root t2))) ~ Complex Double
     , FuseTreesGo t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
-    , FuseTreeRepOneTermC t1 rest
+    , FuseRepOneTermC t1 rest
     )
 
-fuseTreeRepOneTerm
+fuseRepOneTerm
   :: forall t1 qs
-   . FuseTreeRepOneTermC t1 qs
+   . FuseRepOneTermC t1 qs
   => ToVTree t1
-  -> STreeRep qs
-  -> TreeV qs
-  -> TreeV (FuseTreeRepOne t1 qs)
-fuseTreeRepOneTerm _ STreeNil TNil = TNil
-fuseTreeRepOneTerm v1 (STreeCons (_ :: SIrrepTree t2) qRest) (TCons v2 rest) =
-  appendTreeV
+  -> SRep qs
+  -> RepV qs
+  -> RepV (FuseRepOne t1 qs)
+fuseRepOneTerm _ SRepNil RNil = RNil
+fuseRepOneTerm v1 (SRepCons (_ :: SIrrepTree t2) qRest) (RCons v2 rest) =
+  appendRepV
     (fuseTrees @t1 @t2 (v1 ⊗ v2))
-    (fuseTreeRepOneTerm @t1 v1 qRest rest)
+    (fuseRepOneTerm @t1 v1 qRest rest)
 
--- | Cartesian fuse of two 'TreeV' spines (matches 'FuseTreeRep').
-fuseTreeRepTerm
+-- | Cartesian fuse of two 'RepV' spines (matches 'FuseRep').
+fuseRepTerm
   :: forall rs qs
-   . ( KnownTreeRep rs
-     , KnownTreeRep qs
-     , FuseTreeRepTermC rs qs
+   . ( KnownRep rs
+     , KnownRep qs
+     , FuseRepTermC rs qs
      )
-  => TreeV rs
-  -> TreeV qs
-  -> TreeV (FuseTreeRep rs qs)
-fuseTreeRepTerm rs qs =
-  fuseTreeRepTermGo (treeRepSing @rs) rs (treeRepSing @qs) qs
+  => RepV rs
+  -> RepV qs
+  -> RepV (FuseRep rs qs)
+fuseRepTerm rs qs =
+  fuseRepTermGo (repSing @rs) rs (repSing @qs) qs
 
-fuseTreeRepTermGo
+fuseRepTermGo
   :: forall rs qs
-   . FuseTreeRepTermC rs qs
-  => STreeRep rs
-  -> TreeV rs
-  -> STreeRep qs
-  -> TreeV qs
-  -> TreeV (FuseTreeRep rs qs)
-fuseTreeRepTermGo STreeNil TNil _ _ = TNil
-fuseTreeRepTermGo
-  (STreeCons (_ :: SIrrepTree t1) rRest)
-  (TCons v1 rRestV)
+   . FuseRepTermC rs qs
+  => SRep rs
+  -> RepV rs
+  -> SRep qs
+  -> RepV qs
+  -> RepV (FuseRep rs qs)
+fuseRepTermGo SRepNil RNil _ _ = RNil
+fuseRepTermGo
+  (SRepCons (_ :: SIrrepTree t1) rRest)
+  (RCons v1 rRestV)
   qSing
   q =
-  appendTreeV
-    (fuseTreeRepOneTerm @t1 v1 qSing q)
-    (fuseTreeRepTermGo rRest rRestV qSing q)
+  appendRepV
+    (fuseRepOneTerm @t1 v1 qSing q)
+    (fuseRepTermGo rRest rRestV qSing q)
 
 --------------------------------------------------------------------------------
--- Term-level spine ('RepV') and fusion
---
--- Uniform @RCons@: sector shape lives in the type index @'(e, μ)@, not in a
--- GADT constructor per leaf shape. Old constructor names are pattern synonyms
--- for call sites; discriminating walks match @RCons@ / 'SRep'.
+-- Unit scalar packaging + atom dual / fused cups on singlet trees
 --------------------------------------------------------------------------------
 
--- | Spine of sectors, indexed by type-level 'Rep'.
-data RepV (rs :: Rep) where
-  RNil :: RepV '[]
-  RCons
-    :: forall e μ rest
-     . ToVSector e μ
-    -> RepV rest
-    -> RepV ('(e, μ) ': rest)
+-- | Unit amplitude as @ToVObj ('Atom 0)@ packing (@C 1 ⊗ C 1@).
+unitToVFromScalar :: Complex Double -> C 1 ⊗ C 1
+unitToVFromScalar s = unsafeFromArray (VS.fromList [s])
 
-pattern RConsAtomAtomM
-  :: () => (μ ~ 'AtomM m)
-  => ToVSector j ('AtomM m)
-  -> RepV rest
-  -> RepV ('(j, 'AtomM m) ': rest)
-pattern RConsAtomAtomM v rs = RCons @j @('AtomM m) v rs
-
-pattern RConsAtomProd
-  :: () => (μ ~ 'Prod ('AtomM m) ('AtomM n))
-  => ToVSector j ('Prod ('AtomM m) ('AtomM n))
-  -> RepV rest
-  -> RepV ('(j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
-pattern RConsAtomProd v rs =
-  RCons @j @('Prod ('AtomM m) ('AtomM n)) v rs
-
-{-# COMPLETE RNil, RCons :: RepV #-}
--- Pattern synonyms remain for call sites; production walks use 'RCons'.
-
--- | Forgetful map: nonempty 'RepV' → 'ToVSpine' (sector payloads kept).
--- Handles @'AtomM@ and @'Prod ('AtomM m) ('AtomM n)@ (fused CG tags).
-repVToV :: forall rs. KnownSymRep rs => RepV rs -> ToVSpine rs
-repVToV = go (symRepSing @rs)
-  where
-    go :: forall rs'. SRep rs' -> RepV rs' -> ToVSpine rs'
-    go (SRepCons SAtomI SMultAtom SRepNil) (RCons v RNil) = v
-    go (SRepCons SAtomI SMultAtom sRest@(SRepCons {})) (RCons v rest) =
-      (v, go sRest rest)
-    go (SRepCons SAtomI (SMultProd SMultAtom SMultAtom) SRepNil) (RCons v RNil) = v
-    go
-      (SRepCons SAtomI (SMultProd SMultAtom SMultAtom) sRest@(SRepCons {}))
-      (RCons v rest) =
-        (v, go sRest rest)
-    go _ _ = error "repVToV: expected nonempty KnownSymRep spine"
-
--- | Inverse of 'repVToV' (total on nonempty 'KnownSymRep' spines).
-vToRepV :: forall rs. KnownSymRep rs => ToVSpine rs -> RepV rs
-vToRepV = go (symRepSing @rs)
-  where
-    go :: forall rs'. SRep rs' -> ToVSpine rs' -> RepV rs'
-    go (SRepCons (SAtomI @j) (SMultAtom @m) SRepNil) v =
-      RCons @j @('AtomM m) v RNil
-    go (SRepCons (SAtomI @j) (SMultAtom @m) sRest@(SRepCons {})) (v, rest) =
-      RCons @j @('AtomM m) v (go sRest rest)
-    go
-      (SRepCons (SAtomI @j) (SMultProd (SMultAtom @m) (SMultAtom @n)) SRepNil)
-      v =
-        RCons @j @('Prod ('AtomM m) ('AtomM n)) v RNil
-    go
-      (SRepCons (SAtomI @j) (SMultProd (SMultAtom @m) (SMultAtom @n)) sRest@(SRepCons {}))
-      (v, rest) =
-        RCons @j @('Prod ('AtomM m) ('AtomM n)) v (go sRest rest)
-    go _ _ = error "vToRepV: expected nonempty KnownSymRep spine"
-
--- | Unfused tensor of two atom spines: @ToVSpine r ⊗ ToVSpine q@ (does not distribute).
-rtensor
-  :: forall r q
-   . ( KnownAtomRep r
-     , KnownAtomRep q
-     , TensorSpace (ToVSpine r)
-     , TensorSpace (ToVSpine q)
-     , Scalar (ToVSpine r) ~ Complex Double
-     , Scalar (ToVSpine q) ~ Complex Double
-     )
-  => RepV r
-  -> RepV q
-  -> ToVSpine r ⊗ ToVSpine q
-rtensor x y = repVToV x ⊗ repVToV y
-
--- | Cons onto a spine (@RCons@; shape from @e@/@μ@).
-repCons
-  :: forall e μ rest
-   . ToVSector e μ
-  -> RepV rest
-  -> RepV ('(e, μ) ': rest)
-repCons = RCons @e @μ
-
--- | Append two spines (@'Append'@ on keys).
-appendRepV
-  :: RepV rs1
-  -> RepV rs2
-  -> RepV (Append rs1 rs2)
-appendRepV RNil r2 = r2
-appendRepV (RCons v rest) r2 =
-  RCons v (appendRepV rest r2)
-
--- | Unfused atom×atom payload: copy×irrep block for each leg.
-type AtomPairV (j1 :: Nat) (j2 :: Nat) (m :: Nat) (n :: Nat) =
-  (C m ⊗ C (IrrepDim j1)) ⊗ (C n ⊗ C (IrrepDim j2))
-
---------------------------------------------------------------------------------
--- Undual (pivotal identification): DualVector → primal atom payload
---
--- Term-level undual is the Riesz inverse ('asTensor' + Hilbert coerce), then
--- Condon–Shortley on the irrep leg, then scale by @√(j+1)@ so the CG singlet
--- matches the DualVector Hilbert cup (@1/√(2j+1)@ from CG × @√(2j+1)@ here).
---------------------------------------------------------------------------------
+-- | Read the amplitude from @C 1 ⊗ C 1@.
+unitToVScalar :: (C 1 ⊗ C 1) -> Complex Double
+unitToVScalar u = VS.head (toArray u)
 
 -- | Condon–Shortley dual on one irrep buffer: @|k⟩ ↦ (-1)^k |tj−k⟩@
 -- (@tm = tj − 2k@, highest weight first; @(-1)^{j−m} = (-1)^k@).
@@ -524,7 +349,6 @@ csIrrepLinear v =
               phase = if even k then 1 else -1
            in (phase :+ 0) * (vin VS.! k)
 
--- | CS dual as a typed morphism on the irrep leg.
 csIrrepMap
   :: forall j
    . ( KnownNat j
@@ -533,11 +357,22 @@ csIrrepMap
   => C (IrrepDim j) +> C (IrrepDim j)
 csIrrepMap = arr (LinearFunction (csIrrepLinear @j))
 
+-- | Dual of an atom payload (@C m ⊗ C (j+1)@).
+dualAtomAtomM
+  :: forall j m
+   . ( KnownNat j
+     , KnownNat m
+     , KnownNat (IrrepDim j)
+     , InnerSpace (C m ⊗ C (IrrepDim j))
+     , Scalar (C m ⊗ C (IrrepDim j)) ~ Complex Double
+     )
+  => (C m ⊗ C (IrrepDim j))
+  -> DualVector (C m ⊗ C (IrrepDim j))
+dualAtomAtomM v =
+  fromLinearForm $
+    arr (LinearFunction (\w -> w <.> ((id ⊗^ csIrrepMap @j) $ v)))
+
 -- | Inverse of 'dualAtomAtomM', then CS + @√(j+1)@ for cup coherence.
---
--- @DualVector (u ⊗ v) = u +> DualVector v@. With Hilbert @DualVector (C n) ~ C n@,
--- 'asTensor' recovers @DualVector (C m) ⊗ DualVector (C (j+1))@, coerce both
--- factors, apply CS on the irrep factor, scale by @√(IrrepDim j)@.
 undualAtomAtomM
   :: forall j m
    . ( KnownNat j
@@ -546,8 +381,8 @@ undualAtomAtomM
      , HilbertSpace (C m)
      , HilbertSpace (C (IrrepDim j))
      )
-  => DualVector (ToVSector j ('AtomM m))
-  -> ToVSector j ('AtomM m)
+  => DualVector (C m ⊗ C (IrrepDim j))
+  -> (C m ⊗ C (IrrepDim j))
 undualAtomAtomM φ =
   let tDual =
         asTensor -+$=> φ
@@ -557,450 +392,100 @@ undualAtomAtomM φ =
             ⊗^ arr (LinearFunction (coerce :: DualVector (C (IrrepDim j)) -> C (IrrepDim j)))
         )
           $ tDual
-      -- Pivotal: CG singlet has @1/√(2j+1)@; cancel it so @cup ∘ fuse ≅ cupRdual@.
       dim = fromIntegral (natVal (Proxy @(IrrepDim j))) :: Double
       scale = sqrt dim :+ 0
    in scale *^ ((id ⊗^ csIrrepMap @j) $ riesz)
 
--- | Sector algebra helpers below: insert / flatten / merge for 'coalesce'.
--- (Per-sector helpers for 'coalesce'; CG fused ⊗ is 'fuseTreeRepTerm'.)
--- Instance heads stay concrete so 'CmpNat' reduces; bodies match 'RCons'.
-class InsertSpine (j :: Nat) (μ :: MultExpr) (rs :: Rep) where
-  insertSpine
-    :: ToVSector j μ
-    -> RepV rs
-    -> RepV (InsertSector j μ rs)
+-- | Contract a singlet-root tree spine to a scalar.
+class CupTrivial (ts :: Rep) where
+  cupTrivial :: RepV ts -> Complex Double
 
-instance InsertSpine j μ '[] where
-  insertSpine sv RNil = RCons @j @μ sv RNil
+instance CupTrivial '[] where
+  cupTrivial RNil = 0
 
 instance
-  ( CmpNat j j2 ~ ord
-  , InsertCompared ord j μ j2 ('AtomM m) rest
-  ) =>
-  InsertSpine j μ ('(j2, 'AtomM m) ': rest)
-  where
-  insertSpine sv (RCons sv2 restR) =
-    insertCompared @ord @j @μ @j2 @('AtomM m) sv sv2 restR
-
-instance
-  ( CmpNat j j2 ~ ord
-  , InsertCompared ord j μ j2 ('Prod ('AtomM m) ('AtomM n)) rest
-  ) =>
-  InsertSpine j μ ('(j2, 'Prod ('AtomM m) ('AtomM n)) ': rest)
-  where
-  insertSpine sv (RCons sv2 restR) =
-    insertCompared @ord @j @μ @j2 @('Prod ('AtomM m) ('AtomM n)) sv sv2 restR
-
--- | Compare incoming sector @j@ against spine head @j2@ (@ord ~ CmpNat j j2@).
--- LT/GT are polymorphic; EQ merges the copy axes.
-class InsertCompared
-  (ord :: Ordering)
-  (j :: Nat) (μ :: MultExpr)
-  (j2 :: Nat) (μ2 :: MultExpr)
-  (rest :: Rep)
- where
-  insertCompared
-    :: ToVSector j μ
-    -> ToVSector j2 μ2
-    -> RepV rest
-    -> RepV (InsertSectorOrd ord j μ j2 μ2 rest)
-
-instance InsertCompared 'LT j μ j2 μ2 rest where
-  insertCompared sv sv2 restR =
-    RCons @j @μ sv (RCons @j2 @μ2 sv2 restR)
-
-instance (InsertSpine j μ rest) => InsertCompared 'GT j μ j2 μ2 rest where
-  insertCompared sv sv2 restR =
-    RCons @j2 @μ2 sv2 (insertSpine @j @μ sv restR)
-
--- | Flatten a sector's copy axis to @'AtomM (EvalMult μ)@.
-class FlattenCopy (j :: Nat) (μ :: MultExpr) where
-  flattenCopy
-    :: ToVSector j μ
-    -> ToVSector j ('AtomM (EvalMult μ))
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat (IrrepDim j)
-  ) =>
-  FlattenCopy j ('AtomM m)
-  where
-  flattenCopy = id
-
-instance
-  ( KnownNat j
-  , KnownNat m
-  , KnownNat n
-  , KnownNat (m * n)
-  , KnownNat (IrrepDim j)
-  ) =>
-  FlattenCopy j ('Prod ('AtomM m) ('AtomM n))
-  where
-  flattenCopy = flattenCopyProd @m @n @(IrrepDim j)
-
--- | Direct-sum same-irrep sectors along the copy axis (coalesce).
--- Flatten each side to @'AtomM@, then 'mergeCopyAxis'.
-class MergeSector (j :: Nat) (μ1 :: MultExpr) (μ2 :: MultExpr) (μOut :: MultExpr) where
-  mergeSector
-    :: ToVSector j μ1
-    -> ToVSector j μ2
-    -> ToVSector j μOut
-
-instance
-  ( FlattenCopy j μ1
-  , FlattenCopy j μ2
-  , EvalMult μ1 ~ m1
-  , EvalMult μ2 ~ m2
-  , mOut ~ m1 + m2
-  , μOut ~ 'AtomM mOut
-  , KnownNat m1
-  , KnownNat m2
-  , KnownNat mOut
-  , KnownNat (IrrepDim j)
-  ) =>
-  MergeSector j μ1 μ2 μOut
-  where
-  mergeSector v1 v2 =
-    mergeCopyAxis @m1 @m2 @(IrrepDim j)
-      (flattenCopy @j @μ1 v1)
-      (flattenCopy @j @μ2 v2)
-
-instance
-  ( j ~ k
-  , AddMult μ μ2 ~ μOut
-  , MergeSector j μ μ2 μOut
-  ) =>
-  InsertCompared 'EQ j μ k μ2 rest
-  where
-  insertCompared sv sv2 restR =
-    RCons @j @μOut
-      (mergeSector @j @μ @μ2 @μOut sv sv2)
-      restR
-
--- | Constraints for coalescing: 'InsertSpine' into the coalesced tail.
-type family CoalesceSpine (rs :: Rep) :: Constraint where
-  CoalesceSpine '[] = ()
-  CoalesceSpine ('(e, μ) ': rest) =
-    ( InsertSpine e μ (Coalesce rest)
-    , CoalesceSpine rest
-    )
-
--- | Sort + merge equal irrep keys on a spine ('SRep' fold).
-coalesce
-  :: forall rs
-   . ( KnownSymRep rs
-     , CoalesceSpine rs
-     )
-  => RepV rs
-  -> RepV (Coalesce rs)
-coalesce = go (symRepSing @rs)
-  where
-    go :: forall rs'. CoalesceSpine rs' => SRep rs' -> RepV rs' -> RepV (Coalesce rs')
-    go SRepNil RNil = RNil
-    go (SRepCons @e @μ _ _ rest) (RCons sv rs) =
-      insertSpine @e @μ sv (go rest rs)
-
---------------------------------------------------------------------------------
--- SU(2) group action (Wigner on irrep legs)
---
--- @g ↦ (RepV rs → RepV rs)@: identity on copy axes, @D^{j/2}(g)@ on the irrep
--- factor of each sector.
---------------------------------------------------------------------------------
-
--- | Wigner @D^{j/2}(g)@ as a typed morphism on the CG magnetic basis.
-wignerD
-  :: forall j
-   . KnownNat j
-  => SU2Element
-  -> C (IrrepDim j) +> C (IrrepDim j)
-wignerD g =
-  arr $
-    LinearFunction $
-      applyWigner (fromIntegral (natVal (Proxy @j))) g
-
--- | Sector morphism: @id@ on multiplicity, Wigner on the irrep factor.
-sectorMap
-  :: SIrrep j
-  -> SMult μ
-  -> SU2Element
-  -> ToVSector j μ +> ToVSector j μ
-sectorMap (SAtomI @j) SMultAtom g =
-  id ⊗^ wignerD @j g
-sectorMap (SAtomI @j) (SMultProd SMultAtom SMultAtom) g =
-  id ⊗^ wignerD @j g
-sectorMap _ _ _ =
-  error "Experiments.Symbolic.sectorMap: unsupported multiplicity shape"
-
--- | Apply 'sectorMap' to a sector payload.
-actSector
-  :: SIrrep j
-  -> SMult μ
-  -> SU2Element
-  -> ToVSector j μ
-  -> ToVSector j μ
-actSector se@SAtomI sm@SMultAtom g v =
-  sectorMap se sm g $ v
-actSector se@SAtomI sm@(SMultProd SMultAtom SMultAtom) g v =
-  sectorMap se sm g $ v
-actSector se sm g _ =
-  sectorMap se sm g `seq`
-    error "Experiments.Symbolic.actSector: unsupported multiplicity shape"
-
--- | Group action on a spine: @SU2Element → (RepV rs → RepV rs)@.
-actRep
-  :: forall rs
-   . KnownSymRep rs
-  => SU2Element
-  -> RepV rs
-  -> RepV rs
-actRep g = go (symRepSing @rs)
-  where
-    go :: forall rs'. SRep rs' -> RepV rs' -> RepV rs'
-    go SRepNil RNil = RNil
-    go (SRepCons e μ rest) (RCons v rs) =
-      RCons (actSector e μ g v) (go rest rs)
-
---------------------------------------------------------------------------------
--- Dual / cup on spine spaces
---
--- Dual of a spine is @DualVector (ToVSpine rs)@ — no formal dual sector.
---------------------------------------------------------------------------------
-
--- | Unit amplitude as @ToVSpine Unit@ (@C 1 ⊗ C 1@).
-unitToVFromScalar :: Complex Double -> ToVSpine Unit
-unitToVFromScalar s = s *^ (konst 1 ⊗ konst 1)
-
--- | Read the amplitude from @ToVSpine Unit@.
-unitToVScalar :: ToVSpine Unit -> Complex Double
-unitToVScalar u = VS.head (toArray u)
-
--- | Unit element as a 'RepV' spine (fused / atom-spine API).
-unitFromScalar :: Complex Double -> RepV Unit
-unitFromScalar = vToRepV @Unit . unitToVFromScalar
-
--- | Read the amplitude stored in a 'Unit' 'RepV'.
-unitScalar :: RepV Unit -> Complex Double
-unitScalar = unitToVScalar . repVToV @Unit
-
--- | Dual of a leaf atom sector → @DualVector (C m ⊗ C (j+1))@.
---
--- Canonical Riesz via 'InnerSpace': linear form @w ↦ v <.> w@ (linear in @w@),
--- then 'fromLinearForm'. Not @w ↦ w <.> v@ (antilinear in @w@) and not
--- 'euclideanNorm' (that is @coerce@, only valid when @DualVector v ~ v@).
-dualAtomAtomM
-  :: forall j m
-   . ( KnownNat j
-     , KnownNat m
-     , KnownNat (IrrepDim j)
-     , InnerSpace (ToVSector j ('AtomM m))
-     , Scalar (ToVSector j ('AtomM m)) ~ Complex Double
-     )
-  => ToVSector j ('AtomM m)
-  -> DualVector (ToVSector j ('AtomM m))
-dualAtomAtomM v =
-  fromLinearForm
-    -+$> ( arr (LinearFunction ((v <.>)))
-             :: ToVSector j ('AtomM m) +> Complex Double
-         )
-
--- | Dual of an atom spine as @DualVector (ToVSpine rs)@.
-rdual
-  :: forall rs
-   . KnownAtomRep rs
-  => RepV rs
-  -> DualVector (ToVSpine rs)
-rdual = go (symRepSing @rs) . repVToV
-  where
-    go :: forall rs'. SRep rs' -> ToVSpine rs' -> DualVector (ToVSpine rs')
-    go (SRepCons (SAtomI @j) (SMultAtom @m) SRepNil) v =
-      dualAtomAtomM @j @m v
-    go (SRepCons (SAtomI @j) (SMultAtom @m) sRest@(SRepCons {})) (v, rest) =
-      (dualAtomAtomM @j @m v, go sRest rest)
-    go _ _ = error "rdual: expected nonempty atom spine"
-
--- | Pivotal undual of an atom spine (@'undualAtomAtomM'@ per sector).
-undualSpine
-  :: forall rs
-   . KnownAtomRep rs
-  => DualVector (ToVSpine rs)
-  -> ToVSpine rs
-undualSpine = go (symRepSing @rs)
-  where
-    go :: forall rs'. SRep rs' -> DualVector (ToVSpine rs') -> ToVSpine rs'
-    go (SRepCons (SAtomI @j) (SMultAtom @m) SRepNil) φ =
-      undualAtomAtomM @j @m φ
-    go (SRepCons (SAtomI @j) (SMultAtom @m) sRest@(SRepCons {})) (φ, rest) =
-      (undualAtomAtomM @j @m φ, go sRest rest)
-    go _ _ = error "undualSpine: expected nonempty atom spine"
-
--- | Unfused morphism space @DualVector (ToVSpine r) ⊗ ToVSpine q@.
-rmor
-  :: forall r q
-   . ( KnownAtomRep r
-     , KnownAtomRep q
-     , TensorSpace (DualVector (ToVSpine r))
-     , TensorSpace (ToVSpine q)
-     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
-     , Scalar (ToVSpine q) ~ Complex Double
-     )
-  => RepV r
-  -> RepV q
-  -> (DualVector (ToVSpine r) ⊗ ToVSpine q)
-rmor x y = rdual x ⊗ repVToV y
-
---------------------------------------------------------------------------------
--- Cup / cap (compact closed)
---
--- Unfused: closed in 'ToVSpine' / Dual-left Hom @Dual r ⊗ q@ / cups @r ⊗ Dual r@
--- (including @Unit@).
--- Fused: 'cupFused' / 'capFused' on singlet-root trees ('FilterTrivialTrees').
---------------------------------------------------------------------------------
-
--- | Unfused evaluation @ε : r ⊗ r* → 𝟙@.
-cupUnfused
-  :: forall r
-   . ( KnownAtomRep r
-     , LinearSpace (ToVSpine r)
-     , LinearSpace (DualVector (ToVSpine r))
-     , Scalar (ToVSpine r) ~ Complex Double
-     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
-     )
-  => (ToVSpine r ⊗ DualVector (ToVSpine r))
-  -> ToVSpine Unit
-cupUnfused t =
-  unitToVFromScalar
-    ( getLinearFunction
-        trace
-        (fromTensor -+$=> (swapMap $ t))
-    )
-
--- | Unfused coevaluation @η : 𝟙 → r ⊗ r*@ (linearmap 'idTensor').
-capUnfused
-  :: forall r
-   . ( KnownAtomRep r
-     , LinearSpace (ToVSpine r)
-     , LinearSpace (DualVector (ToVSpine r))
-     , Scalar (ToVSpine r) ~ Complex Double
-     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
-     )
-  => ToVSpine Unit
-  -> (ToVSpine r ⊗ DualVector (ToVSpine r))
-capUnfused u = unitToVScalar u *^ idTensor @(ToVSpine r)
-
--- | Contract a singlet-root tree spine (@FilterTrivialTrees@) to 'Unit'.
--- Each trivial root carries @C 1@; amplitudes are summed.
-class CupTrivialTrees (ts :: TreeRep) where
-  cupTrivialTrees :: TreeV ts -> RepV Unit
-
-instance CupTrivialTrees '[] where
-  cupTrivialTrees TNil = unitFromScalar 0
-
-instance
-  ( CupTrivialTrees rest
+  ( CupTrivial rest
   , LinearSpace (C 1)
   , Scalar (C 1) ~ Complex Double
   , InnerSpace (C 1)
   ) =>
-  CupTrivialTrees ('Leaf 0 ': rest)
+  CupTrivial ('Leaf 0 ': rest)
   where
-  cupTrivialTrees (TCons v rest) =
-    unitFromScalar
-      ( (konst 1 <.> v)
-          + unitScalar (cupTrivialTrees rest)
-      )
+  cupTrivial (RCons v rest) =
+    (konst 1 <.> v) + cupTrivial rest
 
 instance
-  ( CupTrivialTrees rest
+  ( CupTrivial rest
   , LinearSpace (C 1)
   , Scalar (C 1) ~ Complex Double
   , InnerSpace (C 1)
   ) =>
-  CupTrivialTrees ('Node 0 l r ': rest)
+  CupTrivial ('Node 0 l r ': rest)
   where
-  cupTrivialTrees (TCons v rest) =
-    unitFromScalar
-      ( (konst 1 <.> v)
-          + unitScalar (cupTrivialTrees rest)
-      )
+  cupTrivial (RCons v rest) =
+    (konst 1 <.> v) + cupTrivial rest
 
--- | Drop non-singlet-root trees (term-level 'FilterTrivialTrees').
-class FilterTrivialTreesTerm (ts :: TreeRep) where
-  filterTrivialTreesTerm :: TreeV ts -> TreeV (FilterTrivialTrees ts)
+-- | Drop non-singlet-root trees (term-level 'FilterTrivial').
+class FilterTrivialTerm (ts :: Rep) where
+  filterTrivialTerm :: RepV ts -> RepV (FilterTrivial ts)
 
-instance FilterTrivialTreesTerm '[] where
-  filterTrivialTreesTerm TNil = TNil
+instance FilterTrivialTerm '[] where
+  filterTrivialTerm RNil = RNil
 
 instance {-# OVERLAPPING #-}
-  ( FilterTrivialTreesTerm rest
+  ( FilterTrivialTerm rest
   , LinearSpace (C 1)
   , Scalar (C 1) ~ Complex Double
   ) =>
-  FilterTrivialTreesTerm ('Leaf 0 ': rest)
+  FilterTrivialTerm ('Leaf 0 ': rest)
   where
-  filterTrivialTreesTerm (TCons v rest) =
-    TCons @('Leaf 0) v (filterTrivialTreesTerm rest)
+  filterTrivialTerm (RCons v rest) =
+    RCons @('Leaf 0) v (filterTrivialTerm rest)
 
 instance {-# OVERLAPPING #-}
-  ( FilterTrivialTreesTerm rest
+  ( FilterTrivialTerm rest
   , LinearSpace (C 1)
   , Scalar (C 1) ~ Complex Double
   ) =>
-  FilterTrivialTreesTerm ('Node 0 l r ': rest)
+  FilterTrivialTerm ('Node 0 l r ': rest)
   where
-  filterTrivialTreesTerm (TCons v rest) =
-    TCons @('Node 0 l r) v (filterTrivialTreesTerm rest)
+  filterTrivialTerm (RCons v rest) =
+    RCons @('Node 0 l r) v (filterTrivialTerm rest)
 
 instance {-# OVERLAPPABLE #-}
-  ( FilterTrivialTreesTerm rest
-  , FilterTrivialTrees (t ': rest) ~ FilterTrivialTrees rest
+  ( FilterTrivialTerm rest
+  , FilterTrivial (t ': rest) ~ FilterTrivial rest
   ) =>
-  FilterTrivialTreesTerm (t ': rest)
+  FilterTrivialTerm (t ': rest)
   where
-  filterTrivialTreesTerm (TCons _ rest) = filterTrivialTreesTerm rest
+  filterTrivialTerm (RCons _ rest) = filterTrivialTerm rest
 
--- | Fused evaluation on singlet trees of @FuseTreeRep a a@ (dual≅primal).
+-- | Fused evaluation on singlet trees of @FuseRep a a@.
 cupFused
   :: forall a
-   . ( FilterTrivialTreesTerm (FuseTreeRep a a)
-     , CupTrivialTrees (FilterTrivialTrees (FuseTreeRep a a))
+   . ( FilterTrivialTerm (FuseRep a a)
+     , CupTrivial (FilterTrivial (FuseRep a a))
      )
-  => TreeV (FuseTreeRep a a)
-  -> RepV Unit
-cupFused = cupTrivialTrees . filterTrivialTreesTerm @(FuseTreeRep a a)
+  => RepV (FuseRep a a)
+  -> Complex Double
+cupFused = cupTrivial . filterTrivialTerm @(FuseRep a a)
 
 -- | Fused coevaluation: scale the identity singlet(s) of @a@.
 capFused
   :: forall a
    . ( KnownHomFused a
-     , FilterTrivialTreesTerm (FuseTreeRep a a)
-     , KnownTreeRep (FilterTrivialTrees (FuseTreeRep a a))
-     , LinearSpace (ToVTreeRep (FilterTrivialTrees (FuseTreeRep a a)))
-     , Scalar (ToVTreeRep (FilterTrivialTrees (FuseTreeRep a a))) ~ Complex Double
+     , FilterTrivialTerm (FuseRep a a)
+     , KnownRep (FilterTrivial (FuseRep a a))
+     , LinearSpace (ToVRep (FilterTrivial (FuseRep a a)))
+     , Scalar (ToVRep (FilterTrivial (FuseRep a a))) ~ Complex Double
      )
-  => RepV Unit
-  -> TreeV (FilterTrivialTrees (FuseTreeRep a a))
-capFused u =
-  scaleTreeV
-    @(FilterTrivialTrees (FuseTreeRep a a))
-    (unitScalar u)
-    (filterTrivialTreesTerm @(FuseTreeRep a a) (idHomFusedVal @a))
-
--- | Self-pairing @r ↦ ε(r ⊗ r*)@; wraps 'cupUnfused' into 'RepV Unit'.
-cupRdual
-  :: forall r
-   . ( KnownAtomRep r
-     , LinearSpace (ToVSpine r)
-     , LinearSpace (DualVector (ToVSpine r))
-     , Scalar (ToVSpine r) ~ Complex Double
-     , Scalar (DualVector (ToVSpine r)) ~ Complex Double
-     , TensorSpace (DualVector (ToVSpine r))
-     )
-  => RepV r
-  -> RepV Unit
-cupRdual r =
-  vToRepV @Unit (cupUnfused @r (repVToV @r r ⊗ rdual @r r))
+  => Complex Double
+  -> RepV (FilterTrivial (FuseRep a a))
+capFused s =
+  scaleRepV
+    @(FilterTrivial (FuseRep a a))
+    s
+    (filterTrivialTerm @(FuseRep a a) (idHomFusedVal @a))
 
 --------------------------------------------------------------------------------
 -- Unfused composition (compact closed on Obj / HomUnfused)
@@ -1008,7 +493,7 @@ cupRdual r =
 --   compose f g = unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)
 --
 -- Hom elements are Dual-left @Dual(ToVObj a) ⊗ ToVObj b@. Unitors below are
--- shared with the Monoidal instance; spine cups stay on 'ToVSpine' only.
+-- shared with the Monoidal instance; Obj cups use 'ToVObj'.
 --------------------------------------------------------------------------------
 
 -- | Unfused morphisms @a → b@: Dual-left packing on tree spaces
@@ -1016,10 +501,10 @@ cupRdual r =
 newtype HomUnfused (a :: Obj Nat) (b :: Obj Nat) = HomUnfused
   { unHomUnfused :: DualVector (ToVObj a) ⊗ ToVObj b }
 
--- | Fused morphisms @a → b@: genealogy-preserving 'TreeV' of 'FuseTreeRep'
+-- | Fused morphisms @a → b@: genealogy-preserving 'RepV' of 'FuseRep'
 -- (SU(2) dual≅primal; left child plays dual). Compose via 'composeHomTrees'.
-newtype HomFused (a :: TreeRep) (b :: TreeRep) = HomFused
-  { unHomFused :: TreeV (FuseTreeRep a b) }
+newtype HomFused (a :: Rep) (b :: Rep) = HomFused
+  { unHomFused :: RepV (FuseRep a b) }
 
 -- | Left unitor for the Unit sector packaging @'(C 1 ⊗ C 1) ⊗ v → v@.
 unitLunit
@@ -1371,33 +856,33 @@ instance Braided HomUnfused FObj.Tensor where
   braid = undefined
 
 -- | Object constraint for fused Hom: leaf spines with a known identity.
-class KnownHomFused (a :: TreeRep) where
-  idHomFusedVal :: TreeV (FuseTreeRep a a)
+class KnownHomFused (a :: Rep) where
+  idHomFusedVal :: RepV (FuseRep a a)
 
 -- | Identity endomorphism on a leaf: singlet (@root = 0@) channel = 1, else 0.
 idHomLeaf
   :: forall j
    . ( KnownNat j
-     , KnownTreeRep (FuseTreeRep '[ 'Leaf j] '[ 'Leaf j])
+     , KnownRep (FuseRep '[ 'Leaf j] '[ 'Leaf j])
      )
-  => TreeV (FuseTreeRep '[ 'Leaf j] '[ 'Leaf j])
-idHomLeaf = go (treeRepSing @(FuseTreeRep '[ 'Leaf j] '[ 'Leaf j]))
+  => RepV (FuseRep '[ 'Leaf j] '[ 'Leaf j])
+idHomLeaf = go (repSing @(FuseRep '[ 'Leaf j] '[ 'Leaf j]))
   where
-    go :: forall ts. STreeRep ts -> TreeV ts
-    go STreeNil = TNil
-    go (STreeCons (t :: SIrrepTree u) rest) =
+    go :: forall ts. SRep ts -> RepV ts
+    go SRepNil = RNil
+    go (SRepCons (t :: SIrrepTree u) rest) =
       case t of
         SNode @d _l _r ->
           case sameNat (Proxy @d) (Proxy @0) of
-            Just Refl -> TCons @u (konst 1) (go rest)
-            Nothing -> TCons @u zeroV (go rest)
+            Just Refl -> RCons @u (konst 1) (go rest)
+            Nothing -> RCons @u zeroV (go rest)
         SLeaf {} ->
           error "idHomLeaf: expected Hom Node channels"
 
 -- | Any single leaf: identity via 'idHomLeaf'.
 instance
   ( KnownNat j
-  , KnownTreeRep (FuseTreeRep '[ 'Leaf j] '[ 'Leaf j])
+  , KnownRep (FuseRep '[ 'Leaf j] '[ 'Leaf j])
   ) =>
   KnownHomFused '[ 'Leaf j]
   where
@@ -1407,7 +892,7 @@ instance
 -- with the tree compose ladder (see 'composeHomFused').
 
 --------------------------------------------------------------------------------
--- Fused associator primitives (3-leaf) and FuseHom-in-one-leg naturality
+-- Fused associator primitives (3-leaf) and FuseRep-in-one-leg naturality
 --
 -- Unfused Mac Lane on four factors factors as:
 --
@@ -1428,20 +913,18 @@ instance
 -- not a general @fuseBimap f g@ (that would need Split∘(f⊗g)∘Fuse†).
 --------------------------------------------------------------------------------
 
--- | Unit-multiplicity atom spine @'[ '(j, AtomM 1)]@.
-type Atom1 (j :: Nat) = '[ '(j, 'AtomM 1)]
-
 --------------------------------------------------------------------------------
 -- Tree-indexed F-move / bimap / Hom-compose (genealogy-preserving)
 --
 -- Fused Hom composition (the real fused path):
 --   tensorHom → fmoveOuterHom → fmoveInnerHom → cupTensorIdHom → unitorHom
 --
--- Domain\/codomain of F are 'FuseAssocL' \/ 'FuseAssocR'. Same-root trees stay
+-- Domain\/codomain of F are @FuseRep (FuseRep a b) c@ \/ @FuseRep a (FuseRep b c)@.
+-- Same-root trees stay
 -- distinct list entries, so cup can project on trivial-root middle subtrees.
 --------------------------------------------------------------------------------
 
--- | Concrete @½⊗½⊗½@ association trees (matches 'FuseAssocL' \/ 'FuseAssocR' smokes).
+-- | Concrete @½⊗½⊗½@ association trees (matches compile-time AssocL/R smokes).
 --
 -- Channel order within each total @d@ is the F-block multiplicity basis
 -- (@e@ left \/ @f@ right): for @d=1@ channels @[0,2]@; for @d=3@ channel @[2]@.
@@ -1476,8 +959,8 @@ type AssocR110 =
    ]
 
 -- | @½⊗½⊗1@: totals @d∈{0,2,4}@; @d=2@ has mult @[0,2]@ (left) \/ @[1,3]@ (right).
--- Tree order follows 'FuseAssocL' (not sorted by @d@): @d=2,e=0@ then @d=0@ then
--- @d=2,e=2@ then @d=4@.
+-- Tree order follows left-assoc @FuseRep (FuseRep …) …@ (not sorted by @d@):
+-- @d=2,e=0@ then @d=0@ then @d=2,e=2@ then @d=4@.
 type AssocL112 =
   '[ 'Node 2 ('Node 0 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
    , 'Node 0 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
@@ -1495,25 +978,26 @@ type AssocR112 =
 -- | 3-factor F-move on fusion-tree spines: @(x⊗y)⊗z → x⊗(y⊗z)@.
 --
 -- Leaf triples: polymorphic instance via 'fmoveTreesLeaves' → 'fmoveTreesAtoms'
--- @FuseAssocL → FuseAssocR@. Outer Hom F (@z = FuseTreeRep b c@) cannot put
--- that type family in an instance head — use 'CanFmoveOuterHom' instead.
-class CanFmoveTrees (a :: TreeRep) (b :: TreeRep) (c :: TreeRep) where
+-- (@FuseRep (FuseRep a b) c → FuseRep a (FuseRep b c)@). Outer Hom F
+-- (@z = FuseRep b c@) cannot put that type family in an instance head — use
+-- 'CanFmoveOuterHom' instead.
+class CanFmoveTrees (a :: Rep) (b :: Rep) (c :: Rep) where
   fmoveTrees
-    :: TreeV (FuseAssocL a b c)
-    -> TreeV (FuseAssocR a b c)
+    :: RepV (FuseRep (FuseRep a b) c)
+    -> RepV (FuseRep a (FuseRep b c))
   fmoveInvTrees
-    :: TreeV (FuseAssocR a b c)
-    -> TreeV (FuseAssocL a b c)
+    :: RepV (FuseRep a (FuseRep b c))
+    -> RepV (FuseRep (FuseRep a b) c)
 
 -- | Outer Hom F for leaf objects: @(a⊗b) ⊗ Hom(b,c) → a ⊗ (b ⊗ Hom(b,c))@.
--- Instance head is three leaf spines (no 'FuseTreeRep' in the head).
-class CanFmoveOuterHom (a :: TreeRep) (b :: TreeRep) (c :: TreeRep) where
+-- Instance head is three leaf spines (no 'FuseRep' in the head).
+class CanFmoveOuterHom (a :: Rep) (b :: Rep) (c :: Rep) where
   fmoveOuterHom
-    :: TreeV (FuseTreeRep (FuseTreeRep a b) (FuseTreeRep b c))
-    -> TreeV (FuseTreeRep a (FuseTreeRep b (FuseTreeRep b c)))
+    :: RepV (FuseRep (FuseRep a b) (FuseRep b c))
+    -> RepV (FuseRep a (FuseRep b (FuseRep b c)))
   fmoveInvOuterHom
-    :: TreeV (FuseTreeRep a (FuseTreeRep b (FuseTreeRep b c)))
-    -> TreeV (FuseTreeRep (FuseTreeRep a b) (FuseTreeRep b c))
+    :: RepV (FuseRep a (FuseRep b (FuseRep b c)))
+    -> RepV (FuseRep (FuseRep a b) (FuseRep b c))
 
 --------------------------------------------------------------------------------
 -- Label-driven atom F-move (general; no per-triple FlatXXX)
@@ -1528,11 +1012,11 @@ rootLab (SNode @j _ _) = fromIntegral (natVal (Proxy @j))
 -- Keys include roots of the embedded factors so multi-tree spines
 -- (e.g. Hom⊗leaf⊗leaf) do not collide on @(d,e)@ alone.
 collectAssocLChannel
-  :: STreeRep ts
-  -> TreeV ts
+  :: SRep ts
+  -> RepV ts
   -> [(Int, Int, Int, Int, Int, VS.Vector (Complex Double))]
-collectAssocLChannel STreeNil TNil = []
-collectAssocLChannel (STreeCons t rest) (TCons v rs) =
+collectAssocLChannel SRepNil RNil = []
+collectAssocLChannel (SRepCons t rest) (RCons v rs) =
   case t of
     SNode @d left right ->
       case left of
@@ -1546,17 +1030,17 @@ collectAssocLChannel (STreeCons t rest) (TCons v rs) =
           )
             : collectAssocLChannel rest rs
         SLeaf {} ->
-          error "collectAssocLChannel: expected Node intermediate (not FuseAssocL?)"
-    SLeaf {} ->
-      error "collectAssocLChannel: leaf in association spine (not FuseAssocL?)"
+          error "collectAssocLChannel: expected Node intermediate (not left-assoc FuseRep?)"
+        SLeaf {} ->
+          error "collectAssocLChannel: leaf in association spine (not left-assoc FuseRep?)"
 
 -- | Collect right-assoc channels from @(a_i ⊗ (b_j⊗c_k)_f)_d@.
 collectAssocRChannel
-  :: STreeRep ts
-  -> TreeV ts
+  :: SRep ts
+  -> RepV ts
   -> [(Int, Int, Int, Int, Int, VS.Vector (Complex Double))]
-collectAssocRChannel STreeNil TNil = []
-collectAssocRChannel (STreeCons t rest) (TCons v rs) =
+collectAssocRChannel SRepNil RNil = []
+collectAssocRChannel (SRepCons t rest) (RCons v rs) =
   case t of
     SNode @d left right ->
       case right of
@@ -1570,17 +1054,17 @@ collectAssocRChannel (STreeCons t rest) (TCons v rs) =
           )
             : collectAssocRChannel rest rs
         SLeaf {} ->
-          error "collectAssocRChannel: expected Node intermediate (not FuseAssocR?)"
-    SLeaf {} ->
-      error "collectAssocRChannel: leaf in association spine (not FuseAssocR?)"
+          error "collectAssocRChannel: expected Node intermediate (not right-assoc FuseRep?)"
+        SLeaf {} ->
+          error "collectAssocRChannel: leaf in association spine (not right-assoc FuseRep?)"
 
 -- | @(d, mid, ra, rb, rc)@ channel map → AssocL spine.
 scatterAssocLChannel
-  :: STreeRep ts
+  :: SRep ts
   -> Map.Map (Int, Int, Int, Int, Int) (VS.Vector (Complex Double))
-  -> TreeV ts
-scatterAssocLChannel STreeNil _ = TNil
-scatterAssocLChannel (STreeCons (t :: SIrrepTree u) rest) m =
+  -> RepV ts
+scatterAssocLChannel SRepNil _ = RNil
+scatterAssocLChannel (SRepCons (t :: SIrrepTree u) rest) m =
   case t of
     SNode @d left right ->
       case left of
@@ -1592,7 +1076,7 @@ scatterAssocLChannel (STreeCons (t :: SIrrepTree u) rest) m =
                 , rootLab b_j
                 , rootLab right
                 )
-           in TCons @u
+           in RCons @u
                 (unsafeFromArray (Map.findWithDefault (zeroLike5 key m) key m))
                 (scatterAssocLChannel rest m)
         SLeaf {} ->
@@ -1601,11 +1085,11 @@ scatterAssocLChannel (STreeCons (t :: SIrrepTree u) rest) m =
       error "scatterAssocLChannel: leaf in association spine"
 
 scatterAssocRChannel
-  :: STreeRep ts
+  :: SRep ts
   -> Map.Map (Int, Int, Int, Int, Int) (VS.Vector (Complex Double))
-  -> TreeV ts
-scatterAssocRChannel STreeNil _ = TNil
-scatterAssocRChannel (STreeCons (t :: SIrrepTree u) rest) m =
+  -> RepV ts
+scatterAssocRChannel SRepNil _ = RNil
+scatterAssocRChannel (SRepCons (t :: SIrrepTree u) rest) m =
   case t of
     SNode @d left right ->
       case right of
@@ -1617,7 +1101,7 @@ scatterAssocRChannel (STreeCons (t :: SIrrepTree u) rest) m =
                 , rootLab b_j
                 , rootLab c_k
                 )
-           in TCons @u
+           in RCons @u
                 (unsafeFromArray (Map.findWithDefault (zeroLike5 key m) key m))
                 (scatterAssocRChannel rest m)
         SLeaf {} ->
@@ -1635,20 +1119,20 @@ zeroLike5 (d, _, _, _, _) m =
     (v : _) -> VS.replicate (VS.length v) 0
     [] -> VS.replicate (d + 1) 0
 
--- | 3-factor F-move: @FuseAssocL a b c → FuseAssocR a b c@.
+-- | 3-factor F-move: @FuseRep (FuseRep a b) c → FuseRep a (FuseRep b c)@.
 --
--- 'FuseTreeRep' distributes into channels @((a_i⊗b_j)_e ⊗ c_k)_d@. For each
+-- 'FuseRep' distributes into channels @((a_i⊗b_j)_e ⊗ c_k)_d@. For each
 -- distinct root triple @(r(a_i),r(b_j),r(c_k))@ apply dense Racah
 -- @F^{ra rb rc}@, keeping genealogy in the channel key.
 fmoveTreesAtoms
   :: forall a b c
-   . ( KnownTreeRep (FuseAssocL a b c)
-     , KnownTreeRep (FuseAssocR a b c)
+   . ( KnownRep (FuseRep (FuseRep a b) c)
+     , KnownRep (FuseRep a (FuseRep b c))
      )
-  => TreeV (FuseAssocL a b c)
-  -> TreeV (FuseAssocR a b c)
+  => RepV (FuseRep (FuseRep a b) c)
+  -> RepV (FuseRep a (FuseRep b c))
 fmoveTreesAtoms tv =
-  let chans = collectAssocLChannel (treeRepSing @(FuseAssocL a b c)) tv
+  let chans = collectAssocLChannel (repSing @(FuseRep (FuseRep a b) c)) tv
       triples =
         Map.keys $
           Map.fromList [((ra, rb, rc), ()) | (_, _, ra, rb, rc, _) <- chans]
@@ -1677,18 +1161,18 @@ fmoveTreesAtoms tv =
           )
           triples
    in scatterAssocRChannel
-        (treeRepSing @(FuseAssocR a b c))
+        (repSing @(FuseRep a (FuseRep b c)))
         (Map.fromList [((d, f, ra, rb, rc), v) | (d, f, ra, rb, rc, v) <- out])
 
 fmoveInvTreesAtoms
   :: forall a b c
-   . ( KnownTreeRep (FuseAssocL a b c)
-     , KnownTreeRep (FuseAssocR a b c)
+   . ( KnownRep (FuseRep (FuseRep a b) c)
+     , KnownRep (FuseRep a (FuseRep b c))
      )
-  => TreeV (FuseAssocR a b c)
-  -> TreeV (FuseAssocL a b c)
+  => RepV (FuseRep a (FuseRep b c))
+  -> RepV (FuseRep (FuseRep a b) c)
 fmoveInvTreesAtoms tv =
-  let chans = collectAssocRChannel (treeRepSing @(FuseAssocR a b c)) tv
+  let chans = collectAssocRChannel (repSing @(FuseRep a (FuseRep b c))) tv
       triples =
         Map.keys $
           Map.fromList [((ra, rb, rc), ()) | (_, _, ra, rb, rc, _) <- chans]
@@ -1717,7 +1201,7 @@ fmoveInvTreesAtoms tv =
           )
           triples
    in scatterAssocLChannel
-        (treeRepSing @(FuseAssocL a b c))
+        (repSing @(FuseRep (FuseRep a b) c))
         (Map.fromList [((d, e, ra, rb, rc), v) | (d, e, ra, rb, rc, v) <- out])
 
 -- | Atom-leaf triple F-move from type-level @2j@.
@@ -1726,11 +1210,11 @@ fmoveTreesLeaves
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
-     , KnownTreeRep (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
+     , KnownRep ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]) )
      )
-  => TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
-  -> TreeV (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  => RepV ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
+  -> RepV ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]) )
 fmoveTreesLeaves =
   fmoveTreesAtoms @('[ 'Leaf ja]) @('[ 'Leaf jb]) @('[ 'Leaf jc])
 
@@ -1739,54 +1223,42 @@ fmoveInvTreesLeaves
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
-     , KnownTreeRep (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
+     , KnownRep ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]) )
      )
-  => TreeV (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
-  -> TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  => RepV ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]) )
+  -> RepV ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
 fmoveInvTreesLeaves =
   fmoveInvTreesAtoms @('[ 'Leaf ja]) @('[ 'Leaf jb]) @('[ 'Leaf jc])
 
--- | Outer Hom F for three leaf labels (Hom = 'FuseTreeRep' of the last two).
+-- | Outer Hom F for three leaf labels (Hom = 'FuseRep' of the last two).
 fmoveOuterHomLeaves
   :: forall ja jb jc
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep
-         ( FuseAssocL
-             '[ 'Leaf ja]
-             '[ 'Leaf jb]
-             (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep
+         ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
          )
-     , KnownTreeRep
-         ( FuseAssocR
-             '[ 'Leaf ja]
-             '[ 'Leaf jb]
-             (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep
+         ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]))
          )
      )
-  => TreeV
-       ( FuseTreeRep
-           (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf jb])
-           (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+  => RepV
+       ( FuseRep
+           (FuseRep '[ 'Leaf ja] '[ 'Leaf jb])
+           (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
        )
-  -> TreeV
-       ( FuseTreeRep
+  -> RepV
+       ( FuseRep
            '[ 'Leaf ja]
-           (FuseTreeRep '[ 'Leaf jb] (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc]))
+           (FuseRep '[ 'Leaf jb] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]))
        )
 fmoveOuterHomLeaves =
   fmoveOuterLeafHom @ja @jb
-    @( FuseAssocL
-         '[ 'Leaf ja]
-         '[ 'Leaf jb]
-         (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+    @( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
      )
-    @( FuseAssocR
-         '[ 'Leaf ja]
-         '[ 'Leaf jb]
-         (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+    @( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]))
      )
 
 fmoveInvOuterHomLeaves
@@ -1794,65 +1266,53 @@ fmoveInvOuterHomLeaves
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep
-         ( FuseAssocL
-             '[ 'Leaf ja]
-             '[ 'Leaf jb]
-             (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep
+         ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
          )
-     , KnownTreeRep
-         ( FuseAssocR
-             '[ 'Leaf ja]
-             '[ 'Leaf jb]
-             (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep
+         ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]))
          )
      )
-  => TreeV
-       ( FuseTreeRep
+  => RepV
+       ( FuseRep
            '[ 'Leaf ja]
-           (FuseTreeRep '[ 'Leaf jb] (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc]))
+           (FuseRep '[ 'Leaf jb] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]))
        )
-  -> TreeV
-       ( FuseTreeRep
-           (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf jb])
-           (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+  -> RepV
+       ( FuseRep
+           (FuseRep '[ 'Leaf ja] '[ 'Leaf jb])
+           (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
        )
 fmoveInvOuterHomLeaves =
   fmoveInvOuterLeafHom @ja @jb
-    @( FuseAssocR
-         '[ 'Leaf ja]
-         '[ 'Leaf jb]
-         (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+    @( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]))
      )
-    @( FuseAssocL
-         '[ 'Leaf ja]
-         '[ 'Leaf jb]
-         (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+    @( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
      )
 
 -- | Triple-leaf F-move via label-driven 'fmoveTreesLeaves'.
-fmoveTrees111 :: TreeV AssocL111 -> TreeV AssocR111
+fmoveTrees111 :: RepV AssocL111 -> RepV AssocR111
 fmoveTrees111 = fmoveTreesLeaves @1 @1 @1
 
-fmoveInvTrees111 :: TreeV AssocR111 -> TreeV AssocL111
+fmoveInvTrees111 :: RepV AssocR111 -> RepV AssocL111
 fmoveInvTrees111 = fmoveInvTreesLeaves @1 @1 @1
 
-fmoveTrees000 :: TreeV AssocL000 -> TreeV AssocR000
+fmoveTrees000 :: RepV AssocL000 -> RepV AssocR000
 fmoveTrees000 = fmoveTreesLeaves @0 @0 @0
 
-fmoveInvTrees000 :: TreeV AssocR000 -> TreeV AssocL000
+fmoveInvTrees000 :: RepV AssocR000 -> RepV AssocL000
 fmoveInvTrees000 = fmoveInvTreesLeaves @0 @0 @0
 
-fmoveTrees110 :: TreeV AssocL110 -> TreeV AssocR110
+fmoveTrees110 :: RepV AssocL110 -> RepV AssocR110
 fmoveTrees110 = fmoveTreesLeaves @1 @1 @0
 
-fmoveInvTrees110 :: TreeV AssocR110 -> TreeV AssocL110
+fmoveInvTrees110 :: RepV AssocR110 -> RepV AssocL110
 fmoveInvTrees110 = fmoveInvTreesLeaves @1 @1 @0
 
-fmoveTrees112 :: TreeV AssocL112 -> TreeV AssocR112
+fmoveTrees112 :: RepV AssocL112 -> RepV AssocR112
 fmoveTrees112 = fmoveTreesLeaves @1 @1 @2
 
-fmoveInvTrees112 :: TreeV AssocR112 -> TreeV AssocL112
+fmoveInvTrees112 :: RepV AssocR112 -> RepV AssocL112
 fmoveInvTrees112 = fmoveInvTreesLeaves @1 @1 @2
 
 -- | Any three atom leaves: F via 'fmoveTreesLeaves' (no per-triple FlatXXX).
@@ -1860,8 +1320,8 @@ instance
   ( KnownNat ja
   , KnownNat jb
   , KnownNat jc
-  , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
-  , KnownTreeRep (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  , KnownRep ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
+  , KnownRep ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]) )
   ) =>
   CanFmoveTrees '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc]
   where
@@ -1869,27 +1329,27 @@ instance
   fmoveInvTrees = fmoveInvTreesLeaves @ja @jb @jc
 
 -- | Nested unfused @a ⊗ q@ before CG (layout for Fuse-right naturality).
-data TensorTrees (a :: TreeRep) (q :: TreeRep) where
-  TensorTrees :: TreeV a -> TreeV q -> TensorTrees a q
+data TensorTrees (a :: Rep) (q :: Rep) where
+  TensorTrees :: RepV a -> RepV q -> TensorTrees a q
 
 mapTensorTreesRight
-  :: (TreeV q -> TreeV q')
+  :: (RepV q -> RepV q')
   -> TensorTrees a q
   -> TensorTrees a q'
 mapTensorTreesRight f (TensorTrees a q) = TensorTrees a (f q)
 
 fuseTensorTrees
   :: forall a q
-   . ( KnownTreeRep a
-     , KnownTreeRep q
-     , FuseTreeRepTermC a q
+   . ( KnownRep a
+     , KnownRep q
+     , FuseRepTermC a q
      )
   => TensorTrees a q
-  -> TreeV (FuseTreeRep a q)
-fuseTensorTrees (TensorTrees a q) = fuseTreeRepTerm @a @q a q
+  -> RepV (FuseRep a q)
+fuseTensorTrees (TensorTrees a q) = fuseRepTerm @a @q a q
 
 --------------------------------------------------------------------------------
--- Leaf object / Hom aliases (thin names over 'FuseTreeRep' / 'FuseAssoc')
+-- Leaf object / Hom aliases (thin names over 'FuseRep')
 --------------------------------------------------------------------------------
 
 type Leaf1 = '[ 'Leaf 1]
@@ -1900,36 +1360,30 @@ type Leaf2 = '[ 'Leaf 2]
 
 type Leaf3 = '[ 'Leaf 3]
 
--- | Endomorphism Hom on a leaf: @FuseTreeRep a a@.
-type Hom00 = FuseTreeRep Leaf0 Leaf0
+-- | Endomorphism Hom on a leaf: @FuseRep a a@.
+type Hom00 = FuseRep Leaf0 Leaf0
 
-type Hom11 = FuseTreeRep Leaf1 Leaf1
+type Hom11 = FuseRep Leaf1 Leaf1
 
-type Hom22 = FuseTreeRep Leaf2 Leaf2
+type Hom22 = FuseRep Leaf2 Leaf2
 
-type Hom33 = FuseTreeRep Leaf3 Leaf3
+type Hom33 = FuseRep Leaf3 Leaf3
 
 -- | Unequal-leaf Homs (for @½ → 1 → ½@ compose smoke).
-type Hom12 = FuseTreeRep Leaf1 Leaf2
+type Hom12 = FuseRep Leaf1 Leaf2
 
-type Hom21 = FuseTreeRep Leaf2 Leaf1
+type Hom21 = FuseRep Leaf2 Leaf1
 
--- | Leaf outer Hom F: any three leaf labels (Hom = 'FuseTreeRep' of last two).
+-- | Leaf outer Hom F: any three leaf labels (Hom = 'FuseRep' of last two).
 instance
   ( KnownNat ja
   , KnownNat jb
   , KnownNat jc
-  , KnownTreeRep
-      ( FuseAssocL
-          '[ 'Leaf ja]
-          '[ 'Leaf jb]
-          (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+  , KnownRep
+      ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
       )
-  , KnownTreeRep
-      ( FuseAssocR
-          '[ 'Leaf ja]
-          '[ 'Leaf jb]
-          (FuseTreeRep '[ 'Leaf jb] '[ 'Leaf jc])
+  , KnownRep
+      ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]))
       )
   ) =>
   CanFmoveOuterHom '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc]
@@ -1937,41 +1391,29 @@ instance
   fmoveOuterHom = fmoveOuterHomLeaves @ja @jb @jc
   fmoveInvOuterHom = fmoveInvOuterHomLeaves @ja @jb @jc
 
--- | Hom-left nested F: left factor @FuseTreeRep '[Leaf ja] '[Leaf ja]@.
--- Plain functions (Nat-indexed so 'FuseTreeRep' stays out of instance heads).
+-- | Hom-left nested F: left factor @FuseRep '[Leaf ja] '[Leaf ja]@.
+-- Plain functions (Nat-indexed so 'FuseRep' stays out of instance heads).
 fmoveTreesHomLeft
   :: forall ja jb jc
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep
-         ( FuseAssocL
-             (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-             '[ 'Leaf jb]
-             '[ 'Leaf jc]
+     , KnownRep
+         ( FuseRep (FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) '[ 'Leaf jb]) '[ 'Leaf jc]
          )
-     , KnownTreeRep
-         ( FuseAssocR
-             (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-             '[ 'Leaf jb]
-             '[ 'Leaf jc]
+     , KnownRep
+         ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
          )
      )
-  => TreeV
-       ( FuseAssocL
-           (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-           '[ 'Leaf jb]
-           '[ 'Leaf jc]
+  => RepV
+       ( FuseRep (FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) '[ 'Leaf jb]) '[ 'Leaf jc]
        )
-  -> TreeV
-       ( FuseAssocR
-           (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-           '[ 'Leaf jb]
-           '[ 'Leaf jc]
+  -> RepV
+       ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
        )
 fmoveTreesHomLeft =
   fmoveTreesAtoms
-    @(FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
+    @(FuseRep '[ 'Leaf ja] '[ 'Leaf ja])
     @('[ 'Leaf jb])
     @('[ 'Leaf jc])
 
@@ -1980,103 +1422,91 @@ fmoveInvTreesHomLeft
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep
-         ( FuseAssocL
-             (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-             '[ 'Leaf jb]
-             '[ 'Leaf jc]
+     , KnownRep
+         ( FuseRep (FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) '[ 'Leaf jb]) '[ 'Leaf jc]
          )
-     , KnownTreeRep
-         ( FuseAssocR
-             (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-             '[ 'Leaf jb]
-             '[ 'Leaf jc]
+     , KnownRep
+         ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
          )
      )
-  => TreeV
-       ( FuseAssocR
-           (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-           '[ 'Leaf jb]
-           '[ 'Leaf jc]
+  => RepV
+       ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) (FuseRep '[ 'Leaf jb] '[ 'Leaf jc])
        )
-  -> TreeV
-       ( FuseAssocL
-           (FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
-           '[ 'Leaf jb]
-           '[ 'Leaf jc]
+  -> RepV
+       ( FuseRep (FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf ja]) '[ 'Leaf jb]) '[ 'Leaf jc]
        )
 fmoveInvTreesHomLeft =
   fmoveInvTreesAtoms
-    @(FuseTreeRep '[ 'Leaf ja] '[ 'Leaf ja])
+    @(FuseRep '[ 'Leaf ja] '[ 'Leaf ja])
     @('[ 'Leaf jb])
     @('[ 'Leaf jc])
 
 -- | Fill a spine with scaled ones (deterministic nested-F sample).
-fillTreeVScaled
+fillRepVScaled
   :: forall ts
-   . KnownTreeRep ts
-  => TreeV ts
-fillTreeVScaled = go 0 (treeRepSing @ts)
+   . KnownRep ts
+  => RepV ts
+fillRepVScaled = go 0 (repSing @ts)
   where
-    go :: Int -> STreeRep ts' -> TreeV ts'
-    go _ STreeNil = TNil
-    go i (STreeCons t rest) =
+    go :: Int -> SRep ts' -> RepV ts'
+    go _ SRepNil = RNil
+    go i (SRepCons t rest) =
       case t of
         SLeaf {} ->
-          TCons (konst (0.1 * fromIntegral (i + 1) :+ 0)) (go (i + 1) rest)
+          RCons (konst (0.1 * fromIntegral (i + 1) :+ 0)) (go (i + 1) rest)
         SNode {} ->
-          TCons (konst (0.1 * fromIntegral (i + 1) :+ 0)) (go (i + 1) rest)
+          RCons (konst (0.1 * fromIntegral (i + 1) :+ 0)) (go (i + 1) rest)
 
 -- | @(Hom ⊗ Hom)@ left-assoc / right-assoc spines for leaf-½ (Mac Lane outer F).
-type Dom111 = FuseAssocL Leaf1 Leaf1 Hom11
+type Dom111 = FuseRep (FuseRep Leaf1 Leaf1) Hom11
 
-type Mid111 = FuseAssocR Leaf1 Leaf1 Hom11
+type Mid111 = FuseRep Leaf1 (FuseRep Leaf1 Hom11)
 
-type CupR111 = FuseTreeRep Leaf1 AssocL111
+type CupR111 = FuseRep Leaf1 AssocL111
 
-type Dom000 = FuseAssocL Leaf0 Leaf0 Hom00
+type Dom000 = FuseRep (FuseRep Leaf0 Leaf0) Hom00
 
-type CupR000 = FuseTreeRep Leaf0 (FuseTreeRep Hom00 Leaf0)
+type CupR000 = FuseRep Leaf0 (FuseRep Hom00 Leaf0)
 
 -- | @Fuse(id, F-inv)@ on Mid — instance of 'fuseMapRight'.
-fuseMapRightFinv111 :: TreeV Mid111 -> TreeV CupR111
+fuseMapRightFinv111 :: RepV Mid111 -> RepV CupR111
 fuseMapRightFinv111 =
   fuseMapRight @Leaf1 @AssocR111 @AssocL111 fmoveInvTrees111
 
-approxTreeV
+approxRepV
   :: forall ts
-   . KnownTreeRep ts
-  => TreeV ts
-  -> TreeV ts
+   . KnownRep ts
+  => RepV ts
+  -> RepV ts
   -> Bool
-approxTreeV = go (treeRepSing @ts)
+approxRepV = go (repSing @ts)
   where
     closeVec a b =
       let da = toArray a
           db = toArray b
        in VS.all (\z -> magnitude z < 1e-9) (VS.zipWith (-) da db)
-    go :: STreeRep ts' -> TreeV ts' -> TreeV ts' -> Bool
-    go STreeNil TNil TNil = True
-    go (STreeCons t rest) (TCons a as) (TCons b bs) =
+    go :: SRep ts' -> RepV ts' -> RepV ts' -> Bool
+    go SRepNil RNil RNil = True
+    go (SRepCons t rest) (RCons a as) (RCons b bs) =
       case t of
         SLeaf {} -> closeVec a b && go rest as bs
         SNode {} -> closeVec a b && go rest as bs
     go _ _ _ = False
 
 -- | Tree F round-trip on @½⊗½⊗½@ (@F⁻¹ ∘ F ≈ id@).
-checkFmoveTrees111 :: TreeV AssocL111 -> Bool
+checkFmoveTrees111 :: RepV AssocL111 -> Bool
 checkFmoveTrees111 tv =
-  approxTreeV @AssocL111 tv (fmoveInvTrees111 (fmoveTrees111 tv))
+  approxRepV @AssocL111 tv (fmoveInvTrees111 (fmoveTrees111 tv))
 
 -- | Tree F round-trip on @½⊗½⊗0@.
-checkFmoveTrees110 :: TreeV AssocL110 -> Bool
+checkFmoveTrees110 :: RepV AssocL110 -> Bool
 checkFmoveTrees110 tv =
-  approxTreeV @AssocL110 tv (fmoveInvTrees110 (fmoveTrees110 tv))
+  approxRepV @AssocL110 tv (fmoveInvTrees110 (fmoveTrees110 tv))
 
 -- | Tree F round-trip on @½⊗½⊗1@.
-checkFmoveTrees112 :: TreeV AssocL112 -> Bool
+checkFmoveTrees112 :: RepV AssocL112 -> Bool
 checkFmoveTrees112 tv =
-  approxTreeV @AssocL112 tv (fmoveInvTrees112 (fmoveTrees112 tv))
+  approxRepV @AssocL112 tv (fmoveInvTrees112 (fmoveTrees112 tv))
 
 -- | Round-trip only: works for any atom-leaf triple.
 checkFmoveTreesLeaves
@@ -2084,15 +1514,15 @@ checkFmoveTreesLeaves
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
-     , KnownTreeRep (FuseAssocR '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
+     , KnownRep ( FuseRep '[ 'Leaf ja] (FuseRep '[ 'Leaf jb] '[ 'Leaf jc]) )
      )
-  => TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  => RepV ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
   -> Bool
 checkFmoveTreesLeaves tv =
   let rt = fmoveInvTreesLeaves @ja @jb @jc (fmoveTreesLeaves @ja @jb @jc tv)
-   in approxTreeV
-        @(FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+   in approxRepV
+        @( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
         tv
         rt
 
@@ -2102,9 +1532,9 @@ sampleAssocLLeaves
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownTreeRep (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+     , KnownRep ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
      )
-  => TreeV (FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc])
+  => RepV ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
 sampleAssocLLeaves =
   let a = fromIntegral (natVal (Proxy @ja)) :: Int
       b = fromIntegral (natVal (Proxy @jb)) :: Int
@@ -2123,18 +1553,18 @@ sampleAssocLLeaves =
         , e <- allowedE a b c d
         ]
    in scatterAssocLChannel
-        (treeRepSing @(FuseAssocL '[ 'Leaf ja] '[ 'Leaf jb] '[ 'Leaf jc]))
+        (repSing @( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] ))
         (Map.fromList [((d, e, ra, rb, rc), v) | (d, e, ra, rb, rc, v) <- chans])
 
 -- | Collect left-assoc Hom channels @(d, e, h, irrep)@ from
 -- @((a⊗b)_e ⊗ Hom_h)_d@. Key includes Hom root @h@ so F cannot reshuffle
 -- distinct Hom genealogies that share the same outer root.
 collectAssocLHom
-  :: STreeRep ts
-  -> TreeV ts
+  :: SRep ts
+  -> RepV ts
   -> [(Int, Int, Int, VS.Vector (Complex Double))]
-collectAssocLHom STreeNil TNil = []
-collectAssocLHom (STreeCons t rest) (TCons v rs) =
+collectAssocLHom SRepNil RNil = []
+collectAssocLHom (SRepCons t rest) (RCons v rs) =
   case t of
     SNode @d left right ->
       case left of
@@ -2153,11 +1583,11 @@ collectAssocLHom (STreeCons t rest) (TCons v rs) =
 -- | Collect right-assoc Hom channels @(d, f, h, irrep)@ from
 -- @(a ⊗ (b ⊗ Hom_h)_f)_d@.
 collectAssocRHom
-  :: STreeRep ts
-  -> TreeV ts
+  :: SRep ts
+  -> RepV ts
   -> [(Int, Int, Int, VS.Vector (Complex Double))]
-collectAssocRHom STreeNil TNil = []
-collectAssocRHom (STreeCons t rest) (TCons v rs) =
+collectAssocRHom SRepNil RNil = []
+collectAssocRHom (SRepCons t rest) (RCons v rs) =
   case t of
     SNode @d _left right ->
       case right of
@@ -2174,11 +1604,11 @@ collectAssocRHom (STreeCons t rest) (TCons v rs) =
       error "collectAssocRHom: leaf in association spine"
 
 scatterAssocLHom
-  :: STreeRep ts
+  :: SRep ts
   -> Map.Map (Int, Int, Int) (VS.Vector (Complex Double))
-  -> TreeV ts
-scatterAssocLHom STreeNil _ = TNil
-scatterAssocLHom (STreeCons (t :: SIrrepTree u) rest) m =
+  -> RepV ts
+scatterAssocLHom SRepNil _ = RNil
+scatterAssocLHom (SRepCons (t :: SIrrepTree u) rest) m =
   case t of
     SNode @d left right ->
       let key =
@@ -2186,18 +1616,18 @@ scatterAssocLHom (STreeCons (t :: SIrrepTree u) rest) m =
             , rootLab left
             , rootLab right
             )
-       in TCons @u
+       in RCons @u
             (unsafeFromArray (Map.findWithDefault (zeroLike key m) key m))
             (scatterAssocLHom rest m)
     SLeaf {} ->
       error "scatterAssocLHom: leaf in association spine"
 
 scatterAssocRHom
-  :: STreeRep ts
+  :: SRep ts
   -> Map.Map (Int, Int, Int) (VS.Vector (Complex Double))
-  -> TreeV ts
-scatterAssocRHom STreeNil _ = TNil
-scatterAssocRHom (STreeCons (t :: SIrrepTree u) rest) m =
+  -> RepV ts
+scatterAssocRHom SRepNil _ = RNil
+scatterAssocRHom (SRepCons (t :: SIrrepTree u) rest) m =
   case t of
     SNode @d _left right ->
       case right of
@@ -2207,7 +1637,7 @@ scatterAssocRHom (STreeCons (t :: SIrrepTree u) rest) m =
                 , rootLab right
                 , rootLab midHom
                 )
-           in TCons @u
+           in RCons @u
                 (unsafeFromArray (Map.findWithDefault (zeroLike key m) key m))
                 (scatterAssocRHom rest m)
         SLeaf {} ->
@@ -2232,15 +1662,15 @@ fmoveOuterLeafHom
   :: forall ja jb ls rs
    . ( KnownNat ja
      , KnownNat jb
-     , KnownTreeRep ls
-     , KnownTreeRep rs
+     , KnownRep ls
+     , KnownRep rs
      )
-  => TreeV ls
-  -> TreeV rs
+  => RepV ls
+  -> RepV rs
 fmoveOuterLeafHom tv =
   let a = fromIntegral (natVal (Proxy @ja)) :: Int
       b = fromIntegral (natVal (Proxy @jb)) :: Int
-      chans = collectAssocLHom (treeRepSing @ls) tv
+      chans = collectAssocLHom (repSing @ls) tv
       hs = Map.keys $ Map.fromList [(h, ()) | (_, _, h, _) <- chans]
       out =
         concatMap
@@ -2261,22 +1691,22 @@ fmoveOuterLeafHom tv =
           )
           hs
    in scatterAssocRHom
-        (treeRepSing @rs)
+        (repSing @rs)
         (Map.fromList [((d, f, h), v) | (d, f, h, v) <- out])
 
 fmoveInvOuterLeafHom
   :: forall ja jb rs ls
    . ( KnownNat ja
      , KnownNat jb
-     , KnownTreeRep rs
-     , KnownTreeRep ls
+     , KnownRep rs
+     , KnownRep ls
      )
-  => TreeV rs
-  -> TreeV ls
+  => RepV rs
+  -> RepV ls
 fmoveInvOuterLeafHom tv =
   let a = fromIntegral (natVal (Proxy @ja)) :: Int
       b = fromIntegral (natVal (Proxy @jb)) :: Int
-      chans = collectAssocRHom (treeRepSing @rs) tv
+      chans = collectAssocRHom (repSing @rs) tv
       hs = Map.keys $ Map.fromList [(h, ()) | (_, _, h, _) <- chans]
       out =
         concatMap
@@ -2297,7 +1727,7 @@ fmoveInvOuterLeafHom tv =
           )
           hs
    in scatterAssocLHom
-        (treeRepSing @ls)
+        (repSing @ls)
         (Map.fromList [((d, e, h), v) | (d, e, h, v) <- out])
 
 --------------------------------------------------------------------------------
@@ -2312,27 +1742,27 @@ su2CupFactor tj =
       dim = fromIntegral (tj + 1) :: Double
    in (fs * dim) :+ 0
 
-scaleTreeV
+scaleRepV
   :: forall ts
-   . KnownTreeRep ts
+   . KnownRep ts
   => Complex Double
-  -> TreeV ts
-  -> TreeV ts
-scaleTreeV s = go (treeRepSing @ts)
+  -> RepV ts
+  -> RepV ts
+scaleRepV s = go (repSing @ts)
   where
-    go :: STreeRep ts' -> TreeV ts' -> TreeV ts'
-    go STreeNil TNil = TNil
-    go (STreeCons t rest) (TCons v rs) =
+    go :: SRep ts' -> RepV ts' -> RepV ts'
+    go SRepNil RNil = RNil
+    go (SRepCons t rest) (RCons v rs) =
       case t of
-        SLeaf {} -> TCons (s *^ v) (go rest rs)
-        SNode {} -> TCons (s *^ v) (go rest rs)
+        SLeaf {} -> RCons (s *^ v) (go rest rs)
+        SNode {} -> RCons (s *^ v) (go rest rs)
 
 -- | Singlet-only identity in 'Hom11' (@j=0@ channel).
-idHom11 :: TreeV Hom11
+idHom11 :: RepV Hom11
 idHom11 = idHomLeaf @1
 
 -- | Singlet-only identity in 'Hom22'.
-idHom22 :: TreeV Hom22
+idHom22 :: RepV Hom22
 idHom22 = idHomLeaf @2
 
 --------------------------------------------------------------------------------
@@ -2348,14 +1778,14 @@ idHom22 = idHomLeaf @2
 -- | Step 1: @f ⊗ g@.
 tensorHom
   :: forall a b c
-   . ( KnownTreeRep (FuseTreeRep a b)
-     , KnownTreeRep (FuseTreeRep b c)
-     , FuseTreeRepTermC (FuseTreeRep a b) (FuseTreeRep b c)
+   . ( KnownRep (FuseRep a b)
+     , KnownRep (FuseRep b c)
+     , FuseRepTermC (FuseRep a b) (FuseRep b c)
      )
-  => TreeV (FuseTreeRep a b)
-  -> TreeV (FuseTreeRep b c)
-  -> TreeV (FuseTreeRep (FuseTreeRep a b) (FuseTreeRep b c))
-tensorHom = fuseTreeRepTerm @(FuseTreeRep a b) @(FuseTreeRep b c)
+  => RepV (FuseRep a b)
+  -> RepV (FuseRep b c)
+  -> RepV (FuseRep (FuseRep a b) (FuseRep b c))
+tensorHom = fuseRepTerm @(FuseRep a b) @(FuseRep b c)
 
 -- | Step 2: outer F — @(a*⊗b) ⊗ (b*⊗c) → a* ⊗ (b ⊗ (b*⊗c))@.
 --
@@ -2364,74 +1794,74 @@ tensorHom = fuseTreeRepTerm @(FuseTreeRep a b) @(FuseTreeRep b c)
 
 -- | Step 3: @id ⊗ F@ — @a* ⊗ (b ⊗ (b*⊗c)) → a* ⊗ ((b ⊗ b*) ⊗ c)@.
 --
--- Right factor: @FuseAssocR b b c → FuseAssocL b b c@ via 'fmoveInvTrees'.
+-- Right factor: @FuseRep b (FuseRep b c) → FuseRep (FuseRep b b) c@ via 'fmoveInvTrees'.
 fmoveInnerHom
   :: forall a b c
-   . ( KnownTreeRep a
-     , KnownTreeRep (FuseTreeRep b (FuseTreeRep b c))
-     , KnownTreeRep (FuseTreeRep (FuseTreeRep b b) c)
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep b (FuseTreeRep b c)))
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep (FuseTreeRep b b) c))
+   . ( KnownRep a
+     , KnownRep (FuseRep b (FuseRep b c))
+     , KnownRep (FuseRep (FuseRep b b) c)
+     , KnownRep (FuseRep a (FuseRep b (FuseRep b c)))
+     , KnownRep (FuseRep a (FuseRep (FuseRep b b) c))
      , CanFmoveTrees b b c
      )
-  => TreeV (FuseTreeRep a (FuseTreeRep b (FuseTreeRep b c)))
-  -> TreeV (FuseTreeRep a (FuseTreeRep (FuseTreeRep b b) c))
+  => RepV (FuseRep a (FuseRep b (FuseRep b c)))
+  -> RepV (FuseRep a (FuseRep (FuseRep b b) c))
 fmoveInnerHom =
   fuseMapRight
     @a
-    @(FuseTreeRep b (FuseTreeRep b c))
-    @(FuseTreeRep (FuseTreeRep b b) c)
+    @(FuseRep b (FuseRep b c))
+    @(FuseRep (FuseRep b b) c)
     (fmoveInvTrees @b @b @c)
 
 -- | Step 4: @id ⊗ (cup ⊗ id)@ — Unit remains in the type.
 cupTensorIdHom
   :: forall a b c
-   . ( KnownTreeRep a
-     , KnownTreeRep b
-     , KnownTreeRep c
-     , KnownTreeRep (FuseTreeRep b b)
-     , KnownTreeRep TreeUnit
-     , KnownTreeRep (FuseTreeRep (FuseTreeRep b b) c)
-     , KnownTreeRep (FuseTreeRep TreeUnit c)
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep (FuseTreeRep b b) c))
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep TreeUnit c))
-     , KnownTreeRep (FuseTreeRep b b)
+   . ( KnownRep a
+     , KnownRep b
+     , KnownRep c
+     , KnownRep (FuseRep b b)
+     , KnownRep Unit
+     , KnownRep (FuseRep (FuseRep b b) c)
+     , KnownRep (FuseRep Unit c)
+     , KnownRep (FuseRep a (FuseRep (FuseRep b b) c))
+     , KnownRep (FuseRep a (FuseRep Unit c))
+     , KnownRep (FuseRep b b)
      )
-  => TreeV (FuseTreeRep a (FuseTreeRep (FuseTreeRep b b) c))
-  -> TreeV (FuseTreeRep a (FuseTreeRep TreeUnit c))
+  => RepV (FuseRep a (FuseRep (FuseRep b b) c))
+  -> RepV (FuseRep a (FuseRep Unit c))
 cupTensorIdHom =
   fuseMapRight
     @a
-    @(FuseTreeRep (FuseTreeRep b b) c)
-    @(FuseTreeRep TreeUnit c)
+    @(FuseRep (FuseRep b b) c)
+    @(FuseRep Unit c)
     ( fuseMapLeft
-        @(FuseTreeRep b b)
-        @TreeUnit
+        @(FuseRep b b)
+        @Unit
         @c
         (cup @b)
     )
 
--- | Evaluation @ε : b ⊗ b* → 𝟙@ on genealogy Hom (@FuseTreeRep b b@, dual≅primal).
+-- | Evaluation @ε : b ⊗ b* → 𝟙@ on genealogy Hom (@FuseRep b b@, dual≅primal).
 -- Singlet channels scaled by 'su2CupFactor' of the cupped root (FS·dim); others drop.
 cup
   :: forall b
-   . KnownTreeRep (FuseTreeRep b b)
-  => TreeV (FuseTreeRep b b)
-  -> TreeV TreeUnit
+   . KnownRep (FuseRep b b)
+  => RepV (FuseRep b b)
+  -> RepV Unit
 cup bb =
-  TCons @('Leaf 0) (konst (cupHomTreesScalar @(FuseTreeRep b b) bb)) TNil
+  RCons @('Leaf 0) (konst (cupHomTreesScalar @(FuseRep b b) bb)) RNil
 
--- | Singlet walk via 'STreeRep': @sameNat@ refines @j ~ 0@ so payloads stay @C 1@.
+-- | Singlet walk via 'SRep': @sameNat@ refines @j ~ 0@ so payloads stay @C 1@.
 cupHomTreesScalar
   :: forall ts
-   . KnownTreeRep ts
-  => TreeV ts
+   . KnownRep ts
+  => RepV ts
   -> Complex Double
-cupHomTreesScalar = go (treeRepSing @ts)
+cupHomTreesScalar = go (repSing @ts)
   where
-    go :: forall ts'. STreeRep ts' -> TreeV ts' -> Complex Double
-    go STreeNil TNil = 0
-    go (STreeCons t rest) (TCons v rs) =
+    go :: forall ts'. SRep ts' -> RepV ts' -> Complex Double
+    go SRepNil RNil = 0
+    go (SRepCons t rest) (RCons v rs) =
       case t of
         SLeaf @j ->
           case sameNat (Proxy @j) (Proxy @0) of
@@ -2446,39 +1876,39 @@ cupHomTreesScalar = go (treeRepSing @ts)
 -- | Step 5: @id ⊗ λ@ — @a* ⊗ (Unit ⊗ c) → a* ⊗ c@ (not type-level absorption).
 unitorHom
   :: forall a c
-   . ( KnownTreeRep a
-     , KnownTreeRep c
-     , KnownTreeRep (FuseTreeRep TreeUnit c)
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep TreeUnit c))
-     , KnownTreeRep (FuseTreeRep a c)
-     , UnitorCodomain (FuseTreeRep TreeUnit c) ~ c
+   . ( KnownRep a
+     , KnownRep c
+     , KnownRep (FuseRep Unit c)
+     , KnownRep (FuseRep a (FuseRep Unit c))
+     , KnownRep (FuseRep a c)
+     , UnitorCodomain (FuseRep Unit c) ~ c
      )
-  => TreeV (FuseTreeRep a (FuseTreeRep TreeUnit c))
-  -> TreeV (FuseTreeRep a c)
+  => RepV (FuseRep a (FuseRep Unit c))
+  -> RepV (FuseRep a c)
 unitorHom =
-  fuseMapRight @a @(FuseTreeRep TreeUnit c) @c (unitor @c)
+  fuseMapRight @a @(FuseRep Unit c) @c (unitor @c)
 
--- | Left unitor on fusion trees: @TreeUnit ⊗ c → c@ (drop @'Leaf 0@ left child).
+-- | Left unitor on fusion trees: @Unit ⊗ c → c@ (drop @'Leaf 0@ left child).
 --
 -- For each @t@ in @c@, @FuseTrees ('Leaf 0) t = '[ 'Node (Root t) ('Leaf 0) t ]@
 -- (SU(2): @0 ⊗ j = j@); payloads are already the root irrep of @t@.
 unitor
   :: forall c
-   . ( KnownTreeRep (FuseTreeRep TreeUnit c)
-     , UnitorCodomain (FuseTreeRep TreeUnit c) ~ c
+   . ( KnownRep (FuseRep Unit c)
+     , UnitorCodomain (FuseRep Unit c) ~ c
      )
-  => TreeV (FuseTreeRep TreeUnit c)
-  -> TreeV c
-unitor = unitorGo (treeRepSing @(FuseTreeRep TreeUnit c))
+  => RepV (FuseRep Unit c)
+  -> RepV c
+unitor = unitorGo (repSing @(FuseRep Unit c))
 
 -- | Singleton walk: @sameNat@ refines left child to @'Leaf 0@; 'UnitorCodomain' drops it.
 unitorGo
   :: forall uc
-   . STreeRep uc
-  -> TreeV uc
-  -> TreeV (UnitorCodomain uc)
-unitorGo STreeNil TNil = TNil
-unitorGo (STreeCons t rest) (TCons v rs) =
+   . SRep uc
+  -> RepV uc
+  -> RepV (UnitorCodomain uc)
+unitorGo SRepNil RNil = RNil
+unitorGo (SRepCons t rest) (RCons v rs) =
   case t of
     SNode @j l r ->
       case l of
@@ -2489,13 +1919,13 @@ unitorGo (STreeCons t rest) (TCons v rs) =
                 SLeaf @rj ->
                   case sameNat (Proxy @rj) (Proxy @j) of
                     Just Refl ->
-                      TCons @('Leaf rj) v (unitorGo rest rs)
+                      RCons @('Leaf rj) v (unitorGo rest rs)
                     Nothing ->
                       error "unitorGo: root mismatch after 0⊗t"
                 SNode @rj @rl @rr _l _r ->
                   case sameNat (Proxy @rj) (Proxy @j) of
                     Just Refl ->
-                      TCons @('Node rj rl rr) v (unitorGo rest rs)
+                      RCons @('Node rj rl rr) v (unitorGo rest rs)
                     Nothing ->
                       error "unitorGo: root mismatch after 0⊗t"
             Nothing ->
@@ -2503,33 +1933,33 @@ unitorGo (STreeCons t rest) (TCons v rs) =
         SNode {} ->
           error "unitorGo: expected left child 'Leaf 0"
     SLeaf {} ->
-      error "unitorGo: expected Node from FuseTreeRep TreeUnit"
+      error "unitorGo: expected Node from FuseRep Unit"
 
 -- | Fused Hom compose as the five Mac Lane morphisms.
 composeHomTrees
   :: forall a b c
-   . ( KnownTreeRep (FuseTreeRep a b)
-     , KnownTreeRep (FuseTreeRep b c)
-     , FuseTreeRepTermC (FuseTreeRep a b) (FuseTreeRep b c)
-     , KnownTreeRep a
-     , KnownTreeRep b
-     , KnownTreeRep c
-     , KnownTreeRep (FuseTreeRep b b)
-     , KnownTreeRep TreeUnit
-     , KnownTreeRep (FuseTreeRep b (FuseTreeRep b c))
-     , KnownTreeRep (FuseTreeRep (FuseTreeRep b b) c)
-     , KnownTreeRep (FuseTreeRep TreeUnit c)
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep b (FuseTreeRep b c)))
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep (FuseTreeRep b b) c))
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep TreeUnit c))
-     , KnownTreeRep (FuseTreeRep a c)
+   . ( KnownRep (FuseRep a b)
+     , KnownRep (FuseRep b c)
+     , FuseRepTermC (FuseRep a b) (FuseRep b c)
+     , KnownRep a
+     , KnownRep b
+     , KnownRep c
+     , KnownRep (FuseRep b b)
+     , KnownRep Unit
+     , KnownRep (FuseRep b (FuseRep b c))
+     , KnownRep (FuseRep (FuseRep b b) c)
+     , KnownRep (FuseRep Unit c)
+     , KnownRep (FuseRep a (FuseRep b (FuseRep b c)))
+     , KnownRep (FuseRep a (FuseRep (FuseRep b b) c))
+     , KnownRep (FuseRep a (FuseRep Unit c))
+     , KnownRep (FuseRep a c)
      , CanFmoveOuterHom a b c
      , CanFmoveTrees b b c
-     , UnitorCodomain (FuseTreeRep TreeUnit c) ~ c
+     , UnitorCodomain (FuseRep Unit c) ~ c
      )
-  => TreeV (FuseTreeRep a b)
-  -> TreeV (FuseTreeRep b c)
-  -> TreeV (FuseTreeRep a c)
+  => RepV (FuseRep a b)
+  -> RepV (FuseRep b c)
+  -> RepV (FuseRep a c)
 composeHomTrees f g =
   unitorHom @a @c
     ( cupTensorIdHom @a @b @c
@@ -2543,13 +1973,13 @@ composeHomTrees f g =
 -- | Approx equality on Hom / association spines (forgetful flat).
 approxHomTrees
   :: forall ts
-   . KnownTreeRep ts
-  => TreeV ts
-  -> TreeV ts
+   . KnownRep ts
+  => RepV ts
+  -> RepV ts
   -> Bool
 approxHomTrees u v =
-  let bu = treeVToForgetFlat @ts u
-      bv = treeVToForgetFlat @ts v
+  let bu = repVToForgetFlat @ts u
+      bv = repVToForgetFlat @ts v
       err =
         VS.sum $
           VS.zipWith
@@ -2558,17 +1988,17 @@ approxHomTrees u v =
             bv
    in err < 1e-10
 
-approxHom11 :: TreeV Hom11 -> TreeV Hom11 -> Bool
+approxHom11 :: RepV Hom11 -> RepV Hom11 -> Bool
 approxHom11 = approxHomTrees @Hom11
 
--- | 'unitor' on @TreeUnit ⊗ Leaf½@: payload round-trip.
+-- | 'unitor' on @Unit ⊗ Leaf½@: payload round-trip.
 checkUnitorLeaf1 :: Bool
 checkUnitorLeaf1 =
   let u =
-        TCons @('Node 1 ('Leaf 0) ('Leaf 1)) (konst 0.42) TNil
-          :: TreeV (FuseTreeRep TreeUnit Leaf1)
+        RCons @('Node 1 ('Leaf 0) ('Leaf 1)) (konst 0.42) RNil
+          :: RepV (FuseRep Unit Leaf1)
       v = unitor @Leaf1 u
-   in case treeVToV @Leaf1 v of
+   in case repVToV @Leaf1 v of
         x ->
           let d = x ^-^ konst 0.42
            in magnitude (d <.> d) < 1e-18
@@ -2577,27 +2007,27 @@ checkUnitorLeaf1 =
 checkUnitorHom11 :: Bool
 checkUnitorHom11 =
   let mid =
-        TCons @('Node 0 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))) (konst 0.3) $
-          TCons @('Node 2 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))) (konst 0.7) TNil
+        RCons @('Node 0 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))) (konst 0.3) $
+          RCons @('Node 2 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))) (konst 0.7) RNil
       out = unitorHom @Leaf1 @Leaf1 mid
    in approxHom11 out $
-        TCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
-          TCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) TNil
+        RCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
+          RCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) RNil
 
 -- | Mac Lane 'cup' on leaf Hom: singlet × FS·dim (@0 → 1@, @½ → −2@, @1 → 3@).
 checkCupLeafHom :: Bool
 checkCupLeafHom =
   let s0 =
         case cup @Leaf0 (idHomLeaf @0) of
-          TCons v TNil -> konst 1 <.> v
+          RCons v RNil -> konst 1 <.> v
           _ -> 0
       s1 =
         case cup @Leaf1 (idHomLeaf @1) of
-          TCons v TNil -> konst 1 <.> v
+          RCons v RNil -> konst 1 <.> v
           _ -> 0
       s2 =
         case cup @Leaf2 (idHomLeaf @2) of
-          TCons v TNil -> konst 1 <.> v
+          RCons v RNil -> konst 1 <.> v
           _ -> 0
    in magnitude (s0 - 1) < 1e-12
         && magnitude (s1 - (-2)) < 1e-12
@@ -2605,16 +2035,16 @@ checkCupLeafHom =
 
 -- | Typechecks 'cupTensorIdHom' at leaf-½ (do not require a full sample spine here).
 cupTensorIdHomLeaf1
-  :: TreeV (FuseTreeRep Leaf1 (FuseTreeRep Hom11 Leaf1))
-  -> TreeV (FuseTreeRep Leaf1 (FuseTreeRep TreeUnit Leaf1))
+  :: RepV (FuseRep Leaf1 (FuseRep Hom11 Leaf1))
+  -> RepV (FuseRep Leaf1 (FuseRep Unit Leaf1))
 cupTensorIdHomLeaf1 = cupTensorIdHom @Leaf1 @Leaf1 @Leaf1
 
 -- | Five-morphism 'composeHomTrees' unit laws on leaf-½.
 checkComposeHomTrees111 :: Bool
 checkComposeHomTrees111 =
   let f =
-        TCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
-          TCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) TNil
+        RCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
+          RCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) RNil
       idH = idHomLeaf @1
       idid = composeHomTrees @Leaf1 @Leaf1 @Leaf1 idH idH
       fid = composeHomTrees @Leaf1 @Leaf1 @Leaf1 f idH
@@ -2626,7 +2056,7 @@ checkComposeHomTrees111 =
 -- | Five-morphism compose unit laws on trivial Hom.
 checkComposeHomTrees000 :: Bool
 checkComposeHomTrees000 =
-  let f = TCons @('Node 0 ('Leaf 0) ('Leaf 0)) (konst 0.4) TNil
+  let f = RCons @('Node 0 ('Leaf 0) ('Leaf 0)) (konst 0.4) RNil
       idH = idHomLeaf @0
    in approxHomTrees @Hom00
         (composeHomTrees @Leaf0 @Leaf0 @Leaf0 idH idH)
@@ -2642,9 +2072,9 @@ checkComposeHomTrees000 =
 checkComposeHomTrees222 :: Bool
 checkComposeHomTrees222 =
   let f =
-        TCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
-          TCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
-            TCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) TNil
+        RCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
+          RCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
+            RCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) RNil
       idH = idHomLeaf @2
       idid = composeHomTrees @Leaf2 @Leaf2 @Leaf2 idH idH
       fid = composeHomTrees @Leaf2 @Leaf2 @Leaf2 f idH
@@ -2657,10 +2087,10 @@ checkComposeHomTrees222 =
 checkComposeHomTrees333 :: Bool
 checkComposeHomTrees333 =
   let f =
-        TCons @('Node 0 ('Leaf 3) ('Leaf 3)) (konst 0.1) $
-          TCons @('Node 2 ('Leaf 3) ('Leaf 3)) (konst 0.2) $
-            TCons @('Node 4 ('Leaf 3) ('Leaf 3)) (konst 0.3) $
-              TCons @('Node 6 ('Leaf 3) ('Leaf 3)) (konst 0.4) TNil
+        RCons @('Node 0 ('Leaf 3) ('Leaf 3)) (konst 0.1) $
+          RCons @('Node 2 ('Leaf 3) ('Leaf 3)) (konst 0.2) $
+            RCons @('Node 4 ('Leaf 3) ('Leaf 3)) (konst 0.3) $
+              RCons @('Node 6 ('Leaf 3) ('Leaf 3)) (konst 0.4) RNil
       idH = idHomLeaf @3
       idid = composeHomTrees @Leaf3 @Leaf3 @Leaf3 idH idH
       fid = composeHomTrees @Leaf3 @Leaf3 @Leaf3 f idH
@@ -2672,10 +2102,10 @@ checkComposeHomTrees333 =
 -- | Unequal-leaf compose @½ → 1 → ½@: left/right units on 'Hom12'.
 checkComposeHomTrees121 :: Bool
 checkComposeHomTrees121 =
-  let f :: TreeV Hom12
+  let f :: RepV Hom12
       f =
-        TCons @('Node 1 ('Leaf 1) ('Leaf 2)) (konst 0.3) $
-          TCons @('Node 3 ('Leaf 1) ('Leaf 2)) (konst 0.7) TNil
+        RCons @('Node 1 ('Leaf 1) ('Leaf 2)) (konst 0.3) $
+          RCons @('Node 3 ('Leaf 1) ('Leaf 2)) (konst 0.7) RNil
       id1 = idHomLeaf @1
       id2 = idHomLeaf @2
       -- f ∘ id₁  and  id₂ ∘ f
@@ -2690,42 +2120,42 @@ checkFmoveTreesLeaves121 =
       rt =
         fmoveInvTrees @Leaf1 @Leaf2 @Leaf1
           (fmoveTrees @Leaf1 @Leaf2 @Leaf1 assocL)
-   in approxHomTrees @(FuseAssocL Leaf1 Leaf2 Leaf1) assocL rt
+   in approxHomTrees @( FuseRep (FuseRep Leaf1 Leaf2) Leaf1 ) assocL rt
 
 -- | Nested F: Hom⊗leaf⊗leaf (@Hom11 ⊗ ½ ⊗ ½@) round-trip via channel-keyed F.
 checkFmoveHomLeft111 :: Bool
 checkFmoveHomLeft111 =
-  let assocL = fillTreeVScaled @(FuseAssocL Hom11 Leaf1 Leaf1)
+  let assocL = fillRepVScaled @( FuseRep (FuseRep Hom11 Leaf1) Leaf1 )
       rt =
         fmoveInvTreesHomLeft @1 @1 @1
           (fmoveTreesHomLeft @1 @1 @1 assocL)
-   in approxHomTrees @(FuseAssocL Hom11 Leaf1 Leaf1) assocL rt
+   in approxHomTrees @( FuseRep (FuseRep Hom11 Leaf1) Leaf1 ) assocL rt
 
 --------------------------------------------------------------------------------
--- HomFused: TreeV-backed fused Hom
+-- HomFused: RepV-backed fused Hom
 --------------------------------------------------------------------------------
 
 -- | 'HomFused' compose via the five Mac Lane morphisms ('composeHomTrees').
 composeHomFused
   :: forall a b c
-   . ( KnownTreeRep (FuseTreeRep a b)
-     , KnownTreeRep (FuseTreeRep b c)
-     , FuseTreeRepTermC (FuseTreeRep a b) (FuseTreeRep b c)
-     , KnownTreeRep a
-     , KnownTreeRep b
-     , KnownTreeRep c
-     , KnownTreeRep (FuseTreeRep b b)
-     , KnownTreeRep TreeUnit
-     , KnownTreeRep (FuseTreeRep b (FuseTreeRep b c))
-     , KnownTreeRep (FuseTreeRep (FuseTreeRep b b) c)
-     , KnownTreeRep (FuseTreeRep TreeUnit c)
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep b (FuseTreeRep b c)))
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep (FuseTreeRep b b) c))
-     , KnownTreeRep (FuseTreeRep a (FuseTreeRep TreeUnit c))
-     , KnownTreeRep (FuseTreeRep a c)
+   . ( KnownRep (FuseRep a b)
+     , KnownRep (FuseRep b c)
+     , FuseRepTermC (FuseRep a b) (FuseRep b c)
+     , KnownRep a
+     , KnownRep b
+     , KnownRep c
+     , KnownRep (FuseRep b b)
+     , KnownRep Unit
+     , KnownRep (FuseRep b (FuseRep b c))
+     , KnownRep (FuseRep (FuseRep b b) c)
+     , KnownRep (FuseRep Unit c)
+     , KnownRep (FuseRep a (FuseRep b (FuseRep b c)))
+     , KnownRep (FuseRep a (FuseRep (FuseRep b b) c))
+     , KnownRep (FuseRep a (FuseRep Unit c))
+     , KnownRep (FuseRep a c)
      , CanFmoveOuterHom a b c
      , CanFmoveTrees b b c
-     , UnitorCodomain (FuseTreeRep TreeUnit c) ~ c
+     , UnitorCodomain (FuseRep Unit c) ~ c
      )
   => HomFused b c
   -> HomFused a b
@@ -2749,9 +2179,9 @@ checkHomFusedCategory222 =
   let f :: HomFused Leaf2 Leaf2
       f =
         HomFused $
-          TCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
-            TCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
-              TCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) TNil
+          RCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
+            RCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
+              RCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) RNil
       idT = HomFused (idHomFusedVal @Leaf2)
       HomFused idid = composeHomFused @Leaf2 @Leaf2 @Leaf2 idT idT
       HomFused fid = composeHomFused @Leaf2 @Leaf2 @Leaf2 idT f
@@ -2766,10 +2196,10 @@ checkHomFusedCategory333 =
   let f :: HomFused Leaf3 Leaf3
       f =
         HomFused $
-          TCons @('Node 0 ('Leaf 3) ('Leaf 3)) (konst 0.1) $
-            TCons @('Node 2 ('Leaf 3) ('Leaf 3)) (konst 0.2) $
-              TCons @('Node 4 ('Leaf 3) ('Leaf 3)) (konst 0.3) $
-                TCons @('Node 6 ('Leaf 3) ('Leaf 3)) (konst 0.4) TNil
+          RCons @('Node 0 ('Leaf 3) ('Leaf 3)) (konst 0.1) $
+            RCons @('Node 2 ('Leaf 3) ('Leaf 3)) (konst 0.2) $
+              RCons @('Node 4 ('Leaf 3) ('Leaf 3)) (konst 0.3) $
+                RCons @('Node 6 ('Leaf 3) ('Leaf 3)) (konst 0.4) RNil
       idT = HomFused (idHomFusedVal @Leaf3)
       HomFused idid = composeHomFused @Leaf3 @Leaf3 @Leaf3 idT idT
       HomFused fid = composeHomFused @Leaf3 @Leaf3 @Leaf3 idT f
@@ -2783,18 +2213,18 @@ checkLeaf2FmoveSmoke :: Bool
 checkLeaf2FmoveSmoke =
   let assocL = sampleAssocLLeaves @2 @2 @2
       assocOk =
-        approxHomTrees @(FuseAssocL Leaf2 Leaf2 Leaf2) assocL $
+        approxHomTrees @( FuseRep (FuseRep Leaf2 Leaf2) Leaf2 ) assocL $
           fmoveInvTreesLeaves @2 @2 @2 (fmoveTreesLeaves @2 @2 @2 assocL)
       idH = idHomLeaf @2
-      dom = fuseTreeRepTerm @Hom22 @Hom22 idH idH
+      dom = fuseRepTerm @Hom22 @Hom22 idH idH
       mid = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 dom
       back = fmoveInvOuterHom @Leaf2 @Leaf2 @Leaf2 mid
-   in assocOk && approxHomTrees @(FuseAssocL Leaf2 Leaf2 Hom22) dom back
+   in assocOk && approxHomTrees @( FuseRep (FuseRep Leaf2 Leaf2) Hom22 ) dom back
 
 -- | Outer F round-trip on Dom = Fuse(id,id): @F⁻¹ ∘ F ≈ id@.
 checkFmoveOuter111 :: Bool
 checkFmoveOuter111 =
-  let dom = fuseTreeRepTerm @Hom11 @Hom11 (idHomLeaf @1) (idHomLeaf @1)
+  let dom = fuseRepTerm @Hom11 @Hom11 (idHomLeaf @1) (idHomLeaf @1)
       mid = fmoveOuterHom @Leaf1 @Leaf1 @Leaf1 dom
       back = fmoveInvOuterHom @Leaf1 @Leaf1 @Leaf1 mid
    in approxHomTrees @Dom111 dom back
@@ -2804,25 +2234,25 @@ checkFuseMapLeftId111 :: Bool
 checkFuseMapLeftId111 =
   let mid =
         fmoveOuterHom @Leaf1 @Leaf1 @Leaf1 $
-          fuseTreeRepTerm @Hom11 @Hom11 (idHomLeaf @1) (idHomLeaf @1)
+          fuseRepTerm @Hom11 @Hom11 (idHomLeaf @1) (idHomLeaf @1)
       mid' = fuseMapLeft @Leaf1 @Leaf1 @AssocR111 id mid
    in approxHomTrees @Mid111 mid mid'
 
--- | Forgetful coalesced flat of a 'TreeV' (same layout as 'fuseSU2Flat' output /
--- 'ForgetTreeRep'): sectors sorted by root @2j@, multiplicity = spine order.
-treeVToForgetFlat
+-- | Forgetful coalesced flat of a 'RepV' (same layout as 'fuseSU2Flat' output /
+-- 'ForgetRep'): sectors sorted by root @2j@, multiplicity = spine order.
+repVToForgetFlat
   :: forall ts
-   . KnownTreeRep ts
-  => TreeV ts
+   . KnownRep ts
+  => RepV ts
   -> VS.Vector (Complex Double)
-treeVToForgetFlat = packRootChannels . collectRootChannels (treeRepSing @ts)
+repVToForgetFlat = packRootChannels . collectRootChannels (repSing @ts)
 
 collectRootChannels
-  :: STreeRep ts
-  -> TreeV ts
+  :: SRep ts
+  -> RepV ts
   -> [(Int, VS.Vector (Complex Double))]
-collectRootChannels STreeNil TNil = []
-collectRootChannels (STreeCons t rest) (TCons v rs) =
+collectRootChannels SRepNil RNil = []
+collectRootChannels (SRepCons t rest) (RCons v rs) =
   case t of
     SLeaf @j ->
       (fromIntegral (natVal (Proxy @j)), toArray v)
@@ -2831,7 +2261,7 @@ collectRootChannels (STreeCons t rest) (TCons v rs) =
       (fromIntegral (natVal (Proxy @j)), toArray v)
         : collectRootChannels rest rs
 collectRootChannels _ _ =
-  error "collectRootChannels: TreeV / STreeRep mismatch"
+  error "collectRootChannels: RepV / SRep mismatch"
 
 packRootChannels
   :: [(Int, VS.Vector (Complex Double))]
@@ -2844,14 +2274,14 @@ packRootChannels chans =
           chans
    in VS.concat [VS.concat vs | (_, vs) <- Map.toAscList byJ]
 
--- | Inverse of 'treeVToForgetFlat' for a known spine (pops mult copies in spine order).
-forgetFlatToTreeV
+-- | Inverse of 'repVToForgetFlat' for a known spine (pops mult copies in spine order).
+forgetFlatToRepV
   :: forall ts
-   . KnownTreeRep ts
+   . KnownRep ts
   => VS.Vector (Complex Double)
-  -> TreeV ts
-forgetFlatToTreeV buf =
-  let s = treeRepSing @ts
+  -> RepV ts
+forgetFlatToRepV buf =
+  let s = repSing @ts
       byJ0 = splitForgetByRoots (treeRootList s) buf
    in scatterRootChannels s byJ0
 
@@ -2881,17 +2311,17 @@ splitForgetByRoots roots buf =
    in Map.fromList [(j, sliceJ j) | j <- sortedJs]
 
 scatterRootChannels
-  :: STreeRep ts
+  :: SRep ts
   -> Map.Map Int [VS.Vector (Complex Double)]
-  -> TreeV ts
-scatterRootChannels STreeNil _ = TNil
-scatterRootChannels (STreeCons (t :: SIrrepTree u) rest) m =
+  -> RepV ts
+scatterRootChannels SRepNil _ = RNil
+scatterRootChannels (SRepCons (t :: SIrrepTree u) rest) m =
   case t of
     SLeaf @j ->
       let tj = fromIntegral (natVal (Proxy @j)) :: Int
        in case Map.lookup tj m of
             Just (v : vs) ->
-              TCons @u
+              RCons @u
                 (unsafeFromArray v)
                 (scatterRootChannels rest (Map.insert tj vs m))
             _ ->
@@ -2900,7 +2330,7 @@ scatterRootChannels (STreeCons (t :: SIrrepTree u) rest) m =
       let tj = fromIntegral (natVal (Proxy @j)) :: Int
        in case Map.lookup tj m of
             Just (v : vs) ->
-              TCons @u
+              RCons @u
                 (unsafeFromArray v)
                 (scatterRootChannels rest (Map.insert tj vs m))
             _ ->
@@ -2914,75 +2344,75 @@ scatterRootChannels (STreeCons (t :: SIrrepTree u) rest) m =
 -- laws for spin-1.
 fuseMapRight
   :: forall a q q'
-   . ( KnownTreeRep a
-     , KnownTreeRep q
-     , KnownTreeRep q'
-     , KnownTreeRep (FuseTreeRep a q)
-     , KnownTreeRep (FuseTreeRep a q')
+   . ( KnownRep a
+     , KnownRep q
+     , KnownRep q'
+     , KnownRep (FuseRep a q)
+     , KnownRep (FuseRep a q')
      )
-  => (TreeV q -> TreeV q')
-  -> TreeV (FuseTreeRep a q)
-  -> TreeV (FuseTreeRep a q')
+  => (RepV q -> RepV q')
+  -> RepV (FuseRep a q)
+  -> RepV (FuseRep a q')
 fuseMapRight f tv =
-  let secsA = treeRepExpandedSectors (treeRepSing @a)
-      secsQ = treeRepExpandedSectors (treeRepSing @q)
-      secsQ' = treeRepExpandedSectors (treeRepSing @q')
+  let secsA = repExpandedSectors (repSing @a)
+      secsQ = repExpandedSectors (repSing @q)
+      secsQ' = repExpandedSectors (repSing @q')
       fFlat =
-        treeVToExpandedFlat @q' . f . expandedFlatToTreeV @q
-      vin = treeVToForgetFlat @(FuseTreeRep a q) tv
+        repVToExpandedFlat @q' . f . expandedFlatToRepV @q
+      vin = repVToForgetFlat @(FuseRep a q) tv
       vout = fuseMapRightFlatSectors secsA secsQ secsQ' fFlat vin
-   in forgetFlatToTreeV @(FuseTreeRep a q') vout
+   in forgetFlatToRepV @(FuseRep a q') vout
 
 -- | Expanded @(tj, 1, off)@ sectors — one slot per tree (spine order).
-treeRepExpandedSectors :: STreeRep ts -> [(Int, Int, Int)]
-treeRepExpandedSectors = go 0
+repExpandedSectors :: SRep ts -> [(Int, Int, Int)]
+repExpandedSectors = go 0
   where
-    go :: Int -> STreeRep ts' -> [(Int, Int, Int)]
-    go _ STreeNil = []
-    go off (STreeCons t rest) =
+    go :: Int -> SRep ts' -> [(Int, Int, Int)]
+    go _ SRepNil = []
+    go off (SRepCons t rest) =
       let tj = rootLab t
           d = tj + 1
        in (tj, 1, off) : go (off + d) rest
 
--- | Concatenate root vectors in spine order (matches 'treeRepExpandedSectors').
-treeVToExpandedFlat
+-- | Concatenate root vectors in spine order (matches 'repExpandedSectors').
+repVToExpandedFlat
   :: forall ts
-   . KnownTreeRep ts
-  => TreeV ts
+   . KnownRep ts
+  => RepV ts
   -> VS.Vector (Complex Double)
-treeVToExpandedFlat = go (treeRepSing @ts)
+repVToExpandedFlat = go (repSing @ts)
   where
-    go :: STreeRep ts' -> TreeV ts' -> VS.Vector (Complex Double)
-    go STreeNil TNil = VS.empty
-    go (STreeCons t rest) (TCons v rs) =
+    go :: SRep ts' -> RepV ts' -> VS.Vector (Complex Double)
+    go SRepNil RNil = VS.empty
+    go (SRepCons t rest) (RCons v rs) =
       case t of
         SLeaf {} -> toArray v VS.++ go rest rs
         SNode {} -> toArray v VS.++ go rest rs
-    go _ _ = error "treeVToExpandedFlat: TreeV / STreeRep mismatch"
+    go _ _ = error "repVToExpandedFlat: RepV / SRep mismatch"
 
--- | Inverse of 'treeVToExpandedFlat'.
-expandedFlatToTreeV
+-- | Inverse of 'repVToExpandedFlat'.
+expandedFlatToRepV
   :: forall ts
-   . KnownTreeRep ts
+   . KnownRep ts
   => VS.Vector (Complex Double)
-  -> TreeV ts
-expandedFlatToTreeV buf = go 0 (treeRepSing @ts)
+  -> RepV ts
+expandedFlatToRepV buf = go 0 (repSing @ts)
   where
-    go :: Int -> STreeRep ts' -> TreeV ts'
-    go _ STreeNil = TNil
-    go off (STreeCons (t :: SIrrepTree u) rest) =
+    go :: Int -> SRep ts' -> RepV ts'
+    go _ SRepNil = RNil
+    go off (SRepCons (t :: SIrrepTree u) rest) =
       case t of
         SLeaf @j ->
           let d = fromIntegral (natVal (Proxy @j)) + 1
               v = unsafeFromArray (VS.slice off d buf)
-           in TCons @u v (go (off + d) rest)
+           in RCons @u v (go (off + d) rest)
         SNode @j _ _ ->
           let d = fromIntegral (natVal (Proxy @j)) + 1
               v = unsafeFromArray (VS.slice off d buf)
-           in TCons @u v (go (off + d) rest)
+           in RCons @u v (go (off + d) rest)
 
--- | Coalesced @(tj, multiplicity)@ pairs matching 'ForgetTreeRep' / 'fuseSU2Flat'.
-forgetSectorPairs :: STreeRep ts -> [(Int, Int)]
+-- | Coalesced @(tj, multiplicity)@ pairs matching 'ForgetRep' / 'fuseSU2Flat'.
+forgetSectorPairs :: SRep ts -> [(Int, Int)]
 forgetSectorPairs =
   Map.toAscList
     . Prelude.foldl
@@ -2990,236 +2420,28 @@ forgetSectorPairs =
       Map.empty
     . treeRootList
 
-treeRootList :: STreeRep ts -> [Int]
-treeRootList STreeNil = []
-treeRootList (STreeCons t rest) = rootLab t : treeRootList rest
+treeRootList :: SRep ts -> [Int]
+treeRootList SRepNil = []
+treeRootList (SRepCons t rest) = rootLab t : treeRootList rest
 
 fuseMapLeft
   :: forall a a' b
-   . ( KnownTreeRep a
-     , KnownTreeRep a'
-     , KnownTreeRep b
-     , KnownTreeRep (FuseTreeRep a b)
-     , KnownTreeRep (FuseTreeRep a' b)
+   . ( KnownRep a
+     , KnownRep a'
+     , KnownRep b
+     , KnownRep (FuseRep a b)
+     , KnownRep (FuseRep a' b)
      )
-  => (TreeV a -> TreeV a')
-  -> TreeV (FuseTreeRep a b)
-  -> TreeV (FuseTreeRep a' b)
+  => (RepV a -> RepV a')
+  -> RepV (FuseRep a b)
+  -> RepV (FuseRep a' b)
 fuseMapLeft f tv =
-  let secsA = treeRepExpandedSectors (treeRepSing @a)
-      secsA' = treeRepExpandedSectors (treeRepSing @a')
-      secsB = treeRepExpandedSectors (treeRepSing @b)
+  let secsA = repExpandedSectors (repSing @a)
+      secsA' = repExpandedSectors (repSing @a')
+      secsB = repExpandedSectors (repSing @b)
       fFlat =
-        treeVToExpandedFlat @a' . f . expandedFlatToTreeV @a
-      vin = treeVToForgetFlat @(FuseTreeRep a b) tv
+        repVToExpandedFlat @a' . f . expandedFlatToRepV @a
+      vin = repVToForgetFlat @(FuseRep a b) tv
       vout = fuseMapLeftFlatSectors secsA secsA' secsB fFlat vin
-   in forgetFlatToTreeV @(FuseTreeRep a' b) vout
+   in forgetFlatToRepV @(FuseRep a' b) vout
 
---------------------------------------------------------------------------------
--- Braid (copy-axis swap on each sector)
---------------------------------------------------------------------------------
-
--- | Categorical swap of copy factors @C m ⊗ C n@ (irrep leg unchanged).
-swapCopyProductSector
-  :: forall m n d
-   . ( KnownNat m
-     , KnownNat n
-     , KnownNat d
-     )
-  => (C m ⊗ C n) ⊗ C d
-  -> (C n ⊗ C m) ⊗ C d
-swapCopyProductSector sec = (swapMap ⊗^ id) $ sec
-
--- | Braid an unfused atom pair: @r ⊗ q → q ⊗ r@.
-swapAtomPair
-  :: forall j1 j2 m n
-   . ( KnownNat j1
-     , KnownNat j2
-     , KnownNat m
-     , KnownNat n
-     , KnownNat (IrrepDim j1)
-     , KnownNat (IrrepDim j2)
-     )
-  => AtomPairV j1 j2 m n
-  -> AtomPairV j2 j1 n m
-swapAtomPair sec = swapMap $ sec
-
--- | Sector-level braid payload (@BraidMult@ on the copy axis).
-braidSector
-  :: SIrrep j
-  -> SMult μ
-  -> ToVSector j μ
-  -> ToVSector j (BraidMult μ)
-braidSector SAtomI SMultAtom v = v
-braidSector (SAtomI @j) (SMultProd (SMultAtom @m) (SMultAtom @n)) v =
-  swapCopyProductSector @m @n @(IrrepDim j) v
-braidSector _ _ _ =
-  error "braidSector: unsupported multiplicity shape"
-
--- | Braid every sector in a 'RepV' spine (driven by 'SRep'; no 'BraidSpine' class).
-braid
-  :: forall rs
-   . KnownSymRep rs
-  => RepV rs
-  -> RepV (Braid rs)
-braid = go (symRepSing @rs)
-  where
-    go :: forall rs'. SRep rs' -> RepV rs' -> RepV (Braid rs')
-    go SRepNil RNil = RNil
-    go (SRepCons se sm rest) (RCons v rs) =
-      RCons (braidSector se sm v) (go rest rs)
-
--- | Project a spine onto its trivial (@0@) sectors.
---
--- Atom keep-vs-drop still needs 'ProjectAtomOrd': @CmpNat j 0@ only reduces when
--- @j@ is in an instance head.
-class ProjectToSymmetric (rs :: Rep) where
-  projectToSymmetric :: RepV rs -> RepV (FilterTrivial rs)
-
-instance ProjectToSymmetric '[] where
-  projectToSymmetric RNil = RNil
-
-instance {-# OVERLAPPING #-}
-  ( CmpNat j 0 ~ ord
-  , ProjectAtomOrd ord j ('AtomM m) rest
-  , ProjectToSymmetric rest
-  ) =>
-  ProjectToSymmetric ('(j, 'AtomM m) ': rest)
-  where
-  projectToSymmetric (RCons v rs) =
-    projectAtomOrd @ord @j @('AtomM m) @rest
-      v
-      (projectToSymmetric rs)
-
-instance {-# OVERLAPPING #-}
-  ( CmpNat j 0 ~ ord
-  , ProjectAtomOrd ord j ('Prod ('AtomM m) ('AtomM n)) rest
-  , ProjectToSymmetric rest
-  ) =>
-  ProjectToSymmetric ('(j, 'Prod ('AtomM m) ('AtomM n)) ': rest)
-  where
-  projectToSymmetric (RCons v rs) =
-    projectAtomOrd @ord @j @('Prod ('AtomM m) ('AtomM n)) @rest
-      v
-      (projectToSymmetric rs)
-
-instance {-# OVERLAPPABLE #-}
-  ( FilterTrivial ('(e, μ) ': rest) ~ FilterTrivial rest
-  , ProjectToSymmetric rest
-  ) =>
-  ProjectToSymmetric ('(e, μ) ': rest)
-  where
-  projectToSymmetric (RCons _ rs) = projectToSymmetric rs
-
--- | Keep (@'EQ@ / @j ~ 0@) or drop (@'GT@) one atom sector.
--- Rest is already 'FilterTrivial'-projected (caller responsibility).
-class ProjectAtomOrd
-  (ord :: Ordering)
-  (j :: Nat)
-  (μ :: MultExpr)
-  (rest :: Rep)
- where
-  projectAtomOrd
-    :: ToVSector j μ
-    -> RepV (FilterTrivial rest)
-    -> RepV (FilterTrivial ('(j, μ) ': rest))
-
-instance
-  ( j ~ 0
-  ) =>
-  ProjectAtomOrd 'EQ j μ rest
-  where
-  projectAtomOrd v rs = RCons @0 @μ v rs
-
-instance
-  ( FilterTrivial ('(j, μ) ': rest) ~ FilterTrivial rest
-  ) =>
-  ProjectAtomOrd 'GT j μ rest
-  where
-  projectAtomOrd _ rs = rs
-
---------------------------------------------------------------------------------
--- rmove (R-matrix on fused tensor)
---------------------------------------------------------------------------------
-
--- | SU(2) R-phase @(-1)^((j₁+j₂-j)/2)@ on one fused atom sector.
-rPhaseSector
-  :: forall j1 j2 j μ
-   . ( KnownNat j1
-     , KnownNat j2
-     , KnownNat j
-     , VectorSpace (ToVSector j μ)
-     , Scalar (ToVSector j μ) ~ Complex Double
-     )
-  => ToVSector j μ
-  -> ToVSector j μ
-rPhaseSector v = (phase :+ 0) *^ v
-  where
-    phase = (-1) ^ ((tj1 + tj2 - tj) `div` 2)
-    tj1 = fromIntegral (natVal (Proxy @j1)) :: Int
-    tj2 = fromIntegral (natVal (Proxy @j2)) :: Int
-    tj = fromIntegral (natVal (Proxy @j)) :: Int
-
--- | Copy-leg swap after R-phase (@'AtomM'@ fixed; @'Prod'@ legs flip).
-type family RmoveMult (μ :: MultExpr) :: MultExpr where
-  RmoveMult ('AtomM m) = 'AtomM m
-  RmoveMult ('Prod ('AtomM m) ('AtomM n)) = 'Prod ('AtomM n) ('AtomM m)
-  RmoveMult ('Prod μ1 μ2) = 'Prod (RmoveMult μ2) (RmoveMult μ1)
-
--- | Fused spine after R-move: irrep fixed; multiplicity via 'RmoveMult'.
-type family RmoveTarget (j1 :: Nat) (j2 :: Nat) (rs :: Rep) :: Rep where
-  RmoveTarget _ _ '[] = '[]
-  RmoveTarget j1 j2 ('(e, μ) ': rest) =
-    '(e, RmoveMult μ) ': RmoveTarget j1 j2 rest
-
--- | Sector-level R-move (phase + optional copy swap). Fused atom spines only.
-rmoveSector
-  :: forall j1 j2 j μ
-   . ( KnownNat j1
-     , KnownNat j2
-     )
-  => SIrrep j
-  -> SMult μ
-  -> ToVSector j μ
-  -> ToVSector j (RmoveMult μ)
-rmoveSector SAtomI (SMultAtom @m) v =
-  rPhaseSector @j1 @j2 @j @('AtomM m) v
-rmoveSector SAtomI (SMultProd (SMultAtom @m) (SMultAtom @n)) v =
-  swapCopyProductSector @m @n @(IrrepDim j)
-    (rPhaseSector @j1 @j2 @j @('Prod ('AtomM m) ('AtomM n)) v)
-rmoveSector _ _ _ =
-  error "rmoveSector: expected fused atom spine"
-
--- | R-move every sector in a fused 'RepV' spine (R-phase, then copy swap on @'Prod'@).
--- Driven by 'SRep' (no dedicated fused-atom singleton).
-rmoveSpine
-  :: forall j1 j2 rs
-   . ( KnownNat j1
-     , KnownNat j2
-     , KnownSymRep rs
-     )
-  => RepV rs
-  -> RepV (RmoveTarget j1 j2 rs)
-rmoveSpine = go (symRepSing @rs)
-  where
-    go
-      :: forall rs'
-       . SRep rs'
-      -> RepV rs'
-      -> RepV (RmoveTarget j1 j2 rs')
-    go SRepNil RNil = RNil
-    go (SRepCons se sm rest) (RCons v rs) =
-      RCons (rmoveSector @j1 @j2 se sm v) (go rest rs)
-
--- | Leaf braiding @r ⊗ s → s ⊗ r@ on a fused pair
--- (@fuseExpr ∘ braid ≅ rmove ∘ fuseExpr@).
-rmove
-  :: forall j1 j2 r s
-   . ( KnownNat j1
-     , KnownNat j2
-     , KnownSymRep (FuseHom r s)
-     , RmoveTarget j1 j2 (FuseHom r s) ~ FuseHom s r
-     )
-  => RepV (FuseHom r s)
-  -> RepV (FuseHom s r)
-rmove = rmoveSpine @j1 @j2 @(FuseHom r s)

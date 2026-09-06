@@ -18,17 +18,17 @@ import qualified Data.Vector.Storable as VS
 
 dumpTrees
   :: forall ts
-   . KnownTreeRep ts
+   . KnownRep ts
   => String
-  -> TreeV ts
+  -> RepV ts
   -> IO ()
 dumpTrees label tv = do
   putStrLn $ "=== " ++ label ++ " ==="
-  go 0 (treeRepSing @ts) tv
+  go 0 (repSing @ts) tv
   where
-    go :: Int -> STreeRep ts' -> TreeV ts' -> IO ()
-    go _ STreeNil TNil = pure ()
-    go i (STreeCons t rest) (TCons v rs) = do
+    go :: Int -> SRep ts' -> RepV ts' -> IO ()
+    go _ SRepNil RNil = pure ()
+    go i (SRepCons t rest) (RCons v rs) = do
       let arr :: VS.Vector (Complex Double)
           arr = case t of
             SLeaf {} -> toArray v
@@ -58,21 +58,21 @@ dumpTrees label tv = do
       SLeaf {} -> False
     isCupKeep _ = False
 
-f11 :: TreeV Hom11
+f11 :: RepV Hom11
 f11 =
-  TCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
-    TCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) TNil
+  RCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
+    RCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) RNil
 
 main :: IO ()
 main = do
-  let domFid = fuseTreeRepTerm @Hom11 @Hom11 f11 idHom11
+  let domFid = fuseRepTerm @Hom11 @Hom11 f11 idHom11
       outerFid = fmoveOuterHom @Leaf1 @Leaf1 @Leaf1 domFid
       cupFid = fmoveInnerHom @Leaf1 @Leaf1 @Leaf1 outerFid
       outFid =
         unitorHom @Leaf1 @Leaf1
           (cupTensorIdHom @Leaf1 @Leaf1 @Leaf1 cupFid)
-  dumpTrees @(FuseTreeRep Hom11 Hom11) "Hom11 dom Fid" domFid
+  dumpTrees @(FuseRep Hom11 Hom11) "Hom11 dom Fid" domFid
   dumpTrees "Hom11 outer Fid" outerFid
   dumpTrees "Hom11 cupR Fid" cupFid
-  putStrLn $ "outFid flat = " ++ show (VS.toList (treeVToForgetFlat @Hom11 outFid))
-  putStrLn $ "f11 flat    = " ++ show (VS.toList (treeVToForgetFlat @Hom11 f11))
+  putStrLn $ "outFid flat = " ++ show (VS.toList (repVToForgetFlat @Hom11 outFid))
+  putStrLn $ "f11 flat    = " ++ show (VS.toList (repVToForgetFlat @Hom11 f11))
