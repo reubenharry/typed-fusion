@@ -18,7 +18,7 @@ import Data.Complex (Complex ((:+)), magnitude, realPart)
 import Data.Kind (Type)
 import Data.Maybe (fromJust)
 import Data.Proxy (Proxy (..))
-import Data.VectorSpace ((*^))
+import Data.VectorSpace (InnerSpace ((<.>)), (*^), (^-^))
 import Experiments.Categorical.Associative (Associative (..))
 import Experiments.Categorical.Bifunctor (Bifunctor (..))
 import Experiments.Fusion.Obj as FObj
@@ -979,6 +979,80 @@ type SmokeForgetEqFuseFlat =
     (ForgetTreeRep (FuseAssocL '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1]))
     (FuseFlat (FuseFlat (Atom1 1) (Atom1 1)) (Atom1 1))
 
+-- | 'FuseAssocL' equals the concrete 'AssocL111' spine used by 'fmoveTrees111'.
+type SmokeAssocL111 =
+  AssertEqTreeRep
+    (FuseAssocL '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1])
+    AssocL111
+
+type SmokeAssocR111 =
+  AssertEqTreeRep
+    (FuseAssocR '[ 'Leaf 1] '[ 'Leaf 1] '[ 'Leaf 1])
+    AssocR111
+
+-- | Concrete Leaf-½ Hom-compose spines match 'FuseTreeRep' expansions.
+type SmokeHom11 =
+  AssertEqTreeRep
+    (FuseTreeRep '[ 'Leaf 1] '[ 'Leaf 1])
+    Hom11
+
+type SmokeDom111 =
+  AssertEqTreeRep
+    (FuseTreeRep Hom11 Hom11)
+    Dom111
+
+type SmokeMid111 =
+  AssertEqTreeRep
+    (FuseTreeRep '[ 'Leaf 1] AssocR111)
+    Mid111
+
+type SmokeCupR111 =
+  AssertEqTreeRep
+    (FuseTreeRep '[ 'Leaf 1] AssocL111)
+    CupR111
+
+type SmokeCupMiddleHom11 =
+  AssertEqTreeRep
+    (CupMiddleTrees CupR111)
+    Hom11
+
+type SmokeHom00 =
+  AssertEqTreeRep
+    (FuseTreeRep '[ 'Leaf 0] '[ 'Leaf 0])
+    Hom00
+
+type SmokeDom000 =
+  AssertEqTreeRep
+    (FuseTreeRep Hom00 Hom00)
+    Dom000
+
+type SmokeCupR000 =
+  AssertEqTreeRep
+    (FuseTreeRep '[ 'Leaf 0] (FuseTreeRep Hom00 '[ 'Leaf 0]))
+    CupR000
+
+type SmokeCupMiddleHom00 =
+  AssertEqTreeRep
+    (CupMiddleTrees CupR000)
+    Hom00
+
+-- | Tree unitors: @TreeUnit ⊗ c = c@.
+type SmokeFuseTreeRepU =
+  AssertEqTreeRep
+    (FuseTreeRepU TreeUnit '[ 'Leaf 1])
+    '[ 'Leaf 1]
+
+-- | Flat layout equals reduced @Flat111@ (both associations).
+type SmokeFlat111L =
+  AssertEqType
+    (ToVSpine (FuseFlat (FuseFlat (Atom1 1) (Atom1 1)) (Atom1 1)))
+    Flat111
+
+type SmokeFlat111R =
+  AssertEqType
+    (ToVSpine (FuseFlat (Atom1 1) (FuseFlat (Atom1 1) (Atom1 1))))
+    Flat111
+
 smokeBraidSector :: Proxy SmokeBraidSector
 smokeBraidSector = Proxy
 
@@ -1065,3 +1139,103 @@ smokeForgetAssocLR = Proxy
 
 smokeForgetEqFuseFlat :: Proxy SmokeForgetEqFuseFlat
 smokeForgetEqFuseFlat = Proxy
+
+smokeAssocL111 :: Proxy SmokeAssocL111
+smokeAssocL111 = Proxy
+
+smokeAssocR111 :: Proxy SmokeAssocR111
+smokeAssocR111 = Proxy
+
+smokeHom11 :: Proxy SmokeHom11
+smokeHom11 = Proxy
+
+smokeDom111 :: Proxy SmokeDom111
+smokeDom111 = Proxy
+
+smokeMid111 :: Proxy SmokeMid111
+smokeMid111 = Proxy
+
+smokeCupR111 :: Proxy SmokeCupR111
+smokeCupR111 = Proxy
+
+smokeCupMiddleHom11 :: Proxy SmokeCupMiddleHom11
+smokeCupMiddleHom11 = Proxy
+
+smokeHom00 :: Proxy SmokeHom00
+smokeHom00 = Proxy
+
+smokeDom000 :: Proxy SmokeDom000
+smokeDom000 = Proxy
+
+smokeCupR000 :: Proxy SmokeCupR000
+smokeCupR000 = Proxy
+
+smokeCupMiddleHom00 :: Proxy SmokeCupMiddleHom00
+smokeCupMiddleHom00 = Proxy
+
+smokeFuseTreeRepU :: Proxy SmokeFuseTreeRepU
+smokeFuseTreeRepU = Proxy
+
+smokeFlat111L :: Proxy SmokeFlat111L
+smokeFlat111L = Proxy
+
+smokeFlat111R :: Proxy SmokeFlat111R
+smokeFlat111R = Proxy
+
+-- | Sample left-assoc @½⊗½⊗½@ state for F-move self-tests.
+sampleAssocL111 :: TreeV AssocL111
+sampleAssocL111 =
+  vToTreeV @AssocL111 (konst 1, (konst 0.5, konst 0.25))
+
+-- | Generic tree F-move agrees with typed Flat111 path; @F⁻¹ ∘ F ≈ id@.
+fmoveTreesSelfTest :: Bool
+fmoveTreesSelfTest = checkFmoveTrees111 sampleAssocL111
+
+-- | Force the F-move self-test at module load (fails loud if broken).
+fmoveTreesSelfTestOk :: ()
+fmoveTreesSelfTestOk =
+  if fmoveTreesSelfTest
+    then ()
+    else error "fmoveTreesSelfTest failed: tree F ⧸ Flat111 or round-trip"
+
+-- | Pure Mid from 'TensorTrees': product path and general 'fuseMapRightFinv111' agree.
+fuseMapRightFinvSelfTest :: Bool
+fuseMapRightFinvSelfTest =
+  let leaf = TCons (konst 1) TNil
+      assocR = vToTreeV @AssocR111 (konst 0.5, (konst 0.25, konst 0.125))
+      mid = fuseTensorTrees @Leaf1 @AssocR111 (TensorTrees leaf assocR)
+      TensorTrees leaf2 assocR2 = unfuseMid111 mid
+      mid2 = fuseTensorTrees @Leaf1 @AssocR111 (TensorTrees leaf2 assocR2)
+      cupProd = fuseMapRightFinvProduct111 mid
+      cupGen = fuseMapRightFinv111 mid
+      expected =
+        fuseTensorTrees @Leaf1 @AssocL111 $
+          TensorTrees leaf (fmoveInvTrees111 assocR)
+      close a b =
+        let d = a ^-^ b
+         in magnitude (d <.> d) < 1e-12
+      approxHom16
+        (a0, (a2, (b0, (b2, (c2, c4)))))
+        (a0', (a2', (b0', (b2', (c2', c4'))))) =
+          and
+            [ close a0 a0'
+            , close a2 a2'
+            , close b0 b0'
+            , close b2 b2'
+            , close c2 c2'
+            , close c4 c4'
+            ]
+   in approxHom16 (treeVToV @Mid111 mid) (treeVToV @Mid111 mid2)
+        && approxHom16 (treeVToV @CupR111 cupProd) (treeVToV @CupR111 expected)
+        && approxHom16 (treeVToV @CupR111 cupGen) (treeVToV @CupR111 expected)
+
+-- | Full Leaf-½ Hom compose ladder: @id∘id ≈ id@ and unit laws.
+composeMorTreesSelfTest :: Bool
+composeMorTreesSelfTest =
+  checkComposeMorTrees111 && checkComposeMorTrees000
+
+composeMorTreesSelfTestOk :: ()
+composeMorTreesSelfTestOk =
+  if composeMorTreesSelfTest
+    then ()
+    else error "composeMorTreesSelfTest failed: id/unit laws on Hom11/Hom00"

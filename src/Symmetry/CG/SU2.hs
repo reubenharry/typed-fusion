@@ -25,6 +25,9 @@
 module Symmetry.CG.SU2
   ( fuseSU2Flat
   , fuseCGChannel
+  , unfuseCGChannel
+  , unfuseLeafAssocHalf
+  , fuseLeafAssocHalf
   , cgMatrixTwoIrreps
   , cgChannel
   , fusionChannels
@@ -52,7 +55,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
 import Symmetry.Group (Group (SU2))
-import Symmetry.RepSingleton (SRep (..))
+import Symmetry.RepSingleton (KnownRep (..), SRep (..), repSing)
 
 -- | Total-@tj@ channels in @j1 ⊗ j2@ (same order as 'TensorIrrepRepSU2').
 fusionChannels :: Int -> Int -> [Int]
@@ -203,6 +206,43 @@ fuseCGChannel = arr (LinearFunction applyCG)
             | col <- [0 .. dIn - 1]
             ]
 
+-- | Inverse of 'fuseCGChannel' on the channel image (real CG ⇒ transpose).
+unfuseCGChannel
+  :: forall j1 j2 j
+   . ( KnownNat j1
+     , KnownNat j2
+     , KnownNat j
+     , KnownNat (j1 + 1)
+     , KnownNat (j2 + 1)
+     , KnownNat (j + 1)
+     , LSpace (C (j1 + 1))
+     , LSpace (C (j2 + 1))
+     , LSpace (C (j + 1))
+     , LSpace (C (j1 + 1) ⊗ C (j2 + 1))
+     , TensorSpace (C (j1 + 1) ⊗ C (j2 + 1))
+     , Scalar (C (j1 + 1)) ~ Complex Double
+     , Scalar (C (j2 + 1)) ~ Complex Double
+     , Scalar (C (j + 1)) ~ Complex Double
+     , Scalar (C (j1 + 1) ⊗ C (j2 + 1)) ~ Complex Double
+     )
+  => C (j + 1) +> (C (j1 + 1) ⊗ C (j2 + 1))
+unfuseCGChannel = arr (LinearFunction applyUnfuse)
+  where
+    applyUnfuse :: C (j + 1) -> C (j1 + 1) ⊗ C (j2 + 1)
+    applyUnfuse w =
+      let tj1 = fromIntegral (natVal (Proxy @j1))
+          tj2 = fromIntegral (natVal (Proxy @j2))
+          tj = fromIntegral (natVal (Proxy @j))
+          dIn = (tj1 + 1) * (tj2 + 1)
+          chan = cgChannel tj1 tj2 tj
+          win = toArray w
+      in unsafeFromArray @(C (j1 + 1) ⊗ C (j2 + 1)) $
+        VS.generate dIn $ \col ->
+          sum
+            [ ((chan !! row !! fromIntegral col) :+ 0) * (win VS.! row)
+            | row <- [0 .. tj]
+            ]
+
 -- | @(tj, multiplicity, flat offset)@ for an SU(2) spine.
 sectorsSU2 :: SRep SU2 r -> [(Int, Int, Int)]
 sectorsSU2 = go 0
@@ -295,3 +335,30 @@ fuseSU2Flat sr sq vin =
     foldM f z (x : xs) = do
       z' <- f z x
       foldM f z' xs
+
+-- | Typed unfuse for @½ ⊗ Assoc(½⊗½⊗½)@ flats: @C 16 → C 2 ⊗ C 8@ (real CG ⇒ transpose of fuse).
+unfuseLeafAssocHalf :: C 16 +> (C 2 ⊗ C 8)
+unfuseLeafAssocHalf = arr (LinearFunction go)
+  where
+    go :: C 16 -> C 2 ⊗ C 8
+    go vout =
+      let sr = repSing @SU2 @'[ '(1, 1)]
+          sq = repSing @SU2 @'[ '(1, 2), '(3, 1)]
+          w = toArray vout
+          dim = VS.length w
+          e i = VS.generate dim (\j -> if j == i then 1 else 0)
+          vin =
+            VS.generate dim $ \i ->
+              let fi = fuseSU2Flat sr sq (e i)
+               in VS.sum $ VS.zipWith (*) fi w
+       in unsafeFromArray vin
+
+-- | Inverse of 'unfuseLeafAssocHalf'.
+fuseLeafAssocHalf :: (C 2 ⊗ C 8) +> C 16
+fuseLeafAssocHalf = arr (LinearFunction go)
+  where
+    go :: C 2 ⊗ C 8 -> C 16
+    go vin =
+      let sr = repSing @SU2 @'[ '(1, 1)]
+          sq = repSing @SU2 @'[ '(1, 2), '(3, 1)]
+       in unsafeFromArray (fuseSU2Flat sr sq (toArray vin))

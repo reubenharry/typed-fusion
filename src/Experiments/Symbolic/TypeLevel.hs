@@ -61,6 +61,9 @@ module Experiments.Symbolic.TypeLevel
   , FuseAssocL
   , FuseAssocR
   , FilterTrivialTrees
+  , TreeUnit
+  , FuseTreeRepU
+  , CupMiddleTrees
     -- * Fusion (CG)
   , FuseRep
   , FuseHom
@@ -259,6 +262,26 @@ type family FilterTrivialTrees (ts :: TreeRep) :: TreeRep where
   FilterTrivialTrees ('Node 0 l r ': rest) =
     'Node 0 l r ': FilterTrivialTrees rest
   FilterTrivialTrees (_ ': rest) = FilterTrivialTrees rest
+
+-- | Monoidal unit as a singleton tree list (bare trivial irrep).
+type TreeUnit = '[ 'Leaf 0]
+
+-- | Fuse with unitors (tree analogue of 'FuseRep').
+type family FuseTreeRepU (a :: TreeRep) (b :: TreeRep) :: TreeRep where
+  FuseTreeRepU '[ 'Leaf 0] b = b
+  FuseTreeRepU a '[ 'Leaf 0] = a
+  FuseTreeRepU a b = FuseTreeRep a b
+
+-- | Cup-ready rewrite: drop a singlet middle from genealogy.
+--
+-- After @fmoveComposeTrees@, trees look like
+-- @'Node j a ('Node jc ('Node 0 m1 m2) c)@. Contracting the @'Node 0@
+-- middle yields @'Node j a c@ (SU(2) dual≅primal). Non-singlet middles drop.
+type family CupMiddleTrees (ts :: TreeRep) :: TreeRep where
+  CupMiddleTrees '[] = '[]
+  CupMiddleTrees ('Node j a ('Node _jc ('Node 0 _m1 _m2) c) ': rest) =
+    'Node j a c ': CupMiddleTrees rest
+  CupMiddleTrees (_ ': rest) = CupMiddleTrees rest
 
 --------------------------------------------------------------------------------
 -- Fusion: CG on atom pairs, then coalesced rep
