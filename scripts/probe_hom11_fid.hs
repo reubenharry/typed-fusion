@@ -66,9 +66,11 @@ f11 =
 main :: IO ()
 main = do
   let domFid = fuseTreeRepTerm @Hom11 @Hom11 f11 idHom11
-      outerFid = fmoveOuterTrees @Leaf1 @Leaf1 @Hom11 domFid
-      cupFid = fmoveComposeTreesLeaf @1 @1 @1 domFid
-      outFid = cupComposeTreesLeaf @1 @Leaf1 @Leaf1 cupFid
+      outerFid = fmoveOuterHom @Leaf1 @Leaf1 @Leaf1 domFid
+      cupFid = fmoveInnerHom @Leaf1 @Leaf1 @Leaf1 outerFid
+      outFid =
+        unitorHom @Leaf1 @Leaf1
+          (cupTensorIdHom @Leaf1 @Leaf1 @Leaf1 cupFid)
   dumpTrees @(FuseTreeRep Hom11 Hom11) "Hom11 dom Fid" domFid
   dumpTrees "Hom11 outer Fid" outerFid
   dumpTrees "Hom11 cupR Fid" cupFid

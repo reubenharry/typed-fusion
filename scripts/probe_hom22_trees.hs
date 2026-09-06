@@ -66,15 +66,15 @@ f22 =
 main :: IO ()
 main = do
   let domFid = fuseTreeRepTerm @Hom22 @Hom22 f22 idHom22
-      outerFid = fmoveOuterTrees @Leaf2 @Leaf2 @Hom22 domFid
-      cupFid = fmoveComposeTreesLeaf @2 @2 @2 domFid
+      outerFid = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domFid
+      cupFid = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerFid
       domIdf = fuseTreeRepTerm @Hom22 @Hom22 idHom22 f22
-      outerIdf = fmoveOuterTrees @Leaf2 @Leaf2 @Hom22 domIdf
-      cupIdf = fmoveComposeTreesLeaf @2 @2 @2 domIdf
+      outerIdf = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domIdf
+      cupIdf = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerIdf
   dumpTrees @(FuseTreeRep Hom22 Hom22) "dom Fid (f⊗id)" domFid
   dumpTrees "outer Fid" outerFid
-  dumpTrees "cupR Fid (after F⁻¹)" cupFid
+  dumpTrees "cupR Fid (after id⊗F)" cupFid
   putStrLn ""
   dumpTrees @(FuseTreeRep Hom22 Hom22) "dom Idf (id⊗f)" domIdf
   dumpTrees "outer Idf" outerIdf
-  dumpTrees "cupR Idf (after F⁻¹)" cupIdf
+  dumpTrees "cupR Idf (after id⊗F)" cupIdf

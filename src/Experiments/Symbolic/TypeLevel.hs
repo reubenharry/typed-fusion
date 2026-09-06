@@ -62,8 +62,7 @@ module Experiments.Symbolic.TypeLevel
   , FuseAssocR
   , FilterTrivialTrees
   , TreeUnit
-  , FuseTreeRepU
-  , CupMiddleTrees
+  , UnitorCodomain
     -- * Fusion (CG)
   , FuseRep
   , FuseHom
@@ -266,22 +265,12 @@ type family FilterTrivialTrees (ts :: TreeRep) :: TreeRep where
 -- | Monoidal unit as a singleton tree list (bare trivial irrep).
 type TreeUnit = '[ 'Leaf 0]
 
--- | Fuse with unitors (tree analogue of 'FuseRep').
-type family FuseTreeRepU (a :: TreeRep) (b :: TreeRep) :: TreeRep where
-  FuseTreeRepU '[ 'Leaf 0] b = b
-  FuseTreeRepU a '[ 'Leaf 0] = a
-  FuseTreeRepU a b = FuseTreeRep a b
-
--- | Cup-ready rewrite: drop a singlet middle from genealogy.
---
--- After @fmoveComposeTrees@, trees look like
--- @'Node j a ('Node jc ('Node 0 m1 m2) c)@. Contracting the @'Node 0@
--- middle yields @'Node j a c@ (SU(2) dual≅primal). Non-singlet middles drop.
-type family CupMiddleTrees (ts :: TreeRep) :: TreeRep where
-  CupMiddleTrees '[] = '[]
-  CupMiddleTrees ('Node j a ('Node _jc ('Node 0 _m1 _m2) c) ': rest) =
-    'Node j a c ': CupMiddleTrees rest
-  CupMiddleTrees (_ ': rest) = CupMiddleTrees rest
+-- | Drop @TreeUnit@ left children after @0 ⊗ t → t@:
+-- @'Node _ ('Leaf 0) t ↦ t@. Inverse shape of @FuseTreeRep TreeUnit@.
+type family UnitorCodomain (uc :: TreeRep) :: TreeRep where
+  UnitorCodomain '[] = '[]
+  UnitorCodomain ('Node _j ('Leaf 0) t ': rest) =
+    t ': UnitorCodomain rest
 
 --------------------------------------------------------------------------------
 -- Fusion: CG on atom pairs, then coalesced rep

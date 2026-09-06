@@ -17,16 +17,8 @@ main = do
         TCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
           TCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
             TCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) TNil
-      domFid = fuseTreeRepTerm @Hom22 @Hom22 f idHom22
-      cupFid = fmoveComposeTreesLeaf @2 @2 @2 domFid
-      outFid = cupComposeTreesLeaf @2 @Leaf2 @Leaf2 cupFid
-      domIdf = fuseTreeRepTerm @Hom22 @Hom22 idHom22 f
-      cupIdf = fmoveComposeTreesLeaf @2 @2 @2 domIdf
-      outIdf = cupComposeTreesLeaf @2 @Leaf2 @Leaf2 cupIdf
+      outFid = composeHomTrees @Leaf2 @Leaf2 @Leaf2 f idHom22
+      outIdf = composeHomTrees @Leaf2 @Leaf2 @Leaf2 idHom22 f
   putStrLn $ "f        = " ++ show (flat @Hom22 f)
-  putStrLn $ "cupFid   = " ++ show (flat cupFid)
   putStrLn $ "outFid   = " ++ show (flat @Hom22 outFid)
-  putStrLn $ "cupIdf   = " ++ show (flat cupIdf)
   putStrLn $ "outIdf   = " ++ show (flat @Hom22 outIdf)
-  putStrLn $ "mid keep Fid = " ++ show (flat (cupMiddleTreesTerm cupFid))
-  putStrLn $ "mid keep Idf = " ++ show (flat (cupMiddleTreesTerm cupIdf))

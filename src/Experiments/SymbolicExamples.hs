@@ -8,7 +8,8 @@
 
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
 -- Covers 'ToVSpine' / Dual-left Hom / 'rtensor' / 'cupRdual' / 'composeMor' /
--- Dual-left 'HomUnfused'; tree fused Hom ('HomFused' / 'composeMorTrees').
+-- Dual-left 'HomUnfused'; tree fused Hom ('HomFused' / 'composeHomTrees').
+-- Unit laws: 'composeHomTreesSelfTest'.
 -- Fused cups: 'cupFused' / 'capFused' on singlet trees.
 -- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
 module Experiments.SymbolicExamples where
@@ -546,7 +547,8 @@ symbolicExamplesOk =
     , projectToSymmetricOk
     , cupFusedIdSpinHalfOk
     , cupCapFusedRoundtripSpinHalfOk
-    , composeMorTreesSelfTest
+    , composeHomTreesSelfTest
+    , composeHomTreesLeaf1TypedOk
     ]
 
 
@@ -861,10 +863,31 @@ type SmokeCupR111 =
     (FuseTreeRep '[ 'Leaf 1] AssocL111)
     CupR111
 
-type SmokeCupMiddleHom11 =
+-- | Nested outer-F codomain (Mac Lane step 2) equals 'Mid111'.
+type SmokeAfterOuterF111 =
   AssertEqTreeRep
-    (CupMiddleTrees CupR111)
-    Hom11
+    ( FuseTreeRep
+        '[ 'Leaf 1]
+        (FuseTreeRep '[ 'Leaf 1] (FuseTreeRep '[ 'Leaf 1] '[ 'Leaf 1]))
+    )
+    Mid111
+
+-- | Nested cup-ready spine (Mac Lane step 3) equals 'CupR111'.
+type SmokeCupReady111 =
+  AssertEqTreeRep
+    ( FuseTreeRep
+        '[ 'Leaf 1]
+        (FuseTreeRep (FuseTreeRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 1])
+    )
+    CupR111
+
+-- | After @id ⊗ (cup ⊗ id)@: Unit remains as 'TreeUnit' in the middle.
+type SmokeAfterCup111 =
+  AssertEqTreeRep
+    (FuseTreeRep '[ 'Leaf 1] (FuseTreeRep TreeUnit '[ 'Leaf 1]))
+    '[ 'Node 0 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))
+     , 'Node 2 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))
+     ]
 
 type SmokeHom00 =
   AssertEqTreeRep
@@ -880,17 +903,6 @@ type SmokeCupR000 =
   AssertEqTreeRep
     (FuseTreeRep '[ 'Leaf 0] (FuseTreeRep Hom00 '[ 'Leaf 0]))
     CupR000
-
-type SmokeCupMiddleHom00 =
-  AssertEqTreeRep
-    (CupMiddleTrees CupR000)
-    Hom00
-
--- | Tree unitors: @TreeUnit ⊗ c = c@.
-type SmokeFuseTreeRepU =
-  AssertEqTreeRep
-    (FuseTreeRepU TreeUnit '[ 'Leaf 1])
-    '[ 'Leaf 1]
 
 -- | Flat layout equals reduced @Flat111@ (both associations).
 type SmokeFlat111L =
@@ -1020,8 +1032,14 @@ smokeMid111 = Proxy
 smokeCupR111 :: Proxy SmokeCupR111
 smokeCupR111 = Proxy
 
-smokeCupMiddleHom11 :: Proxy SmokeCupMiddleHom11
-smokeCupMiddleHom11 = Proxy
+smokeAfterOuterF111 :: Proxy SmokeAfterOuterF111
+smokeAfterOuterF111 = Proxy
+
+smokeCupReady111 :: Proxy SmokeCupReady111
+smokeCupReady111 = Proxy
+
+smokeAfterCup111 :: Proxy SmokeAfterCup111
+smokeAfterCup111 = Proxy
 
 smokeHom00 :: Proxy SmokeHom00
 smokeHom00 = Proxy
@@ -1031,12 +1049,6 @@ smokeDom000 = Proxy
 
 smokeCupR000 :: Proxy SmokeCupR000
 smokeCupR000 = Proxy
-
-smokeCupMiddleHom00 :: Proxy SmokeCupMiddleHom00
-smokeCupMiddleHom00 = Proxy
-
-smokeFuseTreeRepU :: Proxy SmokeFuseTreeRepU
-smokeFuseTreeRepU = Proxy
 
 smokeFlat111L :: Proxy SmokeFlat111L
 smokeFlat111L = Proxy
@@ -1099,19 +1111,38 @@ fuseMapRightFinvSelfTest =
             ]
    in approxHom16 (treeVToV @CupR111 cupGen) (treeVToV @CupR111 expected)
 
--- | Full Leaf-½ Hom compose ladder: @id∘id ≈ id@ and unit laws.
-composeMorTreesSelfTest :: Bool
-composeMorTreesSelfTest =
-  checkComposeMorTrees111
-    && checkComposeMorTrees000
-    && checkComposeMorTrees222
+-- | Full leaf Hom compose ladder via five Mac Lane morphisms.
+composeHomTreesSelfTest :: Bool
+composeHomTreesSelfTest =
+  checkComposeHomTrees111
+    && checkComposeHomTrees000
+    && checkComposeHomTrees222
+    && checkComposeHomTrees333
+    && checkComposeHomTrees121
+    && checkFmoveTreesLeaves121
+    && checkFmoveHomLeft111
     && checkHomFusedCategory222
+    && checkHomFusedCategory333
     && checkLeaf2FmoveSmoke
     && checkFmoveOuter111
     && checkFuseMapLeftId111
+    && checkUnitorLeaf1
+    && checkUnitorHom11
+    && checkCupLeafHom
 
-composeMorTreesSelfTestOk :: ()
-composeMorTreesSelfTestOk =
-  if composeMorTreesSelfTest
+composeHomTreesSelfTestOk :: ()
+composeHomTreesSelfTestOk =
+  if composeHomTreesSelfTest
     then ()
-    else error "composeMorTreesSelfTest failed: id/unit laws on Hom00/11/22"
+    else error "composeHomTreesSelfTest failed: id/unit laws on leaf Hom"
+
+-- | Typechecks five-morphism 'composeHomTrees' at leaf-½ (do not evaluate).
+composeHomTreesLeaf1
+  :: TreeV Hom11 -> TreeV Hom11 -> TreeV Hom11
+composeHomTreesLeaf1 = composeHomTrees @Leaf1 @Leaf1 @Leaf1
+
+composeHomTreesLeaf1TypedOk :: Bool
+composeHomTreesLeaf1TypedOk =
+  let _ty = composeHomTreesLeaf1
+      _cup = cupTensorIdHomLeaf1
+   in True

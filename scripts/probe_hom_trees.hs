@@ -6,8 +6,8 @@ import Experiments.SymbolicExamples
 
 main :: IO ()
 main = do
-  putStrLn $ "composeMorTreesSelfTest = " ++ show composeMorTreesSelfTest
-  putStrLn $ "checkComposeMorTrees222 = " ++ show checkComposeMorTrees222
+  putStrLn $ "composeHomTreesSelfTest = " ++ show composeHomTreesSelfTest
+  putStrLn $ "checkComposeHomTrees222 = " ++ show checkComposeHomTrees222
   putStrLn $ "checkHomFusedCategory222 = " ++ show checkHomFusedCategory222
-  putStrLn $ "checkComposeMorTrees111 = " ++ show checkComposeMorTrees111
-  putStrLn $ "checkComposeMorTrees000 = " ++ show checkComposeMorTrees000
+  putStrLn $ "checkComposeHomTrees111 = " ++ show checkComposeHomTrees111
+  putStrLn $ "checkComposeHomTrees000 = " ++ show checkComposeHomTrees000

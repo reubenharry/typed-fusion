@@ -62,33 +62,17 @@ f22 =
 main :: IO ()
 main = do
   let domFid = fuseTreeRepTerm @Hom22 @Hom22 f22 idHom22
-      outerFid =
-        fmoveOuterLeafHom @2 @2
-          @(FuseAssocL Leaf2 Leaf2 Hom22)
-          @(FuseAssocR Leaf2 Leaf2 Hom22)
-          domFid
-      cupFid =
-        fuseMapRight
-          @Leaf2
-          @(FuseAssocR Leaf2 Leaf2 Leaf2)
-          @(FuseAssocL Leaf2 Leaf2 Leaf2)
-          (fmoveInvTreesLeaves @2 @2 @2)
-          outerFid
-      outFid = cupComposeTreesLeaf @2 @Leaf2 @Leaf2 cupFid
+      outerFid = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domFid
+      cupFid = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerFid
+      outFid =
+        unitorHom @Leaf2 @Leaf2
+          (cupTensorIdHom @Leaf2 @Leaf2 @Leaf2 cupFid)
       domIdf = fuseTreeRepTerm @Hom22 @Hom22 idHom22 f22
-      outerIdf =
-        fmoveOuterLeafHom @2 @2
-          @(FuseAssocL Leaf2 Leaf2 Hom22)
-          @(FuseAssocR Leaf2 Leaf2 Hom22)
-          domIdf
-      cupIdf =
-        fuseMapRight
-          @Leaf2
-          @(FuseAssocR Leaf2 Leaf2 Leaf2)
-          @(FuseAssocL Leaf2 Leaf2 Leaf2)
-          (fmoveInvTreesLeaves @2 @2 @2)
-          outerIdf
-      outIdf = cupComposeTreesLeaf @2 @Leaf2 @Leaf2 cupIdf
+      outerIdf = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domIdf
+      cupIdf = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerIdf
+      outIdf =
+        unitorHom @Leaf2 @Leaf2
+          (cupTensorIdHom @Leaf2 @Leaf2 @Leaf2 cupIdf)
   dumpNZ "outer Fid (Hom-pres)" outerFid
   dumpNZ "cupR Fid" cupFid
   putStrLn $ "outFid = " ++ show (VS.toList (treeVToForgetFlat @Hom22 outFid))

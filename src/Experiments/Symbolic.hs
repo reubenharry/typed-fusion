@@ -14,8 +14,8 @@
 -- Unfused composition: 'composeMorObj' \/ 'HomUnfused' on @ToVObj@ trees
 -- (complete Category; linearmap α / unitors). Fused monoidal product and Hom
 -- compose are genealogy-preserving trees ('fuseTreeRepTerm', 'HomFused' /
--- 'composeHomFused'). Fused cups: 'cupFused' / 'capFused' on singlet trees.
--- Unfused cups/caps: 'cupUnfused' / 'cupRdual'.
+-- 'composeHomTrees' \/ 'composeHomFused'). Fused cups: 'cupFused' / 'capFused'
+-- on singlet trees. Unfused cups/caps: 'cupUnfused' / 'cupRdual'.
 --
 -- Tensor CG fuse uses typed 'Symmetry.CG.SU2.fuseCGChannel' per channel; see
 -- 'Experiments.Symbolic.Reference' for flat-buffer oracles.
