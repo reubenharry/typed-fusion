@@ -23,8 +23,8 @@
 -- 'Experiments.Symbolic.TypeLevel' (Dual-left over 'ToVSpine' \/ 'ToVObj').
 --
 -- 'Irrep' fusion trees track genealogy (how a channel was coupled); 'TreeRep'
--- is a list of such trees. Coalesced 'Rep' remains the flat Hom spine until a
--- later phase rewires fused packing onto trees.
+-- is a list of such trees. Coalesced 'Rep' remains the flat sector / Reference
+-- spine; fused Hom packing is on trees.
 module Experiments.Symbolic.Expr
   ( MultExpr (..)
   , Sector

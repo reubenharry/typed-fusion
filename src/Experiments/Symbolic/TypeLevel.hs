@@ -20,9 +20,10 @@
 --
 -- 'HomUnfused' indexes by 'Experiments.Fusion.Obj.Obj' trees
 -- (@'Atom@ \/ @'Tensor@ \/ @'Sum@). 'HomFused' indexes by genealogy-preserving
--- 'TreeRep' (@'Leaf@ \/ @'Node@); 'FuseSym' still forgets @Obj@ to coalesced
--- 'Rep' for flat \/ Reference paths. Nested Mac Lane parenthesization lives on
--- @Obj@ (unfused) and on fusion trees (fused).
+-- 'TreeRep' (@'Leaf@ \/ @'Node@). Nested Mac Lane parenthesization lives on
+-- @Obj@ (unfused) and on fusion trees (fused). Flat coalesced 'Rep' is for
+-- sector algebra, cups with @'Prod@ tags, and Reference densification
+-- (@ForgetTreeRep@ forgets genealogy).
 --
 -- Sectors are keyed by bare @Nat@ (@2j@). Fusion trees ('Irrep' \/ 'TreeRep')
 -- track genealogy in parallel with coalesced 'Rep'.
@@ -64,7 +65,6 @@ module Experiments.Symbolic.TypeLevel
   , TreeUnit
   , UnitorCodomain
     -- * Fusion (CG)
-  , FuseRep
   , FuseHom
   , FuseFlat
   , AtomsFromCG
@@ -72,7 +72,6 @@ module Experiments.Symbolic.TypeLevel
   , FuseAtoms
   , FuseAtomSpineOne
   , FuseAtomSpines
-  , FuseSym
     -- * Spine constraints
   , AtomSpine
   ) where
@@ -123,7 +122,7 @@ type family FlattenMult (μ :: MultExpr) :: MultExpr where
   FlattenMult μ = 'AtomM (EvalMult μ)
 
 -- | Flatten every sector's copy axis to @'AtomM@ (Symmetry @Nat@ mult layout).
--- Used by 'FuseFlat' / 'FuseRep' (not by 'FuseHom', which keeps @'Prod@ for cups).
+-- Used by 'FuseFlat' (not by 'FuseHom', which keeps @'Prod@ for cups).
 type family FlattenRep (rs :: Rep) :: Rep where
   FlattenRep '[] = '[]
   FlattenRep ('(j, μ) ': rest) =
@@ -309,24 +308,10 @@ type family FuseAtomSpines (r :: Rep) (q :: Rep) :: Rep where
 --
 -- * 'FuseHom' — raw coalesced fuse; keeps @'Prod@ copy tags (cups / Hom packing).
 -- * 'FuseFlat' — @FlattenRep (FuseHom …)@; Symmetry @'AtomM@ layout (F-move).
--- * 'FuseRep' — monoidal product on 'FuseSym': unitors + 'FuseFlat' otherwise.
 type FuseHom (r :: Rep) (q :: Rep) = Coalesce (FuseAtomSpines r q)
 
 -- | Flattened fuse: every sector copy axis is @'AtomM@.
 type FuseFlat (r :: Rep) (q :: Rep) = FlattenRep (FuseHom r q)
-
--- | Fused monoidal product of atom spines for 'FuseSym'.
-type family FuseRep (a :: Rep) (b :: Rep) :: Rep where
-  FuseRep '[ '(0, 'AtomM 1)] b = b
-  FuseRep a '[ '(0, 'AtomM 1)] = a
-  FuseRep a b = FuseFlat a b
-
--- | Forget a fusion-tree object (@Obj Nat@, @2j@ labels) to a coalesced 'Rep'
--- spine for Hom. Analogous to Fib @Fuse@\/@Mults@, but Hom is Dual-left @ToVSpine@.
-type family FuseSym (a :: Obj Nat) :: Rep where
-  FuseSym ('FObj.Atom j) = '[ '(j, 'AtomM 1)]
-  FuseSym ('FObj.Tensor a b) = FuseRep (FuseSym a) (FuseSym b)
-  FuseSym ('FObj.Sum a b) = Coalesce (Append (FuseSym a) (FuseSym b))
 
 --------------------------------------------------------------------------------
 -- Spine constraints

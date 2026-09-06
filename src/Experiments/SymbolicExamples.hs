@@ -7,8 +7,8 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
--- Covers 'ToVSpine' / Dual-left Hom / 'rtensor' / 'cupRdual' / 'composeMor' /
--- Dual-left 'HomUnfused'; tree fused Hom ('HomFused' / 'composeHomTrees').
+-- Covers 'ToVSpine' / 'rtensor' / 'cupRdual' / Dual-left 'HomUnfused';
+-- tree fused Hom ('HomFused' / 'composeHomTrees').
 -- Unit laws: 'composeHomTreesSelfTest'.
 -- Fused cups: 'cupFused' / 'capFused' on singlet trees.
 -- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
@@ -203,16 +203,16 @@ cupCapUnfusedSnakeSpinHalfOk =
           (capUnfused @'[ '(1, 'AtomM 1)] (unitToVFromScalar 1))
    in abs (unitAmp u - 2) < 1e-9
 
--- | Right unitor absorbs @Unit@ on Dual-left Hom (@m ⊗ 1 ≅ m@).
+-- | Right unitor absorbs @Unit@ on Dual-left HomUnfused (@m ⊗ 1 ≅ m@).
 unitRunitMorTrivialOk :: Bool
 unitRunitMorTrivialOk =
-  let m = (5 :+ 0) *^ idMor @'[ '(0, 'AtomM 1)]
+  let m = (5 :+ 0) *^ idMorObj @('FObj.Atom 0)
       u = unitToVFromScalar 1
    in toVApproxEq
         (toArray
            ( unitRunit
-               @( DualVector (ToVSpine '[ '(0, 'AtomM 1)])
-                    ⊗ ToVSpine '[ '(0, 'AtomM 1)]
+               @( DualVector (ToVObj ('FObj.Atom 0))
+                    ⊗ ToVObj ('FObj.Atom 0)
                 )
                $ (m ⊗ u)
            ))
@@ -222,22 +222,22 @@ unitRunitMorTrivialOk =
 cupTensorIdUnitorOk :: Bool
 cupTensorIdUnitorOk =
   let packed =
-        rdual @'[ '(0, 'AtomM 1)] (unitFromScalar 1)
-          ⊗ ( capUnfused @'[ '(1, 'AtomM 1)] (unitToVFromScalar 1)
-                ⊗ repVToV @'[ '(0, 'AtomM 1)] (unitFromScalar 1)
+        dualAtomAtomM @0 @1 (unitToVFromScalar 1)
+          ⊗ ( capUnfusedObj @('FObj.Atom 1) (unitToVFromScalar 1)
+                ⊗ unitToVFromScalar 1
             )
       out =
-        unitorCompose
-          @'[ '(0, 'AtomM 1)]
-          @'[ '(0, 'AtomM 1)]
-          ( cupTensorIdCompose
-              @'[ '(0, 'AtomM 1)]
-              @'[ '(1, 'AtomM 1)]
-              @'[ '(0, 'AtomM 1)]
+        unitorComposeObj
+          @('FObj.Atom 0)
+          @('FObj.Atom 0)
+          ( cupTensorIdComposeObj
+              @('FObj.Atom 0)
+              @('FObj.Atom 1)
+              @('FObj.Atom 0)
               packed
           )
       -- @cup ∘ cap = 2@ on spin-½; result is scale on Dual-left @η@.
-      expected = 2 *^ idMor @'[ '(0, 'AtomM 1)]
+      expected = 2 *^ idMorObj @('FObj.Atom 0)
    in all (\(x, y) -> magnitude (x - y) < 1e-9)
         (zip (VS.toList (toArray out)) (VS.toList (toArray expected)))
 
@@ -246,39 +246,43 @@ toVApproxEq u v =
   VS.length u == VS.length v
     && VS.and (VS.zipWith (\x y -> magnitude (x - y) < 1e-9) u v)
 
--- | @composeMor id id ≅ id@ on @j = 0@.
-composeMorIdIdOk :: Bool
-composeMorIdIdOk =
-  let i = idMor @'[ '(0, 'AtomM 1)]
+-- | @composeMorObj id id ≅ id@ on @j = 0@.
+composeMorObjIdIdTrivialOk :: Bool
+composeMorObjIdIdTrivialOk =
+  let i = id :: HomUnfused ('FObj.Atom 0) ('FObj.Atom 0)
    in toVApproxEq
-        (toArray (composeMor @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)] i i))
-        (toArray i)
+        (toArray (unHomUnfused (i . i)))
+        (toArray (unHomUnfused i))
 
--- | Left unit law: @composeMor id f ≅ f@ on spin-½.
-composeMorLeftUnitOk :: Bool
-composeMorLeftUnitOk =
-  let i = idMor @'[ '(1, 'AtomM 1)]
-      f = (3 :+ 0) *^ idMor @'[ '(1, 'AtomM 1)]
+-- | Left unit law: @id ∘ f ≅ f@ on spin-½ ('HomUnfused').
+composeMorObjLeftUnitOk :: Bool
+composeMorObjLeftUnitOk =
+  let i = id :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
+      f =
+        HomUnfused ((3 :+ 0) *^ unHomUnfused i)
+          :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
    in toVApproxEq
-        (toArray (composeMor @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] i f))
-        (toArray f)
+        (toArray (unHomUnfused (i . f)))
+        (toArray (unHomUnfused f))
 
--- | Right unit law: @composeMor f id ≅ f@ on spin-½.
-composeMorRightUnitOk :: Bool
-composeMorRightUnitOk =
-  let i = idMor @'[ '(1, 'AtomM 1)]
-      f = (3 :+ 0) *^ idMor @'[ '(1, 'AtomM 1)]
+-- | Right unit law: @f ∘ id ≅ f@ on spin-½ ('HomUnfused').
+composeMorObjRightUnitOk :: Bool
+composeMorObjRightUnitOk =
+  let i = id :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
+      f =
+        HomUnfused ((3 :+ 0) *^ unHomUnfused i)
+          :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
    in toVApproxEq
-        (toArray (composeMor @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] f i))
-        (toArray f)
+        (toArray (unHomUnfused (f . i)))
+        (toArray (unHomUnfused f))
 
--- | Unfused 'composeMor' matches ordinary map composition.
+-- | Unfused 'HomUnfused' composition matches ordinary map composition.
 --
--- Spines: spin-½ (@C 1 ⊗ C 2@) → spin-½ → spin-1 (@C 1 ⊗ C 3@), with @id@ on
+-- Objects: spin-½ (@C 1 ⊗ C 2@) → spin-½ → spin-1 (@C 1 ⊗ C 3@), with @id@ on
 -- the trivial copy leg. Hom elements are @asTensor@ of the linear maps;
--- @composeMor f g@ is compared to @g ∘ f@ on the standard basis.
-composeMorMatchesMatMulOk :: Bool
-composeMorMatchesMatMulOk =
+-- @g . f@ is compared to @g ∘ f@ on the standard basis.
+composeMorObjMatchesMatMulOk :: Bool
+composeMorObjMatchesMatMulOk =
   let -- Irrep-leg maps (column action on coordinate lists).
       fLeg :: C 2 +> C 2
       fLeg =
@@ -295,21 +299,13 @@ composeMorMatchesMatMulOk =
       ug :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
       ug = id ⊗^ gLeg
       fHom =
-        asTensor -+$=> uf
-          :: DualVector (ToVSpine '[ '(1, 'AtomM 1)])
-               ⊗ ToVSpine '[ '(1, 'AtomM 1)]
+        HomUnfused (asTensor -+$=> uf)
+          :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
       gHom =
-        asTensor -+$=> ug
-          :: DualVector (ToVSpine '[ '(1, 'AtomM 1)])
-               ⊗ ToVSpine '[ '(2, 'AtomM 1)]
-      hHom =
-        composeMor
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(2, 'AtomM 1)]
-          fHom
-          gHom
-      h = fromTensor -+$=> hHom :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
+        HomUnfused (asTensor -+$=> ug)
+          :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 2)
+      hHom = gHom . fHom
+      h = fromTensor -+$=> unHomUnfused hHom :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
       e0 = unsafeFromArray (VS.fromList [1, 0]) :: C 2
       e1 = unsafeFromArray (VS.fromList [0, 1]) :: C 2
       xs = [(konst 1 ⊗ e0), (konst 1 ⊗ e1)]
@@ -532,10 +528,10 @@ symbolicExamplesOk =
     , cupCapUnfusedSnakeSpinHalfOk
     , unitRunitMorTrivialOk
     , cupTensorIdUnitorOk
-    , composeMorIdIdOk
-    , composeMorLeftUnitOk
-    , composeMorRightUnitOk
-    , composeMorMatchesMatMulOk
+    , composeMorObjIdIdTrivialOk
+    , composeMorObjLeftUnitOk
+    , composeMorObjRightUnitOk
+    , composeMorObjMatchesMatMulOk
     , composeMorObjIdIdOk
     , bimapHomUnfusedIdIdOk
     , associateHomUnfusedRoundtripOk
@@ -904,7 +900,9 @@ type SmokeCupR000 =
     (FuseTreeRep '[ 'Leaf 0] (FuseTreeRep Hom00 '[ 'Leaf 0]))
     CupR000
 
--- | Flat layout equals reduced @Flat111@ (both associations).
+-- | Flat layout equals reduced HMatrix packing for @½⊗½⊗½@ (both associations).
+type Flat111 = (C 2 ⊗ C 2, C 1 ⊗ C 4)
+
 type SmokeFlat111L =
   AssertEqType
     (ToVSpine (FuseFlat (FuseFlat (Atom1 1) (Atom1 1)) (Atom1 1)))
@@ -1069,8 +1067,7 @@ sampleAssocL112 :: TreeV AssocL112
 sampleAssocL112 =
   vToTreeV @AssocL112 (konst 1, (konst 0.5, (konst 0.25, konst 0.125)))
 
--- | Generic tree F-move agrees with typed Flat path; @F⁻¹ ∘ F ≈ id@.
--- Also round-trips a new triple (@½⊗1⊗½@) with no FlatXXX — only 'fmoveTreesLeaves'.
+-- | Tree F-move round-trips (@F⁻¹ ∘ F ≈ id@) on concrete triples + @½⊗1⊗½@.
 fmoveTreesSelfTest :: Bool
 fmoveTreesSelfTest =
   checkFmoveTrees111 sampleAssocL111
@@ -1083,7 +1080,7 @@ fmoveTreesSelfTestOk :: ()
 fmoveTreesSelfTestOk =
   if fmoveTreesSelfTest
     then ()
-    else error "fmoveTreesSelfTest failed: tree F ⧸ Flat or round-trip"
+    else error "fmoveTreesSelfTest failed: tree F round-trip"
 
 -- | Pure Mid from 'TensorTrees': 'fuseMapRightFinv111' matches F-inv on the assoc factor.
 fuseMapRightFinvSelfTest :: Bool

@@ -4,9 +4,10 @@
 -- | Green-field symbolic SU(2) reps: sector keys are bare @Nat@ (@2j@) with flat
 -- or product multiplicity (@'AtomM m@ / @'Prod ('AtomM m) ('AtomM n)@).
 --
--- Categorical objects are 'Experiments.Fusion.Obj.Obj' trees; 'FuseSym' forgets
--- to a coalesced 'Rep' spine (@FuseRep@ with unitors). Hom \/ cup packing is
--- Dual-left @Dual(ToVSpine ·) ⊗ ToVSpine ·@ over spines (no parallel expression AST).
+-- Three layers: 'Experiments.Fusion.Obj.Obj' trees index unfused Hom
+-- ('HomUnfused' / 'ToVObj'); coalesced 'Rep' is flat sector algebra; genealogy
+-- 'TreeRep' indexes fused Hom ('HomFused' / 'fuseTreeRepTerm'). Hom packing is
+-- Dual-left over 'ToVObj' (unfused) or 'TreeV' of 'FuseTreeRep' (fused).
 --
 -- 'Coalesce' merges same-irrep sectors by adding evaluated multiplicities into
 -- an @'AtomM@. 'RepV' is the indexed term-level spine; 'coalesce' folds it.
