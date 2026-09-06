@@ -14,9 +14,8 @@
 
 -- | Flat-buffer oracles for 'Experiments.Symbolic' (CG fuse, unpack).
 --
--- Production 'Experiments.Symbolic' fuses atom pairs through typed CG channels
--- ('Experiments.Symbolic.Core.fuseOneSectorTensorProd'); the oracles here go
--- through 'Symmetry.CG.SU2.fuseSU2Flat' on raw buffers instead.
+-- Core fused ⊗ is tree-only ('fuseTreeRepTerm'). These oracles densify CG via
+-- 'Symmetry.CG.SU2.fuseSU2Flat' for QuickCheck / coherence checks.
 module Experiments.Symbolic.Reference
   ( SectorFlatDim
   , sectorFlatDim
@@ -28,7 +27,6 @@ module Experiments.Symbolic.Reference
   , repVApproxEq
   , repVFlatApproxEq
   , repVFlatProdToAtomM
-  , exFuseOneSectorProd12
   , exCoherenceRmove12
   , exCoherenceRmove11
   ) where
@@ -227,23 +225,6 @@ repVFlatApproxEq
 repVFlatApproxEq a b tol =
   VS.length a == VS.length b
     && all (\(u, v) -> magnitude (u - v) <= tol) (zip (VS.toList a) (VS.toList b))
-
--- | Production 'fuseOneSectorTensorProd' matches the flat CG oracle
--- (@1 ⊗ 2@, @m = 2@, @n = 3@).
-exFuseOneSectorProd12 :: Bool
-exFuseOneSectorProd12 =
-  repVFlatApproxEq
-    (repVFlatProdToAtomM prod)
-    (repVFlat ref)
-    1e-10
-  where
-    sec :: AtomPairV 1 2 2 3
-    sec =
-      unsafeFromArray $
-        VS.generate 36 $ \i -> (1 / 36) :+ 0 * fromIntegral i
-    prod :: RepV (FuseAtoms 1 2 ('Prod ('AtomM 2) ('AtomM 3)))
-    prod = fuseOneSectorTensorProd @1 @2 @2 @3 sec
-    ref = fuseAtomPairReference @1 @2 @2 @3 sec
 
 --------------------------------------------------------------------------------
 -- R-move coherence (@fuse ∘ braid ≅ rmove ∘ fuse@)

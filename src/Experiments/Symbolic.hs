@@ -9,14 +9,13 @@
 -- Dual-left @Dual(ToVSpine ·) ⊗ ToVSpine ·@ over spines (no parallel expression AST).
 --
 -- 'Coalesce' merges same-irrep sectors by adding evaluated multiplicities into
--- an @'AtomM@. 'RepV' is the indexed term-level spine; 'coalesce' / 'fuseExpr'
--- fold it directly.
+-- an @'AtomM@. 'RepV' is the indexed term-level spine; 'coalesce' folds it.
 --
 -- Unfused composition: 'composeMorObj' \/ 'HomUnfused' on @ToVObj@ trees
--- (complete Category; linearmap α / unitors). Fused Hom: 'HomFused' as
--- @ToVSpine (FuseHom (FuseSym ·) (FuseSym ·))@; 'composeMorFused' fuses Hom
--- spines via 'fuseExpr', then stubbed F-move \/ cup ('FuseRep' unitor).
--- Fused cups/caps: 'cupFused' / 'capFused' on @FilterTrivial (FuseHom r r)@.
+-- (complete Category; linearmap α / unitors). Fused monoidal product and Hom
+-- compose are genealogy-preserving trees ('fuseTreeRepTerm', 'HomFused' /
+-- 'composeHomFused'). Fused cups: 'cupFused' / 'capFused' on singlet trees.
+-- Unfused cups/caps: 'cupUnfused' / 'cupRdual'.
 --
 -- Tensor CG fuse uses typed 'Symmetry.CG.SU2.fuseCGChannel' per channel; see
 -- 'Experiments.Symbolic.Reference' for flat-buffer oracles.

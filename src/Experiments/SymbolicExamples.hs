@@ -7,8 +7,9 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
--- Covers 'ToVSpine' / Dual-left Hom / 'fuseExpr' / 'rtensor' / 'cupRdual' / 'composeMor' /
--- Dual-left 'HomUnfused'; fused 'HomFused' as @ToVSpine (FuseHom …)@ (compose stubbed).
+-- Covers 'ToVSpine' / Dual-left Hom / 'rtensor' / 'cupRdual' / 'composeMor' /
+-- Dual-left 'HomUnfused'; tree fused Hom ('HomFused' / 'composeMorTrees').
+-- Fused cups: 'cupFused' / 'capFused' on singlet trees.
 -- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
 module Experiments.SymbolicExamples where
 
@@ -26,12 +27,7 @@ import Experiments.Symbolic
 import Experiments.Symbolic.Reference
   ( exCoherenceRmove11
   , exCoherenceRmove12
-  , exFuseOneSectorProd12
-  , fuseAtomPairCoalescedReference
   , repVApproxEq
-  , repVFlat
-  , repVFlatApproxEq
-  , repVFlatProdToAtomM
   , sectorFlatDim
   )
 import GHC.TypeLits (Nat)
@@ -62,9 +58,6 @@ coherenceRmoveLeafOk = exCoherenceRmove12
 
 coherenceRmoveLeaf11Ok :: Bool
 coherenceRmoveLeaf11Ok = exCoherenceRmove11
-
-fuseOneSectorProdOk :: Bool
-fuseOneSectorProdOk = exFuseOneSectorProd12
 
 --------------------------------------------------------------------------------
 -- SU(2) action on irreps / tensors
@@ -110,18 +103,6 @@ actRepRzPiTensorOk =
       expected = (-1) *^ u
    in all (\(a, b) -> magnitude (a - b) < 1e-9)
         (zip (VS.toList (toArray u')) (VS.toList (toArray expected)))
-
--- | CG intertwiner: @fuseExpr ∘ (act ⊗ act) ≅ act ∘ fuseExpr@ on @½ ⊗ ½@.
-actRepFuseIntertwinesOk :: Bool
-actRepFuseIntertwinesOk =
-  let left = RConsAtomAtomM sSpinHalfUp RNil
-                :: RepV '[ '(1, 'AtomM 1)]
-      right = RConsAtomAtomM sSpinHalfUp RNil
-      actThenFuse =
-        fuseExpr (actRep exRzPi left) (actRep exRzPi right)
-      fuseThenAct = actRep exRzPi (fuseExpr left right)
-   in repVApproxEq actThenFuse fuseThenAct 1e-9
-
 --------------------------------------------------------------------------------
 -- Unfused tensor / fuse on atom spines
 --------------------------------------------------------------------------------
@@ -146,20 +127,6 @@ rtensorFlatDimOk =
       right = RConsAtomAtomM sTensorRight RNil
                 :: RepV '[ '(2, 'AtomM 1)]
    in VS.length (toArray (rtensor left right)) == 12
-
--- | 'fuseExpr' on one atom pair agrees with the flat CG oracle.
-fuseExprMatchesReferenceOk :: Bool
-fuseExprMatchesReferenceOk =
-  let left = RConsAtomAtomM sCoalesce1 RNil
-                :: RepV '[ '(1, 'AtomM 2)]
-      right = RConsAtomAtomM sTensorRight RNil
-                :: RepV '[ '(2, 'AtomM 1)]
-      pair = repVToV left ⊗ repVToV right :: AtomPairV 1 2 2 1
-   in repVFlatApproxEq
-        (repVFlatProdToAtomM (fuseExpr left right))
-        (repVFlat (fuseAtomPairCoalescedReference @1 @2 @2 @1 pair))
-        1e-10
-
 --------------------------------------------------------------------------------
 -- Dual + cup (InnerSpace Riesz DualVector; no euclideanNorm coerce)
 --------------------------------------------------------------------------------
@@ -234,116 +201,6 @@ cupCapUnfusedSnakeSpinHalfOk =
         cupUnfused @'[ '(1, 'AtomM 1)]
           (capUnfused @'[ '(1, 'AtomM 1)] (unitToVFromScalar 1))
    in abs (unitAmp u - 2) < 1e-9
-
--- | Fused cup agrees with unfused on @j = 0@ (CS = id, scale 1).
-cupFusedTrivialOk :: Bool
-cupFusedTrivialOk =
-  let x :: ToVSector 0 ('AtomM 1)
-      x = unsafeFromArray (VS.fromList [3 :+ 4])
-      r = RConsAtomAtomM x RNil :: RepV '[ '(0, 'AtomM 1)]
-      uUnf =
-        cupUnfused @'[ '(0, 'AtomM 1)] (repVToV r ⊗ rdual r)
-      RConsAtomAtomM uFus RNil =
-        cupFused @'[ '(0, 'AtomM 1)]
-          ( projectToSymmetric
-              ( fuseExpr @'[ '(0, 'AtomM 1)] @'[ '(0, 'AtomM 1)]
-                  r
-                  (vToRepV @'[ '(0, 'AtomM 1)] (undualSpine @'[ '(0, 'AtomM 1)] (rdual r)))
-              )
-          )
-   in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
-
--- | Fused cup on spin-½ agrees with unfused (CS + @√2@ in undual).
-cupFusedSpinHalfCoherentOk :: Bool
-cupFusedSpinHalfCoherentOk =
-  let v :: ToVSector 1 ('AtomM 1)
-      v = unsafeFromArray (VS.fromList [1, 0])
-      r = RConsAtomAtomM v RNil :: RepV '[ '(1, 'AtomM 1)]
-      uUnf =
-        cupUnfused @'[ '(1, 'AtomM 1)] (repVToV r ⊗ rdual r)
-      RConsAtomAtomM uFus RNil =
-        cupFused @'[ '(1, 'AtomM 1)]
-          ( projectToSymmetric
-              ( fuseExpr @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)]
-                  r
-                  (vToRepV @'[ '(1, 'AtomM 1)] (undualSpine @'[ '(1, 'AtomM 1)] (rdual r)))
-              )
-          )
-   in abs (unitAmp uFus - unitAmp uUnf) < 1e-9
-
--- | Fused snake @cupFused ∘ capFused@ on @j = 0@.
-cupCapFusedSnakeTrivialOk :: Bool
-cupCapFusedSnakeTrivialOk =
-  let RConsAtomAtomM u RNil =
-        cupFused @'[ '(0, 'AtomM 1)]
-          (capFused @'[ '(0, 'AtomM 1)] (unitFromScalar 1))
-   in abs (unitAmp u - 1) < 1e-9
-
--- | 'cupMiddleFused' on @Fuse(½⊗½)@ agrees with 'cupFused' ∘ project.
-cupMiddleFusedSpinHalfOk :: Bool
-cupMiddleFusedSpinHalfOk =
-  let v :: ToVSector 1 ('AtomM 1)
-      v = unsafeFromArray (VS.fromList [1, 0])
-      r = RConsAtomAtomM v RNil :: RepV '[ '(1, 'AtomM 1)]
-      mid =
-        repVToV @(FuseHom '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)])
-          ( fuseExpr @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)]
-              r
-              (vToRepV @'[ '(1, 'AtomM 1)] (undualSpine @'[ '(1, 'AtomM 1)] (rdual r)))
-          )
-      uMid = cupMiddleFused @'[ '(1, 'AtomM 1)] mid
-      RConsAtomAtomM uFus RNil =
-        cupFused @'[ '(1, 'AtomM 1)]
-          ( projectToSymmetric
-              ( fuseExpr @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)]
-                  r
-                  (vToRepV @'[ '(1, 'AtomM 1)] (undualSpine @'[ '(1, 'AtomM 1)] (rdual r)))
-              )
-          )
-   in toVApproxEq (toArray uMid) (toArray (unitToVFromScalar (unitAmp uFus :+ 0)))
-
--- | Atom F-move roundtrip on three spin-½: @fmoveInv ∘ fmove ≅ id@ and reverse.
--- Builds left-associated @FuseFlat(FuseFlat(½,½), ½)@ via 'fuseExprFlat'.
-fmoveRoundtripSpinHalfOk :: Bool
-fmoveRoundtripSpinHalfOk =
-  let half =
-        RConsAtomAtomM (unsafeFromArray (VS.fromList [1, 0])) RNil
-          :: RepV '[ '(1, 'AtomM 1)]
-      mid =
-        fuseExprFlat @'[ '(1, 'AtomM 1)] @'[ '(1, 'AtomM 1)] half half
-      leftSpine =
-        fuseExprFlat
-          @(FuseFlat '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)])
-          @'[ '(1, 'AtomM 1)]
-          mid
-          half
-      vL =
-        repVToV
-          @( FuseFlat
-               (FuseFlat '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)])
-               '[ '(1, 'AtomM 1)]
-           )
-          leftSpine
-      vR =
-        fmove
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(1, 'AtomM 1)]
-          vL
-      back =
-        fmoveInv
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(1, 'AtomM 1)]
-          vR
-      forth =
-        fmove
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(1, 'AtomM 1)]
-          @'[ '(1, 'AtomM 1)]
-          back
-   in toVApproxEq (toArray vL) (toArray back)
-        && toVApproxEq (toArray vR) (toArray forth)
 
 -- | Right unitor absorbs @Unit@ on Dual-left Hom (@m ⊗ 1 ≅ m@).
 unitRunitMorTrivialOk :: Bool
@@ -482,37 +339,6 @@ bimapHomUnfusedIdIdOk =
                (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
                (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
    in toVApproxEq (toArray (unHomUnfused bi)) (toArray (unHomUnfused iTen))
-
--- | @bimapHomFusedIrrep id id ≅ id@ on @½ ⊗ ½@ (Schur fused bimap).
-bimapHomFusedIrrepIdIdOk :: Bool
-bimapHomFusedIrrepIdIdOk =
-  let iHalf = id :: HomFused ('FObj.Atom 1) ('FObj.Atom 1)
-      iTen =
-        id
-          :: HomFused
-               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
-               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
-      bi = bimapHomFusedIrrep @1 @1 iHalf iHalf
-   in toVApproxEq (toArray (unHomFused bi)) (toArray (unHomFused iTen))
-
--- | Scaled Schur bimap: @(5 id) ⊗ (id) ≅ 5 · id@ on @½ ⊗ ½@.
-bimapHomFusedIrrepScaleOk :: Bool
-bimapHomFusedIrrepScaleOk =
-  let iHalf = id :: HomFused ('FObj.Atom 1) ('FObj.Atom 1)
-      f = HomFused ((5 :+ 0) *^ unHomFused iHalf)
-      iTen =
-        id
-          :: HomFused
-               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
-               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
-      bi = bimapHomFusedIrrep @1 @1 f iHalf
-      expect =
-        HomFused ((5 :+ 0) *^ unHomFused iTen)
-          :: HomFused
-               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
-               (FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
-   in toVApproxEq (toArray (unHomFused bi)) (toArray (unHomFused expect))
-
 -- | @disassociate ∘ associate ≅ id@ as linear maps on @(½ ⊗ ½) ⊗ ½@
 -- (Hom packing of linearmap α / α⁻¹; avoids Hom-compose cost on the smoke).
 associateHomUnfusedRoundtripOk :: Bool
@@ -675,19 +501,27 @@ projectToSymmetricOk =
       RConsAtomAtomM v RNil = projectToSymmetric spine
    in toArray v == VS.fromList [4, 5]
 
+-- | 'cupFused' on identity Hom picks the singlet amplitude (@1@).
+cupFusedIdSpinHalfOk :: Bool
+cupFusedIdSpinHalfOk =
+  magnitude (unitScalar (cupFused @Leaf1 idHom11) - 1) < 1e-9
+
+-- | 'capFused' then 'cupTrivialTrees' recovers the unit scalar.
+cupCapFusedRoundtripSpinHalfOk :: Bool
+cupCapFusedRoundtripSpinHalfOk =
+  let u = unitFromScalar (0.7 :+ 0)
+   in magnitude (unitScalar (cupTrivialTrees (capFused @Leaf1 u)) - 0.7) < 1e-9
+
 -- | All symbolic smokes in one place (for REPL / probes).
 symbolicExamplesOk :: Bool
 symbolicExamplesOk =
   and
     [ coherenceRmoveLeafOk
     , coherenceRmoveLeaf11Ok
-    , fuseOneSectorProdOk
     , actRepIdentAtomOk
     , actRepRzPiSpinHalfOk
     , actRepRzPiTensorOk
-    , actRepFuseIntertwinesOk
     , rtensorFlatDimOk
-    , fuseExprMatchesReferenceOk
     , dualAtomSpinHalfOk
     , cupRdualTrivialOk
     , cupRdualMultOk
@@ -695,11 +529,6 @@ symbolicExamplesOk =
     , cupUnfusedMatchesCupRdualOk
     , cupCapUnfusedSnakeTrivialOk
     , cupCapUnfusedSnakeSpinHalfOk
-    , cupFusedTrivialOk
-    , cupFusedSpinHalfCoherentOk
-    , cupCapFusedSnakeTrivialOk
-    , cupMiddleFusedSpinHalfOk
-    , fmoveRoundtripSpinHalfOk
     , unitRunitMorTrivialOk
     , cupTensorIdUnitorOk
     , composeMorIdIdOk
@@ -708,8 +537,6 @@ symbolicExamplesOk =
     , composeMorMatchesMatMulOk
     , composeMorObjIdIdOk
     , bimapHomUnfusedIdIdOk
-    , bimapHomFusedIrrepIdIdOk
-    , bimapHomFusedIrrepScaleOk
     , associateHomUnfusedRoundtripOk
     , undualDualRoundtripOk
     , repVToVRoundTripOk
@@ -717,6 +544,9 @@ symbolicExamplesOk =
     , coalesceMergeDirectSumOk
     , coalescePreservesFlatDimOk
     , projectToSymmetricOk
+    , cupFusedIdSpinHalfOk
+    , cupCapFusedRoundtripSpinHalfOk
+    , composeMorTreesSelfTest
     ]
 
 
@@ -770,11 +600,11 @@ type SmokeMor =
       ⊗ (C 3 ⊗ C 3)
     )
 
--- | Fused Hom is @ToVSpine (FuseHom …)@ (coalesced Rep), not Dual-left.
+-- | Fused Hom is 'TreeV' of 'FuseTreeRep' (genealogy-preserving).
 type SmokeHomFused =
   AssertEqType
-    (ToVSpine (FuseHom (FuseSym ('FObj.Atom 1)) (FuseSym ('FObj.Atom 1))))
-    (ToVSpine (FuseHom '[ '(1, 'AtomM 1)] '[ '(1, 'AtomM 1)]))
+    (ToVTreeRep (FuseTreeRep '[ 'Leaf 1] '[ 'Leaf 1]))
+    (ToVTreeRep Hom11)
 
 -- | Compose step-2 packing: @Dual a ⊗ ((b ⊗ Dual b) ⊗ c)@.
 type SmokeComposeAssoc =
@@ -1243,15 +1073,12 @@ fmoveTreesSelfTestOk =
     then ()
     else error "fmoveTreesSelfTest failed: tree F ⧸ Flat or round-trip"
 
--- | Pure Mid from 'TensorTrees': product path and general 'fuseMapRightFinv111' agree.
+-- | Pure Mid from 'TensorTrees': 'fuseMapRightFinv111' matches F-inv on the assoc factor.
 fuseMapRightFinvSelfTest :: Bool
 fuseMapRightFinvSelfTest =
   let leaf = TCons (konst 1) TNil
       assocR = vToTreeV @AssocR111 (konst 0.5, (konst 0.25, konst 0.125))
       mid = fuseTensorTrees @Leaf1 @AssocR111 (TensorTrees leaf assocR)
-      TensorTrees leaf2 assocR2 = unfuseMid111 mid
-      mid2 = fuseTensorTrees @Leaf1 @AssocR111 (TensorTrees leaf2 assocR2)
-      cupProd = fuseMapRightFinvProduct111 mid
       cupGen = fuseMapRightFinv111 mid
       expected =
         fuseTensorTrees @Leaf1 @AssocL111 $
@@ -1270,15 +1097,16 @@ fuseMapRightFinvSelfTest =
             , close c2 c2'
             , close c4 c4'
             ]
-   in approxHom16 (treeVToV @Mid111 mid) (treeVToV @Mid111 mid2)
-        && approxHom16 (treeVToV @CupR111 cupProd) (treeVToV @CupR111 expected)
-        && approxHom16 (treeVToV @CupR111 cupGen) (treeVToV @CupR111 expected)
+   in approxHom16 (treeVToV @CupR111 cupGen) (treeVToV @CupR111 expected)
 
 -- | Full Leaf-½ Hom compose ladder: @id∘id ≈ id@ and unit laws.
 composeMorTreesSelfTest :: Bool
 composeMorTreesSelfTest =
   checkComposeMorTrees111
     && checkComposeMorTrees000
+    && checkComposeMorTrees222
+    && checkHomFusedCategory222
+    && checkLeaf2FmoveSmoke
     && checkFmoveOuter111
     && checkFuseMapLeftId111
 
@@ -1286,4 +1114,4 @@ composeMorTreesSelfTestOk :: ()
 composeMorTreesSelfTestOk =
   if composeMorTreesSelfTest
     then ()
-    else error "composeMorTreesSelfTest failed: id/unit laws on Hom11/Hom00"
+    else error "composeMorTreesSelfTest failed: id/unit laws on Hom00/11/22"

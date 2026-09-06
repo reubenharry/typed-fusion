@@ -18,11 +18,11 @@
 
 -- | Type-level braid, coalesce, and fuse for symbolic atom reps.
 --
--- Categorical objects for 'HomUnfused' \/ 'HomFused' are
--- 'Experiments.Fusion.Obj.Obj' trees
--- (@'Atom@ \/ @'Tensor@ \/ @'Sum@); 'FuseSym' forgets them to a coalesced 'Rep'
--- spine. Hom \/ cup packing is Dual-left over 'ToVSpine' \/ 'ToVObj' (no parallel
--- expression AST). Nested Mac Lane parenthesization lives on @Obj@.
+-- 'HomUnfused' indexes by 'Experiments.Fusion.Obj.Obj' trees
+-- (@'Atom@ \/ @'Tensor@ \/ @'Sum@). 'HomFused' indexes by genealogy-preserving
+-- 'TreeRep' (@'Leaf@ \/ @'Node@); 'FuseSym' still forgets @Obj@ to coalesced
+-- 'Rep' for flat \/ Reference paths. Nested Mac Lane parenthesization lives on
+-- @Obj@ (unfused) and on fusion trees (fused).
 --
 -- Sectors are keyed by bare @Nat@ (@2j@). Fusion trees ('Irrep' \/ 'TreeRep')
 -- track genealogy in parallel with coalesced 'Rep'.

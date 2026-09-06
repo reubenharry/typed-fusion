@@ -37,8 +37,6 @@ module Symmetry.CG.SU2
   , sectorsFromPairs
   , fuseCGChannel
   , unfuseCGChannel
-  , unfuseLeafAssocHalf
-  , fuseLeafAssocHalf
   , cgMatrixTwoIrreps
   , cgChannel
   , fusionChannels
@@ -582,23 +580,3 @@ fmoveFlatSectors inv secsR secsQ secsS vin =
    in VS.convert v'
   where
     pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
-
--- | Typed unfuse for @½ ⊗ Assoc(½⊗½⊗½)@ flats: @C 16 → C 2 ⊗ C 8@ (real CG ⇒ transpose of fuse).
-unfuseLeafAssocHalf :: C 16 +> (C 2 ⊗ C 8)
-unfuseLeafAssocHalf = arr (LinearFunction go)
-  where
-    go :: C 16 -> C 2 ⊗ C 8
-    go vout =
-      let sr = repSing @SU2 @'[ '(1, 1)]
-          sq = repSing @SU2 @'[ '(1, 2), '(3, 1)]
-       in unsafeFromArray (unfuseSU2Flat sr sq (toArray vout))
-
--- | Inverse of 'unfuseLeafAssocHalf'.
-fuseLeafAssocHalf :: (C 2 ⊗ C 8) +> C 16
-fuseLeafAssocHalf = arr (LinearFunction go)
-  where
-    go :: C 2 ⊗ C 8 -> C 16
-    go vin =
-      let sr = repSing @SU2 @'[ '(1, 1)]
-          sq = repSing @SU2 @'[ '(1, 2), '(3, 1)]
-       in unsafeFromArray (fuseSU2Flat sr sq (toArray vin))
