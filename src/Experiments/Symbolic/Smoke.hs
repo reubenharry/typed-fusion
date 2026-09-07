@@ -301,16 +301,16 @@ checkFmoveHomLeft111 =
 -- | 'HomFused' packaging unit laws on spin-1 via 'composeHomFused'.
 checkHomFusedCategory222 :: Bool
 checkHomFusedCategory222 =
-  let f :: HomFused Spine2 Spine2
+  let f :: HomFused Atom2 Atom2
       f =
         HomFused $
           RCons @('Node 0 ('Leaf 2) ('Leaf 2)) (konst 0.2) $
             RCons @('Node 2 ('Leaf 2) ('Leaf 2)) (konst 0.3) $
               RCons @('Node 4 ('Leaf 2) ('Leaf 2)) (konst 0.5) RNil
-      idT = HomFused (idHomFusedVal @Spine2)
-      HomFused idid = composeHomFused @Spine2 @Spine2 @Spine2 idT idT
-      HomFused fid = composeHomFused @Spine2 @Spine2 @Spine2 idT f
-      HomFused idf = composeHomFused @Spine2 @Spine2 @Spine2 f idT
+      idT = HomFused (idHomFusedVal @Atom2)
+      HomFused idid = composeHomFused @Atom2 @Atom2 @Atom2 idT idT
+      HomFused fid = composeHomFused @Atom2 @Atom2 @Atom2 idT f
+      HomFused idf = composeHomFused @Atom2 @Atom2 @Atom2 f idT
    in approxHomTrees @Hom22 idid (idHomLeaf @2)
         && approxHomTrees @Hom22 fid (unHomFused f)
         && approxHomTrees @Hom22 idf (unHomFused f)
@@ -318,33 +318,33 @@ checkHomFusedCategory222 =
 -- | 'HomFused' unit laws on @tj = 3@ via polymorphic 'KnownHomFused' / 'idHomLeaf'.
 checkHomFusedCategory333 :: Bool
 checkHomFusedCategory333 =
-  let f :: HomFused Spine3 Spine3
+  let f :: HomFused Atom3 Atom3
       f =
         HomFused $
           RCons @('Node 0 ('Leaf 3) ('Leaf 3)) (konst 0.1) $
             RCons @('Node 2 ('Leaf 3) ('Leaf 3)) (konst 0.2) $
               RCons @('Node 4 ('Leaf 3) ('Leaf 3)) (konst 0.3) $
                 RCons @('Node 6 ('Leaf 3) ('Leaf 3)) (konst 0.4) RNil
-      idT = HomFused (idHomFusedVal @Spine3)
-      HomFused idid = composeHomFused @Spine3 @Spine3 @Spine3 idT idT
-      HomFused fid = composeHomFused @Spine3 @Spine3 @Spine3 idT f
-      HomFused idf = composeHomFused @Spine3 @Spine3 @Spine3 f idT
-   in approxHomTrees @Hom33 idid (idHomFusedVal @Spine3)
+      idT = HomFused (idHomFusedVal @Atom3)
+      HomFused idid = composeHomFused @Atom3 @Atom3 @Atom3 idT idT
+      HomFused fid = composeHomFused @Atom3 @Atom3 @Atom3 idT f
+      HomFused idf = composeHomFused @Atom3 @Atom3 @Atom3 f idT
+   in approxHomTrees @Hom33 idid (idHomFusedVal @Atom3)
         && approxHomTrees @Hom33 fid (unHomFused f)
         && approxHomTrees @Hom33 idf (unHomFused f)
 
 -- | 'HomInter' unit laws on spin-½ via embed → 'composeHomTrees' → filter.
 checkHomInterCategory111 :: Bool
 checkHomInterCategory111 =
-  let f :: HomInter Spine1 Spine1
+  let f :: HomInter Atom1 Atom1
       f =
         HomInter $
-          scaleRepV @Inter11 (0.3 :+ 0) (idHomInterVal @Spine1)
-      idT = HomInter (idHomInterVal @Spine1)
-      HomInter idid = composeHomInter @Spine1 @Spine1 @Spine1 idT idT
-      HomInter fid = composeHomInter @Spine1 @Spine1 @Spine1 idT f
-      HomInter idf = composeHomInter @Spine1 @Spine1 @Spine1 f idT
-   in approxHomTrees @Inter11 idid (idHomInterVal @Spine1)
+          scaleRepV @Inter11 (0.3 :+ 0) (idHomInterVal @Atom1)
+      idT = HomInter (idHomInterVal @Atom1)
+      HomInter idid = composeHomInter @Atom1 @Atom1 @Atom1 idT idT
+      HomInter fid = composeHomInter @Atom1 @Atom1 @Atom1 idT f
+      HomInter idf = composeHomInter @Atom1 @Atom1 @Atom1 f idT
+   in approxHomTrees @Inter11 idid (idHomInterVal @Atom1)
         && approxHomTrees @Inter11 fid (unHomInter f)
         && approxHomTrees @Inter11 idf (unHomInter f)
 

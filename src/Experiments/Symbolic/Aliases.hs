@@ -2,12 +2,16 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoStarIsType #-}
 
--- | Concrete leaf / Hom / association spine aliases for symbolic SU(2).
+-- | Concrete atom / Hom / association aliases for symbolic SU(2).
 --
--- 'Spine0'..'Spine3' are skeletal 'HomFused' objects. 'Leaf0'..'Leaf3' are the
--- expanded leaf 'Rep's (@SpineRep@) used by 'FuseRep' \/ F-moves.
+-- 'Atom0'..'Atom3' are 'HomFused' objects. 'Spine*' = 'ObjSpineSU2' of those
+-- atoms; 'Leaf*' = 'ObjRep' \/ 'SpineRep' expand used by 'FuseRep' \/ F-moves.
 module Experiments.Symbolic.Aliases
-  ( Spine0
+  ( Atom0
+  , Atom1
+  , Atom2
+  , Atom3
+  , Spine0
   , Spine1
   , Spine2
   , Spine3
@@ -39,20 +43,34 @@ module Experiments.Symbolic.Aliases
   , CupR000
   ) where
 
+import Experiments.Fusion.Obj (Obj)
+import qualified Experiments.Fusion.Obj as FObj
 import Experiments.Symbolic.Expr
-import Experiments.Symbolic.TypeLevel (FilterTrivial, FuseRep, SpineRep)
+import Experiments.Symbolic.TypeLevel
+  ( FilterTrivial
+  , FuseRep
+  , ObjRep
+  , ObjSpineSU2
+  , SpineRep
+  )
 
--- | Skeletal HomFused objects: finite-support @(2j, multiplicity)@.
-type Spine0 = '[ '(0, 1)]
-type Spine1 = '[ '(1, 1)]
-type Spine2 = '[ '(2, 1)]
-type Spine3 = '[ '(3, 1)]
+-- | HomFused object atoms (@2j@ labels).
+type Atom0 = 'FObj.Atom 0
+type Atom1 = 'FObj.Atom 1
+type Atom2 = 'FObj.Atom 2
+type Atom3 = 'FObj.Atom 3
 
--- | Leaf 'Rep' expand of the skeletal spines (FuseRep \/ F-move indices).
-type Leaf0 = SpineRep Spine0
-type Leaf1 = SpineRep Spine1
-type Leaf2 = SpineRep Spine2
-type Leaf3 = SpineRep Spine3
+-- | Skeletal spines of the atoms (@ObjSpineSU2@).
+type Spine0 = ObjSpineSU2 Atom0
+type Spine1 = ObjSpineSU2 Atom1
+type Spine2 = ObjSpineSU2 Atom2
+type Spine3 = ObjSpineSU2 Atom3
+
+-- | Leaf 'Rep' expand (@ObjRep@) for FuseRep \/ F-moves.
+type Leaf0 = ObjRep Atom0
+type Leaf1 = ObjRep Atom1
+type Leaf2 = ObjRep Atom2
+type Leaf3 = ObjRep Atom3
 
 type Hom00 = FuseRep Leaf0 Leaf0
 type Hom11 = FuseRep Leaf1 Leaf1

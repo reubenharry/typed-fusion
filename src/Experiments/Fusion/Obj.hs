@@ -9,7 +9,8 @@
 -- | Theory-parameterized fusion trees: @Norm@, @Fuse@, @Mult@ from @FuseN@.
 --
 -- @Stabilize@ \/ @Mults@ \/ @Mult@-on-@Tensor@ walk @Irr t@, so they are for
--- 'FiniteIrr' theories only (Fib, Ising, …).
+-- 'FiniteIrr' theories only (Fib, Ising, …). Unbounded Nat labels (SU(2)) use
+-- 'ObjSpine' instead: FuseNorm → CollectSimples → coalesced 'Spine'.
 module Experiments.Fusion.Obj
   ( Obj (..)
   , FlattenSum
@@ -17,17 +18,20 @@ module Experiments.Fusion.Obj
   , Fuse
   , FuseNorm
   , FuseTensor
+  , CollectSimples
   , Stabilize
   , Mult
   , Mults
   , NOf
   , FuseIdemMult
   , HomDim
+  , ObjSpine
   ) where
 
 import Data.Kind (Constraint, Type)
 import Experiments.Fusion.Theory (FiniteIrr (..), FusionTheory (..), LabelEq)
-import GHC.TypeLits (Nat, type (*), type (+), type (-))
+import Experiments.Fusion.Unbounded (Spine)
+import GHC.TypeLits (CmpNat, Nat, type (*), type (+), type (-))
 
 --------------------------------------------------------------------------------
 -- Trees
@@ -155,6 +159,40 @@ type family Stabilize (t :: Type) (a :: Obj lab) :: Obj lab where
 
 type family Fuse (t :: Type) (a :: Obj lab) :: Obj lab where
   Fuse t a = Stabilize t (FuseNorm t (Norm a))
+
+--------------------------------------------------------------------------------
+-- Obj → Spine (unbounded Nat labels; no Irr walk)
+--------------------------------------------------------------------------------
+
+-- | Semisimplicity map for @Obj Nat@: FuseNorm, collect atoms, coalesce into a
+-- sorted finite-support 'Spine' (@(2j, multiplicity)@). Safe for SU(2) \/ U(1)
+-- where @Stabilize@ cannot walk a complete @Irr@.
+type family ObjSpine (t :: Type) (a :: Obj Nat) :: Spine Nat where
+  ObjSpine t a = CoalesceNatAtoms (CollectSimples t (FuseNorm t (Norm a)))
+
+-- | Insertion-sort coalesce of @'Atom@ lists into @Spine Nat@.
+type family CoalesceNatAtoms (xs :: [Obj Nat]) :: Spine Nat where
+  CoalesceNatAtoms '[] = '[]
+  CoalesceNatAtoms ('Atom j ': rest) =
+    SpineInsertNat j 1 (CoalesceNatAtoms rest)
+
+type family SpineInsertNat (j :: Nat) (n :: Nat) (sp :: Spine Nat) :: Spine Nat where
+  SpineInsertNat j n '[] = '[ '(j, n)]
+  SpineInsertNat j n ('(k, m) ': rest) =
+    SpineInsertNatOrd (CmpNat j k) j n k m rest
+
+type family SpineInsertNatOrd
+  (o :: Ordering)
+  (j :: Nat)
+  (n :: Nat)
+  (k :: Nat)
+  (m :: Nat)
+  (rest :: Spine Nat)
+  :: Spine Nat
+  where
+  SpineInsertNatOrd 'EQ j n _k m rest = '(j, n + m) ': rest
+  SpineInsertNatOrd 'LT j n k m rest = '(j, n) ': '(k, m) ': rest
+  SpineInsertNatOrd 'GT j n k m rest = '(k, m) ': SpineInsertNat j n rest
 
 --------------------------------------------------------------------------------
 -- Multiplicities

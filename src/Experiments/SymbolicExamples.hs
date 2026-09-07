@@ -238,7 +238,7 @@ associateHomUnfusedRoundtripOk =
 cupCapRoundtripSpinHalfOk :: Bool
 cupCapRoundtripSpinHalfOk =
   let u = 0.7 :+ 0
-      capped = scaleRepV @Hom11 u (idHomFusedVal @Spine1)
+      capped = scaleRepV @Hom11 u (idHomFusedVal @Atom1)
       RCons v RNil = cup @Leaf1 capped
    in magnitude ((konst 1 <.> v) - ((-2) * u)) < 1e-9
 
@@ -276,6 +276,31 @@ type family AssertEqType (a :: Type) (b :: Type) :: Bool where
 
 type family AssertEqIrrep (a :: Irrep) (b :: Irrep) :: Bool where
   AssertEqIrrep a a = 'True
+
+type family AssertEqSpine (a :: Spine Nat) (b :: Spine Nat) :: Bool where
+  AssertEqSpine a a = 'True
+
+-- | Atom → singleton spine.
+type SmokeObjSpineAtom =
+  AssertEqSpine (ObjSpineSU2 ('FObj.Atom 1)) '[ '(1, 1)]
+
+-- | @½ ⊗ ½@ FuseNorm → singlet ⊕ triplet multiplicities.
+type SmokeObjSpineHalfHalf =
+  AssertEqSpine
+    (ObjSpineSU2 ('FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1)))
+    '[ '(0, 1), '(2, 1)]
+
+-- | Direct sum coalesces and sorts by @2j@.
+type SmokeObjSpineSum =
+  AssertEqSpine
+    (ObjSpineSU2 ('FObj.Sum ('FObj.Atom 2) ('FObj.Atom 0)))
+    '[ '(0, 1), '(2, 1)]
+
+-- | Duplicate atoms add multiplicities.
+type SmokeObjSpineMult =
+  AssertEqSpine
+    (ObjSpineSU2 ('FObj.Sum ('FObj.Atom 1) ('FObj.Atom 1)))
+    '[ '(1, 2)]
 
 -- | Fused Hom is 'RepV' of 'FuseRep' (genealogy-preserving).
 type SmokeHomFused =
@@ -409,6 +434,18 @@ type SmokeCupR000 =
     CupR000
 
 -- | Flat layout equals reduced HMatrix packing for @½⊗½⊗½@ (both associations).
+smokeObjSpineAtom :: Proxy SmokeObjSpineAtom
+smokeObjSpineAtom = Proxy
+
+smokeObjSpineHalfHalf :: Proxy SmokeObjSpineHalfHalf
+smokeObjSpineHalfHalf = Proxy
+
+smokeObjSpineSum :: Proxy SmokeObjSpineSum
+smokeObjSpineSum = Proxy
+
+smokeObjSpineMult :: Proxy SmokeObjSpineMult
+smokeObjSpineMult = Proxy
+
 smokeHomFused :: Proxy SmokeHomFused
 smokeHomFused = Proxy
 

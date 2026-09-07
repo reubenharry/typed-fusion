@@ -8,7 +8,7 @@
 -- | Type-level spaces and fuse for symbolic SU(2).
 --
 -- 'HomUnfused' indexes by 'Experiments.Fusion.Obj.Obj' trees.
--- 'HomFused' objects are skeletal 'Spine' ('SpineRep' → leaf 'Rep');
+-- 'HomFused' indexes 'Obj Nat' (via 'ObjSpineSU2' / 'ObjRep' → leaf 'Rep');
 -- morphisms are genealogy 'FuseRep' / 'RepV' (fusion-tree lists).
 module Experiments.Symbolic.TypeLevel
   ( -- * Irrep dimension
@@ -19,6 +19,9 @@ module Experiments.Symbolic.TypeLevel
   , Spine
   , ReplicateLeaf
   , SpineRep
+  , ObjSpine
+  , ObjSpineSU2
+  , ObjRep
     -- * Fusion trees
   , Root
   , ToVTree
@@ -33,8 +36,9 @@ module Experiments.Symbolic.TypeLevel
   ) where
 
 import Data.Kind (Type)
-import Experiments.Fusion.Obj (Obj)
+import Experiments.Fusion.Obj (Obj, ObjSpine)
 import qualified Experiments.Fusion.Obj as FObj
+import Experiments.Fusion.SU2 (SU2Th)
 import Experiments.Fusion.Unbounded (Spine)
 import Experiments.SU2 (TensorIrrepRepSU2)
 import Experiments.Symbolic.Expr
@@ -78,6 +82,12 @@ type family SpineRep (sp :: Spine Nat) :: Rep where
   SpineRep '[] = '[]
   SpineRep ('(j, n) ': rest) =
     Append (ReplicateLeaf n j) (SpineRep rest)
+
+-- | @Obj Nat → Spine Nat@ via SU(2) FuseNorm (no FiniteIrr).
+type ObjSpineSU2 (a :: Obj Nat) = ObjSpine SU2Th a
+
+-- | Leaf 'Rep' of an @Obj@ after skeletal fuse (@SpineRep ∘ ObjSpineSU2@).
+type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
 
 --------------------------------------------------------------------------------
 -- Fusion trees: genealogy-preserving Irrep / Rep

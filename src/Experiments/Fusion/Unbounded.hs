@@ -14,7 +14,8 @@
 -- rather than cloning Fib’s table-driven @associateSectors@.
 --
 -- This module records that fork and offers a U(1)-style multiplicity spine
--- as the first typed milestone (no full associator).
+-- as the first typed milestone (no full associator). @Obj Nat → Spine@ for
+-- SU(2) lives as 'Experiments.Fusion.Obj.ObjSpine'.
 module Experiments.Fusion.Unbounded
   ( Spine
   , SpineMult

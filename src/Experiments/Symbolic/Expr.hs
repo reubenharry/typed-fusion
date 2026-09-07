@@ -4,8 +4,8 @@
 
 -- | Symbolic SU(2) fusion-tree kinds.
 --
--- Unfused Hom indexes 'Experiments.Fusion.Obj.Obj' trees. Fused Hom objects
--- are skeletal multiplicity spines (@Spine Nat@ via 'SpineRep'); morphisms are
+-- Unfused Hom indexes 'Experiments.Fusion.Obj.Obj' trees. Fused Hom indexes
+-- the same 'Obj' trees (via 'ObjSpineSU2' / 'ObjRep'); morphisms are
 -- genealogy-preserving fusion trees ('Irrep' \/ 'Rep' / 'FuseRep').
 module Experiments.Symbolic.Expr
   ( Irrep (..)

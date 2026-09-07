@@ -24,8 +24,8 @@
 -- F-moves / fuseMap: 'Experiments.Symbolic.FMove'.
 -- Concrete spines + smokes: 'Experiments.Symbolic.Smoke'.
 --
--- Layers: 'Obj' → 'HomUnfused' (Kronecker); skeletal 'Spine' → 'HomFused'
--- with genealogy 'RepV' / 'FuseRep' morphisms via 'composeHomTrees';
+-- Layers: 'Obj' → 'HomUnfused' (Kronecker); 'Obj' → 'HomFused' via
+-- 'ObjSpineSU2' / 'ObjRep' with genealogy 'RepV' / 'FuseRep' morphisms;
 -- 'HomInter' = trivial sector of fused Hom (same compose via embed/filter).
 -- Cups: genealogy 'cup' / 'capUnfusedObj'.
 module Experiments.Symbolic.Core where
@@ -103,17 +103,17 @@ unitToVScalar u = unitToVFromScalar 1 <.> u
 newtype HomUnfused (a :: Obj Nat) (b :: Obj Nat) = HomUnfused
   { unHomUnfused :: DualVector (ToVObj a) ⊗ ToVObj b }
 
--- | Fused morphisms @a → b@: skeletal objects ('Spine'), payload is genealogy
--- 'RepV' of 'FuseRep (SpineRep a) (SpineRep b)' (SU(2) dual≅primal; left child
--- plays dual). Compose via 'composeHomTrees' on the expanded leaf reps.
-newtype HomFused (a :: Spine Nat) (b :: Spine Nat) = HomFused
-  { unHomFused :: RepV (FuseRep (SpineRep a) (SpineRep b)) }
+-- | Fused morphisms @a → b@: 'Obj' trees, payload is genealogy 'RepV' of
+-- 'FuseRep (ObjRep a) (ObjRep b)' after 'ObjSpineSU2' (SU(2) dual≅primal;
+-- left child plays dual). Compose via 'composeHomTrees' on those leaf reps.
+newtype HomFused (a :: Obj Nat) (b :: Obj Nat) = HomFused
+  { unHomFused :: RepV (FuseRep (ObjRep a) (ObjRep b)) }
 
 -- | Intertwiners @a → b@: trivial total-charge sector of fused Hom
--- (@'FilterTrivial' of 'FuseRep (SpineRep a) (SpineRep b)'@). Compose reuses
+-- (@'FilterTrivial' of 'FuseRep (ObjRep a) (ObjRep b)'@). Compose reuses
 -- 'composeHomTrees' via 'embedTrivialRepV' \/ 'filterTrivialRepV'.
-newtype HomInter (a :: Spine Nat) (b :: Spine Nat) = HomInter
-  { unHomInter :: RepV (FilterTrivial (FuseRep (SpineRep a) (SpineRep b))) }
+newtype HomInter (a :: Obj Nat) (b :: Obj Nat) = HomInter
+  { unHomInter :: RepV (FilterTrivial (FuseRep (ObjRep a) (ObjRep b))) }
 
 -- | Left unitor for the Unit sector packaging @'(C 1 ⊗ C 1) ⊗ v → v@.
 unitLunit
@@ -464,9 +464,9 @@ instance Monoidal HomUnfused FObj.Tensor where
 instance Braided HomUnfused FObj.Tensor where
   braid = undefined
 
--- | Object constraint for fused Hom: skeletal spines with a known identity.
-class KnownHomFused (a :: Spine Nat) where
-  idHomFusedVal :: RepV (FuseRep (SpineRep a) (SpineRep a))
+-- | Object constraint for fused Hom: 'Obj' with a known identity on 'ObjRep'.
+class KnownHomFused (a :: Obj Nat) where
+  idHomFusedVal :: RepV (FuseRep (ObjRep a) (ObjRep a))
 
 -- | Identity endomorphism on a leaf: singlet (@root = 0@) channel = 1, else 0.
 idHomLeaf
@@ -488,13 +488,14 @@ idHomLeaf = go (repSing @(FuseRep '[ 'Leaf j] '[ 'Leaf j]))
         SLeaf {} ->
           error "idHomLeaf: expected Hom Node channels"
 
--- | Multiplicity-1 atom spine: identity via 'idHomLeaf'.
+-- | Simple atom: identity via 'idHomLeaf' (@ObjSpineSU2 ('Atom j) ~ '[ '(j,1)]@).
 instance
   ( KnownNat j
   , KnownRep (FuseRep '[ 'Leaf j] '[ 'Leaf j])
-  , SpineRep '[ '(j, 1)] ~ '[ 'Leaf j]
+  , ObjSpineSU2 ('FObj.Atom j) ~ '[ '(j, 1)]
+  , ObjRep ('FObj.Atom j) ~ '[ 'Leaf j]
   ) =>
-  KnownHomFused '[ '(j, 1)]
+  KnownHomFused ('FObj.Atom j)
   where
   idHomFusedVal = idHomLeaf @j
 
@@ -724,33 +725,33 @@ composeHomTrees f g =
 --------------------------------------------------------------------------------
 
 -- | 'HomFused' compose via the five Mac Lane morphisms ('composeHomTrees')
--- on 'SpineRep'-expanded leaf reps.
+-- on 'ObjRep'-expanded leaf reps.
 composeHomFused
   :: forall a b c
-   . ( KnownRep (FuseRep (SpineRep a) (SpineRep b))
-     , KnownRep (FuseRep (SpineRep b) (SpineRep c))
-     , FuseRepTermC (FuseRep (SpineRep a) (SpineRep b)) (FuseRep (SpineRep b) (SpineRep c))
-     , KnownRep (SpineRep a)
-     , KnownRep (SpineRep b)
-     , KnownRep (SpineRep c)
-     , KnownRep (FuseRep (SpineRep b) (SpineRep b))
+   . ( KnownRep (FuseRep (ObjRep a) (ObjRep b))
+     , KnownRep (FuseRep (ObjRep b) (ObjRep c))
+     , FuseRepTermC (FuseRep (ObjRep a) (ObjRep b)) (FuseRep (ObjRep b) (ObjRep c))
+     , KnownRep (ObjRep a)
+     , KnownRep (ObjRep b)
+     , KnownRep (ObjRep c)
+     , KnownRep (FuseRep (ObjRep b) (ObjRep b))
      , KnownRep Unit
-     , KnownRep (FuseRep (SpineRep b) (FuseRep (SpineRep b) (SpineRep c)))
-     , KnownRep (FuseRep (FuseRep (SpineRep b) (SpineRep b)) (SpineRep c))
-     , KnownRep (FuseRep Unit (SpineRep c))
-     , KnownRep (FuseRep (SpineRep a) (FuseRep (SpineRep b) (FuseRep (SpineRep b) (SpineRep c))))
-     , KnownRep (FuseRep (SpineRep a) (FuseRep (FuseRep (SpineRep b) (SpineRep b)) (SpineRep c)))
-     , KnownRep (FuseRep (SpineRep a) (FuseRep Unit (SpineRep c)))
-     , KnownRep (FuseRep (SpineRep a) (SpineRep c))
-     , CanFmoveOuterHom (SpineRep a) (SpineRep b) (SpineRep c)
-     , CanFmoveTrees (SpineRep b) (SpineRep b) (SpineRep c)
-     , UnitorCodomain (FuseRep Unit (SpineRep c)) ~ SpineRep c
+     , KnownRep (FuseRep (ObjRep b) (FuseRep (ObjRep b) (ObjRep c)))
+     , KnownRep (FuseRep (FuseRep (ObjRep b) (ObjRep b)) (ObjRep c))
+     , KnownRep (FuseRep Unit (ObjRep c))
+     , KnownRep (FuseRep (ObjRep a) (FuseRep (ObjRep b) (FuseRep (ObjRep b) (ObjRep c))))
+     , KnownRep (FuseRep (ObjRep a) (FuseRep (FuseRep (ObjRep b) (ObjRep b)) (ObjRep c)))
+     , KnownRep (FuseRep (ObjRep a) (FuseRep Unit (ObjRep c)))
+     , KnownRep (FuseRep (ObjRep a) (ObjRep c))
+     , CanFmoveOuterHom (ObjRep a) (ObjRep b) (ObjRep c)
+     , CanFmoveTrees (ObjRep b) (ObjRep b) (ObjRep c)
+     , UnitorCodomain (FuseRep Unit (ObjRep c)) ~ ObjRep c
      )
   => HomFused b c
   -> HomFused a b
   -> HomFused a c
 composeHomFused (HomFused g) (HomFused f) =
-  HomFused (composeHomTrees @(SpineRep a) @(SpineRep b) @(SpineRep c) f g)
+  HomFused (composeHomTrees @(ObjRep a) @(ObjRep b) @(ObjRep c) f g)
 
 instance Category HomFused where
   type Object HomFused a = KnownHomFused a
@@ -770,63 +771,63 @@ instance Category HomFused where
 idHomInterVal
   :: forall a
    . ( KnownHomFused a
-     , KnownRep (FuseRep (SpineRep a) (SpineRep a))
-     , FilterTrivialC (FuseRep (SpineRep a) (SpineRep a))
+     , KnownRep (FuseRep (ObjRep a) (ObjRep a))
+     , FilterTrivialC (FuseRep (ObjRep a) (ObjRep a))
      )
-  => RepV (FilterTrivial (FuseRep (SpineRep a) (SpineRep a)))
+  => RepV (FilterTrivial (FuseRep (ObjRep a) (ObjRep a)))
 idHomInterVal =
-  filterTrivialRepV @(FuseRep (SpineRep a) (SpineRep a)) (idHomFusedVal @a)
+  filterTrivialRepV @(FuseRep (ObjRep a) (ObjRep a)) (idHomFusedVal @a)
 
 -- | 'HomInter' compose: embed → 'composeHomTrees' → filter (same as 'HomFused').
 composeHomInter
   :: forall a b c
-   . ( KnownRep (FuseRep (SpineRep a) (SpineRep b))
-     , KnownRep (FuseRep (SpineRep b) (SpineRep c))
-     , KnownRep (FuseRep (SpineRep a) (SpineRep c))
-     , FilterTrivialC (FuseRep (SpineRep a) (SpineRep b))
-     , FilterTrivialC (FuseRep (SpineRep b) (SpineRep c))
-     , FilterTrivialC (FuseRep (SpineRep a) (SpineRep c))
+   . ( KnownRep (FuseRep (ObjRep a) (ObjRep b))
+     , KnownRep (FuseRep (ObjRep b) (ObjRep c))
+     , KnownRep (FuseRep (ObjRep a) (ObjRep c))
+     , FilterTrivialC (FuseRep (ObjRep a) (ObjRep b))
+     , FilterTrivialC (FuseRep (ObjRep b) (ObjRep c))
+     , FilterTrivialC (FuseRep (ObjRep a) (ObjRep c))
      , FuseRepTermC
-         (FuseRep (SpineRep a) (SpineRep b))
-         (FuseRep (SpineRep b) (SpineRep c))
-     , KnownRep (SpineRep a)
-     , KnownRep (SpineRep b)
-     , KnownRep (SpineRep c)
-     , KnownRep (FuseRep (SpineRep b) (SpineRep b))
+         (FuseRep (ObjRep a) (ObjRep b))
+         (FuseRep (ObjRep b) (ObjRep c))
+     , KnownRep (ObjRep a)
+     , KnownRep (ObjRep b)
+     , KnownRep (ObjRep c)
+     , KnownRep (FuseRep (ObjRep b) (ObjRep b))
      , KnownRep Unit
-     , KnownRep (FuseRep (SpineRep b) (FuseRep (SpineRep b) (SpineRep c)))
-     , KnownRep (FuseRep (FuseRep (SpineRep b) (SpineRep b)) (SpineRep c))
-     , KnownRep (FuseRep Unit (SpineRep c))
+     , KnownRep (FuseRep (ObjRep b) (FuseRep (ObjRep b) (ObjRep c)))
+     , KnownRep (FuseRep (FuseRep (ObjRep b) (ObjRep b)) (ObjRep c))
+     , KnownRep (FuseRep Unit (ObjRep c))
      , KnownRep
          ( FuseRep
-             (SpineRep a)
-             (FuseRep (SpineRep b) (FuseRep (SpineRep b) (SpineRep c)))
+             (ObjRep a)
+             (FuseRep (ObjRep b) (FuseRep (ObjRep b) (ObjRep c)))
          )
      , KnownRep
          ( FuseRep
-             (SpineRep a)
-             (FuseRep (FuseRep (SpineRep b) (SpineRep b)) (SpineRep c))
+             (ObjRep a)
+             (FuseRep (FuseRep (ObjRep b) (ObjRep b)) (ObjRep c))
          )
-     , KnownRep (FuseRep (SpineRep a) (FuseRep Unit (SpineRep c)))
-     , CanFmoveOuterHom (SpineRep a) (SpineRep b) (SpineRep c)
-     , CanFmoveTrees (SpineRep b) (SpineRep b) (SpineRep c)
-     , UnitorCodomain (FuseRep Unit (SpineRep c)) ~ SpineRep c
+     , KnownRep (FuseRep (ObjRep a) (FuseRep Unit (ObjRep c)))
+     , CanFmoveOuterHom (ObjRep a) (ObjRep b) (ObjRep c)
+     , CanFmoveTrees (ObjRep b) (ObjRep b) (ObjRep c)
+     , UnitorCodomain (FuseRep Unit (ObjRep c)) ~ ObjRep c
      )
   => HomInter b c
   -> HomInter a b
   -> HomInter a c
 composeHomInter (HomInter g) (HomInter f) =
   HomInter $
-    filterTrivialRepV @(FuseRep (SpineRep a) (SpineRep c)) $
-      composeHomTrees @(SpineRep a) @(SpineRep b) @(SpineRep c)
-        (embedTrivialRepV @(FuseRep (SpineRep a) (SpineRep b)) f)
-        (embedTrivialRepV @(FuseRep (SpineRep b) (SpineRep c)) g)
+    filterTrivialRepV @(FuseRep (ObjRep a) (ObjRep c)) $
+      composeHomTrees @(ObjRep a) @(ObjRep b) @(ObjRep c)
+        (embedTrivialRepV @(FuseRep (ObjRep a) (ObjRep b)) f)
+        (embedTrivialRepV @(FuseRep (ObjRep b) (ObjRep c)) g)
 
 instance Category HomInter where
   type Object HomInter a =
     ( KnownHomFused a
-    , KnownRep (FuseRep (SpineRep a) (SpineRep a))
-    , FilterTrivialC (FuseRep (SpineRep a) (SpineRep a))
+    , KnownRep (FuseRep (ObjRep a) (ObjRep a))
+    , FilterTrivialC (FuseRep (ObjRep a) (ObjRep a))
     )
 
   id :: forall a. Object HomInter a => HomInter a a
