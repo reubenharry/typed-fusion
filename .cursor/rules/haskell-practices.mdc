@@ -1,11 +1,32 @@
 ---
-description: Parse-don't-validate, sparse type classes, anti-boilerplate, schemes, small increments
+description: Math≅code compositionally, parse-don't-validate, sparse type classes, anti-boilerplate, schemes, small increments
 alwaysApply: true
 ---
 
 # Haskell practices
 
 Deeper notes: skill `haskell-canon` → [lessons.md](../skills/haskell-canon/lessons.md).
+
+## Math structure ≅ code structure (compositional)
+
+This is the primary reason to write this project in Haskell rather than a
+conventional numeric language. **The implementation should look like the
+mathematics**, composed of the same pieces with the same names and laws—not a
+procedural simulation that happens to compute the right numbers.
+
+- If the maths is a (fusion / compact closed / monoidal) category, the code
+  should be morphisms, tensor, cups/caps, unitors, F-moves, … composed with
+  `(.)` / `(⊗^)` / `trace`—not index loops and ad-hoc buffers that “do the
+  same thing.”
+- Prefer definitions that are readable as the paper’s formula or diagram
+  (short compositions of library morphisms and constructors) over unpacking
+  into arrays and rebuilding.
+- When code drifts from the math presentation, treat that as a design bug:
+  missing combinator, wrong domain, or an invented wrapper—not something to
+  paper over with more helpers.
+
+Anti-boilerplate, library-first constructors, and “don’t unpack buffers” below
+are consequences of this principle.
 
 ## Parse, don't validate
 
@@ -52,6 +73,34 @@ recursion scheme once and write a non-recursive algebra. Do not hand-roll
 - If a small idea needs a lot of plumbing, **stop and redesign**.
 - Do not invent parallel APIs that duplicate Fixed / General / Reference with
   slight renames.
+
+### Call sites before names
+
+Before exporting a helper, grep callers. If nothing in the production path uses
+it (only a smoke, or only the helper’s own round-trip test), **delete or inline**
+— do not keep a named API “for clarity.” Thin unwraps of an existing morphism
+(`case f x of …`) belong at the use site, not as a parallel entry point.
+
+### Prefer library instances and constructors
+
+Reach for what `linearmap-category` / hmatrix Static already provide before
+hand-rolling:
+
+- Morphisms: `arr (LinearFunction …)`, `(⊗)`, `trace`, unitors, `idTensor`,
+  `fromLinearForm`, `asTensor` / `fromTensor`
+- Static packing: `Sized` (`konst`, `fromList`, `extract`, `create`) and the
+  `Tensor` constructor — e.g. a unit scalar as `Tensor . konst`, not an ad-hoc
+  `⊗` of two length-1 vectors plus `unsafeFromArray`
+- Dual / metric structure: existing `InnerSpace` / `vectorConjugate` /
+  `hermitianNorm`-style maps — do not invent domain-specific dual wrappers that
+  restate those
+
+### Stay on the typed value; don’t unpack buffers
+
+Avoid `toArray` / `unsafeFromArray` / `VS.!` loops to define core maps or
+read scalars when a morphism, inner product, or `Sized`/`Tensor` constructor
+suffices. Buffer unpacking is for IO, probes, and `*.Reference` — not for
+naming the meaning of a linear map or a unit-object amplitude.
 
 ## Type classes (use sparingly)
 

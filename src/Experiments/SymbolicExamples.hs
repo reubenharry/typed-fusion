@@ -9,7 +9,7 @@
 -- | Smokes for 'Experiments.Symbolic': term-level checks and compile-time type equalities.
 -- Covers Dual-left 'HomUnfused' and genealogy 'HomFused' / 'composeHomTrees'.
 -- Unit laws: 'composeHomTreesSelfTest'.
--- Fused cups: 'cupFused' / 'capFused' on singlet trees.
+-- Fused cup/cap: genealogy 'cup' / 'idHomFusedVal'.
 -- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
 module Experiments.SymbolicExamples where
 
@@ -26,6 +26,7 @@ import Experiments.Symbolic
 import GHC.TypeLits (Nat)
 import Math.LinearMap.Category
   ( DualVector
+  , fromLinearForm
   , pattern LinearFunction
   , type (+>)
   , type (⊗)
@@ -58,11 +59,11 @@ unitRunitMorTrivialOk =
 -- | @(cup ⊗ id)@ then unitor on a packed assoc-shape state: @cup(η_b) = dim b@.
 cupTensorIdUnitorOk :: Bool
 cupTensorIdUnitorOk =
-  let packed =
-        dualAtomAtomM @0 @1 (unitToVFromScalar 1)
-          ⊗ ( capUnfusedObj @('FObj.Atom 1) (unitToVFromScalar 1)
-                ⊗ unitToVFromScalar 1
-            )
+  let u0 = unitToVFromScalar 1
+      -- Dual-left wire on @Atom 0@: metric dual of the unit packing.
+      packed =
+        (fromLinearForm $ arr (LinearFunction (<.> u0)))
+          ⊗ ( capUnfusedObj @('FObj.Atom 1) u0 ⊗ u0 )
       out =
         unitorComposeObj
           @('FObj.Atom 0)
@@ -233,27 +234,13 @@ associateHomUnfusedRoundtripOk =
         (toArray (asTensor -+$=> roundTrip))
         (toArray iHom)
 
--- | 'undualAtomAtomM' ∘ 'dualAtomAtomM' ≈ @√(j+1) · CS²@ (pivotal undual).
--- For spin-½, @CS² = −id@, so the round-trip is @−√2 · v@.
-undualDualRoundtripOk :: Bool
-undualDualRoundtripOk =
-  let v :: C 1 ⊗ C 2
-      v = unsafeFromArray (VS.fromList [0.6, 0.8])
-      expected =
-        unsafeFromArray (VS.fromList [-(sqrt 2 * 0.6), -(sqrt 2 * 0.8)])
-          :: C 1 ⊗ C 2
-      v' = undualAtomAtomM @1 @1 (dualAtomAtomM @1 @1 v)
-   in VS.and $
-        VS.zipWith
-          (\a b -> magnitude (a - b) < 1e-9)
-          (toArray expected)
-          (toArray v')
-
--- | 'capFused' then 'cupTrivial' recovers the unit scalar.
-cupCapFusedRoundtripSpinHalfOk :: Bool
-cupCapFusedRoundtripSpinHalfOk =
+-- | @cup ∘ (s · id) = s · FS·dim@ on spin-½ (@FS(1)·2 = −2@).
+cupCapRoundtripSpinHalfOk :: Bool
+cupCapRoundtripSpinHalfOk =
   let u = 0.7 :+ 0
-   in magnitude (cupTrivial (capFused @Leaf1 u) - 0.7) < 1e-9
+      capped = scaleRepV @Hom11 u (idHomFusedVal @Spine1)
+      RCons v RNil = cup @Leaf1 capped
+   in magnitude ((konst 1 <.> v) - ((-2) * u)) < 1e-9
 
 -- | All symbolic smokes in one place (for REPL / probes).
 symbolicExamplesOk :: Bool
@@ -268,8 +255,7 @@ symbolicExamplesOk =
     , composeMorObjIdIdOk
     , bimapHomUnfusedIdIdOk
     , associateHomUnfusedRoundtripOk
-    , undualDualRoundtripOk
-    , cupCapFusedRoundtripSpinHalfOk
+    , cupCapRoundtripSpinHalfOk
     , composeHomTreesSelfTest
     , composeHomTreesLeaf1TypedOk
     ]
@@ -525,6 +511,7 @@ composeHomTreesSelfTest =
     && checkFmoveHomLeft111
     && checkHomFusedCategory222
     && checkHomFusedCategory333
+    && checkHomInterCategory111
     && checkLeaf2FmoveSmoke
     && checkFmoveOuter111
     && checkFuseMapLeftId111

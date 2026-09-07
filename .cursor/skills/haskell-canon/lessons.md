@@ -365,6 +365,8 @@ theory and more as **process**: how to use the typechecker day-to-day.
 
 | Date | Promoted into harness | From |
 | --- | --- | --- |
+| 2026-09-06 | haskell-practices / AGENTS / canon: math≅code compositional structure (primary Haskell quality) | user / Symbolic.Core |
+| 2026-09-06 | haskell-practices / AGENTS: call-sites-first, library constructors, no buffer unpack for core maps | Experiments.Symbolic.Core cleanup |
 | 2026-08-20 | haskell-practices / AGENTS: type classes sparingly (stain; scheme+algebra) | Experiments.General fuse/commute |
 | 2026-08-02 | haskell-practices: schemes, API families, branding, power-to-weight | cross-cutting |
 | 2026-08-02 | AGENTS.md pointer + haskell-canon skill | scaffold |

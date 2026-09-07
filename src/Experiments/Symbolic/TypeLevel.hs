@@ -8,12 +8,17 @@
 -- | Type-level spaces and fuse for symbolic SU(2).
 --
 -- 'HomUnfused' indexes by 'Experiments.Fusion.Obj.Obj' trees.
--- 'HomFused' indexes by genealogy-preserving 'Rep' (@'Leaf@ \/ @'Node@).
+-- 'HomFused' objects are skeletal 'Spine' ('SpineRep' → leaf 'Rep');
+-- morphisms are genealogy 'FuseRep' / 'RepV' (fusion-tree lists).
 module Experiments.Symbolic.TypeLevel
   ( -- * Irrep dimension
     IrrepDim
     -- * Obj spaces (unfused)
   , ToVObj
+    -- * Skeletal objects (HomFused)
+  , Spine
+  , ReplicateLeaf
+  , SpineRep
     -- * Fusion trees
   , Root
   , ToVTree
@@ -30,9 +35,10 @@ module Experiments.Symbolic.TypeLevel
 import Data.Kind (Type)
 import Experiments.Fusion.Obj (Obj)
 import qualified Experiments.Fusion.Obj as FObj
+import Experiments.Fusion.Unbounded (Spine)
 import Experiments.SU2 (TensorIrrepRepSU2)
 import Experiments.Symbolic.Expr
-import GHC.TypeLits (Nat, type (+))
+import GHC.TypeLits (CmpNat, Nat, type (+), type (-))
 import Math.LinearMap.Category (type (⊗))
 import Numeric.LinearAlgebra.Static (C)
 import Symmetry.Utils (Append)
@@ -55,6 +61,23 @@ type family ToVObj (a :: Obj Nat) :: Type where
   ToVObj ('FObj.Atom j) = C 1 ⊗ C (IrrepDim j)
   ToVObj ('FObj.Tensor a b) = ToVObj a ⊗ ToVObj b
   ToVObj ('FObj.Sum a b) = (ToVObj a, ToVObj b)
+
+--------------------------------------------------------------------------------
+-- Skeletal objects → leaf Rep (HomFused object index)
+--------------------------------------------------------------------------------
+
+-- | @n@ copies of @'Leaf j@ (multiplicity expand).
+type family ReplicateLeaf (n :: Nat) (j :: Nat) :: Rep where
+  ReplicateLeaf 0 _j = '[]
+  ReplicateLeaf 1 j = '[ 'Leaf j]
+  ReplicateLeaf n j = 'Leaf j ': ReplicateLeaf (n - 1) j
+
+-- | Expand a finite-support multiplicity spine to a leaf-only 'Rep'.
+-- Order: spine order, @n@ consecutive @'Leaf j@ per sector.
+type family SpineRep (sp :: Spine Nat) :: Rep where
+  SpineRep '[] = '[]
+  SpineRep ('(j, n) ': rest) =
+    Append (ReplicateLeaf n j) (SpineRep rest)
 
 --------------------------------------------------------------------------------
 -- Fusion trees: genealogy-preserving Irrep / Rep
@@ -97,16 +120,36 @@ type family FuseRep (rs :: Rep) (qs :: Rep) :: Rep where
   FuseRep (t1 ': rest) qs =
     Append (FuseRepOne t1 qs) (FuseRep rest qs)
 
--- | Keep only trees whose root is the trivial irrep (@0@).
-type family FilterTrivial (ts :: Rep) :: Rep where
-  FilterTrivial '[] = '[]
-  FilterTrivial ('Leaf 0 ': rest) = 'Leaf 0 ': FilterTrivial rest
-  FilterTrivial ('Node 0 l r ': rest) =
-    'Node 0 l r ': FilterTrivial rest
-  FilterTrivial (_ ': rest) = FilterTrivial rest
-
 -- | Monoidal unit as a singleton tree list (bare trivial irrep).
 type Unit = '[ 'Leaf 0]
+
+-- | Keep only total-charge-0 trees (SU(2) intertwiners / invariants).
+--
+-- Dispatches on @'CmpNat' j 0@ so @'CmpNat' j 0 ~ ''GT@ makes the drop
+-- definitional (needed by 'FilterTrivialC').
+type family FilterTrivial (ts :: Rep) :: Rep where
+  FilterTrivial '[] = '[]
+  FilterTrivial ('Leaf j ': rest) =
+    FilterTrivialLeaf (CmpNat j 0) j rest
+  FilterTrivial ('Node j l r ': rest) =
+    FilterTrivialNode (CmpNat j 0) j l r rest
+
+type family FilterTrivialLeaf (o :: Ordering) (j :: Nat) (rest :: Rep) :: Rep where
+  FilterTrivialLeaf 'EQ _j rest = 'Leaf 0 ': FilterTrivial rest
+  FilterTrivialLeaf 'GT _j rest = FilterTrivial rest
+  FilterTrivialLeaf 'LT _j rest = FilterTrivial rest
+
+type family FilterTrivialNode
+  (o :: Ordering)
+  (j :: Nat)
+  (l :: Irrep)
+  (r :: Irrep)
+  (rest :: Rep)
+  :: Rep
+  where
+  FilterTrivialNode 'EQ _j l r rest = 'Node 0 l r ': FilterTrivial rest
+  FilterTrivialNode 'GT _j _l _r rest = FilterTrivial rest
+  FilterTrivialNode 'LT _j _l _r rest = FilterTrivial rest
 
 -- | Drop @Unit@ left children after @0 ⊗ t → t@:
 -- @'Node _ ('Leaf 0) t ↦ t@.

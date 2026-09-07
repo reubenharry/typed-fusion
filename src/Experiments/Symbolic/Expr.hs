@@ -4,10 +4,9 @@
 
 -- | Symbolic SU(2) fusion-tree kinds.
 --
--- Categorical objects are 'Experiments.Fusion.Obj.Obj' trees (@'Atom@ \/
--- @'Tensor@ \/ @'Sum@). Representations are genealogy-preserving fusion trees
--- ('Irrep' \/ 'Rep'). There is no coalesced sector spine — flat buffers live
--- only in oracles if reintroduced later.
+-- Unfused Hom indexes 'Experiments.Fusion.Obj.Obj' trees. Fused Hom objects
+-- are skeletal multiplicity spines (@Spine Nat@ via 'SpineRep'); morphisms are
+-- genealogy-preserving fusion trees ('Irrep' \/ 'Rep' / 'FuseRep').
 module Experiments.Symbolic.Expr
   ( Irrep (..)
   , Rep

@@ -26,6 +26,16 @@ Do not violate these. Full text lives in `.cursor/rules/`.
 
 ## Mindset
 
+### Math structure ≅ code structure
+
+The point of Haskell here is that **code should compositionally mirror the
+mathematics**. A fusion (or compact closed, monoidal, …) category in the paper
+should structurally resemble morphisms and compositions in the codebase—not an
+imperative simulation with the same numeric answers. Prefer short compositions
+that read like the formula/diagram; when implementation drifts from the math
+presentation, fix the domain or find the missing combinator rather than adding
+procedural wrappers.
+
 ### Parse, don't validate
 
 Follow [Parse, don’t validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/)
@@ -42,6 +52,13 @@ Prefer a short composition that reuses existing helpers over a long
 case/list/index solution. If a small idea needs a lot of plumbing, stop and
 redesign (missing combinator or wrong domain). Do not invent parallel APIs that
 duplicate Fixed / General / Reference with slight renames.
+
+Before naming a helper: check call sites — smoke-only or self-testing wrappers
+should be inlined or deleted. Prefer library morphisms and constructors
+(`arr (LinearFunction …)`, `(⊗)`, `Tensor` / `Sized` `konst`/`fromList`,
+`fromLinearForm`, …) over hand-rolled dual/packaging APIs. Do not unpack to
+`toArray` / `unsafeFromArray` to define core maps or read scalars when an
+inner product or typed constructor already says it.
 
 ### Scheme vs algebra; systematic APIs
 
