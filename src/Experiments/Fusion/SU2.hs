@@ -47,6 +47,7 @@ data SU2Th
 instance FusionTheory Nat SU2Th where
   type UnitLab SU2Th = 0
   type FuseN SU2Th j1 j2 = TensorIrrepRepSU2 j1 j2
+  type DualLab SU2Th j = j
 
 su2FuseOutcomes :: Int -> Int -> [(Int, Int)]
 su2FuseOutcomes j1 j2 =

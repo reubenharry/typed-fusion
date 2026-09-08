@@ -73,6 +73,7 @@ instance FusionTheory IsingLab IsingTh where
   type FuseN IsingTh 'Sigma 'Vac = '[ '( 'Sigma, 1)]
   type FuseN IsingTh 'Sigma 'Psi = '[ '( 'Sigma, 1)]
   type FuseN IsingTh 'Sigma 'Sigma = '[ '( 'Vac, 1), '( 'Psi, 1)]
+  type DualLab IsingTh j = j
 
 instance FiniteIrr IsingLab IsingTh where
   type Irr IsingTh = '[ 'Vac, 'Psi, 'Sigma]

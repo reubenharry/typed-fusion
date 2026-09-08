@@ -16,13 +16,14 @@ module Experiments.Fusion.U1
 
 import Experiments.Fusion.Data (FusionData (..))
 import Experiments.Fusion.Theory (FusionTheory (..))
-import Symmetry.Utils (Add, Z (..))
+import Symmetry.Utils (Add, Negate, Z (..))
 
 data U1Th
 
 instance FusionTheory Z U1Th where
   type UnitLab U1Th = 'Zero
   type FuseN U1Th a b = '[ '(Add a b, 1)]
+  type DualLab U1Th z = Negate z
 
 u1FuseOutcomes :: Integer -> Integer -> [(Integer, Int)]
 u1FuseOutcomes z1 z2 = [(z1 + z2, 1)]

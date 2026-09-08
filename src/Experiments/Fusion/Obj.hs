@@ -11,10 +11,12 @@
 -- @Stabilize@ \/ @Mults@ \/ @Mult@-on-@Tensor@ walk @Irr t@, so they are for
 -- 'FiniteIrr' theories only (Fib, Ising, …). Unbounded Nat labels (SU(2)) use
 -- 'ObjSpine' instead: FuseNorm → CollectSimples → coalesced 'Spine'.
+-- Rigid duals: 'DualObj' (via 'DualLab'); no @'Dual@ constructor on 'Obj'.
 module Experiments.Fusion.Obj
   ( Obj (..)
   , FlattenSum
   , Norm
+  , DualObj
   , Fuse
   , FuseNorm
   , FuseTensor
@@ -42,6 +44,17 @@ data Obj lab
   = Atom lab
   | Tensor (Obj lab) (Obj lab)
   | Sum (Obj lab) (Obj lab)
+
+--------------------------------------------------------------------------------
+-- Dual (rigid rewrite; no 'Dual' constructor)
+--------------------------------------------------------------------------------
+
+-- | Dual object: @('Atom j)^* = 'Atom (DualLab t j)@, reverse tensors,
+-- distribute over sums. Eliminates duals rather than storing a @'Dual@ node.
+type family DualObj (t :: Type) (a :: Obj lab) :: Obj lab where
+  DualObj t ('Atom j) = 'Atom (DualLab t j)
+  DualObj t ('Tensor a b) = 'Tensor (DualObj t b) (DualObj t a)
+  DualObj t ('Sum a b) = 'Sum (DualObj t a) (DualObj t b)
 
 --------------------------------------------------------------------------------
 -- Norm

@@ -5,7 +5,7 @@
 -- | Concrete atom / Hom / association aliases for symbolic SU(2).
 --
 -- 'Atom0'..'Atom3' are 'HomFused' objects. 'Spine*' = 'ObjSpineSU2' of those
--- atoms; 'Leaf*' = 'ObjRep' \/ 'SpineRep' expand used by 'FuseRep' \/ F-moves.
+-- atoms; 'Bare*' = 'ObjRep' \/ 'SpineRep' expand used by 'FuseRep' \/ F-moves.
 module Experiments.Symbolic.Aliases
   ( Atom0
   , Atom1
@@ -15,10 +15,10 @@ module Experiments.Symbolic.Aliases
   , Spine1
   , Spine2
   , Spine3
-  , Leaf0
-  , Leaf1
-  , Leaf2
-  , Leaf3
+  , Bare0
+  , Bare1
+  , Bare2
+  , Bare3
   , Hom00
   , Hom11
   , Hom22
@@ -66,18 +66,18 @@ type Spine1 = ObjSpineSU2 Atom1
 type Spine2 = ObjSpineSU2 Atom2
 type Spine3 = ObjSpineSU2 Atom3
 
--- | Leaf 'Rep' expand (@ObjRep@) for FuseRep \/ F-moves.
-type Leaf0 = ObjRep Atom0
-type Leaf1 = ObjRep Atom1
-type Leaf2 = ObjRep Atom2
-type Leaf3 = ObjRep Atom3
+-- | Bare 'Rep' expand (@ObjRep@) for FuseRep \/ F-moves.
+type Bare0 = ObjRep Atom0
+type Bare1 = ObjRep Atom1
+type Bare2 = ObjRep Atom2
+type Bare3 = ObjRep Atom3
 
-type Hom00 = FuseRep Leaf0 Leaf0
-type Hom11 = FuseRep Leaf1 Leaf1
-type Hom22 = FuseRep Leaf2 Leaf2
-type Hom33 = FuseRep Leaf3 Leaf3
-type Hom12 = FuseRep Leaf1 Leaf2
-type Hom21 = FuseRep Leaf2 Leaf1
+type Hom00 = FuseRep Bare0 Bare0
+type Hom11 = FuseRep Bare1 Bare1
+type Hom22 = FuseRep Bare2 Bare2
+type Hom33 = FuseRep Bare3 Bare3
+type Hom12 = FuseRep Bare1 Bare2
+type Hom21 = FuseRep Bare2 Bare1
 
 -- | Intertwiner spines: trivial sector of fused Hom.
 type Inter00 = FilterTrivial Hom00
@@ -86,49 +86,49 @@ type Inter22 = FilterTrivial Hom22
 
 -- | Concrete @½⊗½⊗½@ association trees (matches compile-time AssocL/R smokes).
 type AssocL111 =
-  '[ 'Node 1 ('Node 0 ('Leaf 1) ('Leaf 1)) ('Leaf 1)
-   , 'Node 1 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 1)
-   , 'Node 3 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 1)
+  '[ 'From 1 '( 'From 0 '( 'Bare 1, 'Bare 1), 'Bare 1)
+   , 'From 1 '( 'From 2 '( 'Bare 1, 'Bare 1), 'Bare 1)
+   , 'From 3 '( 'From 2 '( 'Bare 1, 'Bare 1), 'Bare 1)
    ]
 
 type AssocR111 =
-  '[ 'Node 1 ('Leaf 1) ('Node 0 ('Leaf 1) ('Leaf 1))
-   , 'Node 1 ('Leaf 1) ('Node 2 ('Leaf 1) ('Leaf 1))
-   , 'Node 3 ('Leaf 1) ('Node 2 ('Leaf 1) ('Leaf 1))
+  '[ 'From 1 '( 'Bare 1, 'From 0 '( 'Bare 1, 'Bare 1))
+   , 'From 1 '( 'Bare 1, 'From 2 '( 'Bare 1, 'Bare 1))
+   , 'From 3 '( 'Bare 1, 'From 2 '( 'Bare 1, 'Bare 1))
    ]
 
 type AssocL000 =
-  '[ 'Node 0 ('Node 0 ('Leaf 0) ('Leaf 0)) ('Leaf 0)]
+  '[ 'From 0 '( 'From 0 '( 'Bare 0, 'Bare 0), 'Bare 0)]
 
 type AssocR000 =
-  '[ 'Node 0 ('Leaf 0) ('Node 0 ('Leaf 0) ('Leaf 0))]
+  '[ 'From 0 '( 'Bare 0, 'From 0 '( 'Bare 0, 'Bare 0))]
 
 type AssocL110 =
-  '[ 'Node 0 ('Node 0 ('Leaf 1) ('Leaf 1)) ('Leaf 0)
-   , 'Node 2 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 0)
+  '[ 'From 0 '( 'From 0 '( 'Bare 1, 'Bare 1), 'Bare 0)
+   , 'From 2 '( 'From 2 '( 'Bare 1, 'Bare 1), 'Bare 0)
    ]
 
 type AssocR110 =
-  '[ 'Node 0 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 0))
-   , 'Node 2 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 0))
+  '[ 'From 0 '( 'Bare 1, 'From 1 '( 'Bare 1, 'Bare 0))
+   , 'From 2 '( 'Bare 1, 'From 1 '( 'Bare 1, 'Bare 0))
    ]
 
 type AssocL112 =
-  '[ 'Node 2 ('Node 0 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
-   , 'Node 0 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
-   , 'Node 2 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
-   , 'Node 4 ('Node 2 ('Leaf 1) ('Leaf 1)) ('Leaf 2)
+  '[ 'From 2 '( 'From 0 '( 'Bare 1, 'Bare 1), 'Bare 2)
+   , 'From 0 '( 'From 2 '( 'Bare 1, 'Bare 1), 'Bare 2)
+   , 'From 2 '( 'From 2 '( 'Bare 1, 'Bare 1), 'Bare 2)
+   , 'From 4 '( 'From 2 '( 'Bare 1, 'Bare 1), 'Bare 2)
    ]
 
 type AssocR112 =
-  '[ 'Node 0 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 2))
-   , 'Node 2 ('Leaf 1) ('Node 1 ('Leaf 1) ('Leaf 2))
-   , 'Node 2 ('Leaf 1) ('Node 3 ('Leaf 1) ('Leaf 2))
-   , 'Node 4 ('Leaf 1) ('Node 3 ('Leaf 1) ('Leaf 2))
+  '[ 'From 0 '( 'Bare 1, 'From 1 '( 'Bare 1, 'Bare 2))
+   , 'From 2 '( 'Bare 1, 'From 1 '( 'Bare 1, 'Bare 2))
+   , 'From 2 '( 'Bare 1, 'From 3 '( 'Bare 1, 'Bare 2))
+   , 'From 4 '( 'Bare 1, 'From 3 '( 'Bare 1, 'Bare 2))
    ]
 
-type Dom111 = FuseRep (FuseRep Leaf1 Leaf1) Hom11
-type Mid111 = FuseRep Leaf1 (FuseRep Leaf1 Hom11)
-type CupR111 = FuseRep Leaf1 AssocL111
-type Dom000 = FuseRep (FuseRep Leaf0 Leaf0) Hom00
-type CupR000 = FuseRep Leaf0 (FuseRep Hom00 Leaf0)
+type Dom111 = FuseRep (FuseRep Bare1 Bare1) Hom11
+type Mid111 = FuseRep Bare1 (FuseRep Bare1 Hom11)
+type CupR111 = FuseRep Bare1 AssocL111
+type Dom000 = FuseRep (FuseRep Bare0 Bare0) Hom00
+type CupR000 = FuseRep Bare0 (FuseRep Hom00 Bare0)

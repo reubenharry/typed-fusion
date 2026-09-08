@@ -8,7 +8,7 @@
 -- | Type-level spaces and fuse for symbolic SU(2).
 --
 -- 'HomUnfused' indexes by 'Experiments.Fusion.Obj.Obj' trees.
--- 'HomFused' indexes 'Obj Nat' (via 'ObjSpineSU2' / 'ObjRep' → leaf 'Rep');
+-- 'HomFused' indexes 'Obj Nat' (via 'ObjSpineSU2' / 'ObjRep' → bare 'Rep');
 -- morphisms are genealogy 'FuseRep' / 'RepV' (fusion-tree lists).
 -- 'ObjTrees' interprets an @Obj@ as a genealogy 'Rep' (@Norm@, then 'FuseRep').
 module Experiments.Symbolic.TypeLevel
@@ -18,7 +18,7 @@ module Experiments.Symbolic.TypeLevel
   , ToVObj
     -- * Skeletal objects (HomFused)
   , Spine
-  , ReplicateLeaf
+  , ReplicateBare
   , SpineRep
   , ObjSpine
   , ObjSpineSU2
@@ -29,7 +29,7 @@ module Experiments.Symbolic.TypeLevel
   , Root
   , ToVTree
   , ToVRep
-  , NodesFromCG
+  , FromCG
   , FuseTrees
   , FuseRepOne
   , FuseRep
@@ -70,26 +70,26 @@ type family ToVObj (a :: Obj Nat) :: Type where
   ToVObj ('FObj.Sum a b) = (ToVObj a, ToVObj b)
 
 --------------------------------------------------------------------------------
--- Skeletal objects → leaf Rep (HomFused object index)
+-- Skeletal objects → bare Rep (HomFused object index)
 --------------------------------------------------------------------------------
 
--- | @n@ copies of @'Leaf j@ (multiplicity expand).
-type family ReplicateLeaf (n :: Nat) (j :: Nat) :: Rep where
-  ReplicateLeaf 0 _j = '[]
-  ReplicateLeaf 1 j = '[ 'Leaf j]
-  ReplicateLeaf n j = 'Leaf j ': ReplicateLeaf (n - 1) j
+-- | @n@ copies of @'Bare j@ (multiplicity expand).
+type family ReplicateBare (n :: Nat) (j :: Nat) :: Rep where
+  ReplicateBare 0 _j = '[]
+  ReplicateBare 1 j = '[ 'Bare j]
+  ReplicateBare n j = 'Bare j ': ReplicateBare (n - 1) j
 
--- | Expand a finite-support multiplicity spine to a leaf-only 'Rep'.
--- Order: spine order, @n@ consecutive @'Leaf j@ per sector.
+-- | Expand a finite-support multiplicity spine to a bare-only 'Rep'.
+-- Order: spine order, @n@ consecutive @'Bare j@ per sector.
 type family SpineRep (sp :: Spine Nat) :: Rep where
   SpineRep '[] = '[]
   SpineRep ('(j, n) ': rest) =
-    Append (ReplicateLeaf n j) (SpineRep rest)
+    Append (ReplicateBare n j) (SpineRep rest)
 
 -- | @Obj Nat → Spine Nat@ via SU(2) FuseNorm (no FiniteIrr).
 type ObjSpineSU2 (a :: Obj Nat) = ObjSpine SU2Th a
 
--- | Leaf 'Rep' of an @Obj@ after skeletal fuse (@SpineRep ∘ ObjSpineSU2@).
+-- | Bare 'Rep' of an @Obj@ after skeletal fuse (@SpineRep ∘ ObjSpineSU2@).
 type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
 
 --------------------------------------------------------------------------------
@@ -99,11 +99,11 @@ type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
 -- | Interpret an @Obj@ tree as a genealogy 'Rep'.
 --
 -- First 'Norm' (distribute @⊗@ over @⊕@, flatten sums), then:
--- @'Atom j ↦ '[ 'Leaf j]@, @'Tensor ↦ 'FuseRep@, @'Sum ↦ 'Append@.
+-- @'Atom j ↦ '[ 'Bare j]@, @'Tensor ↦ 'FuseRep@, @'Sum ↦ 'Append@.
 type ObjTrees (a :: Obj Nat) = ObjTreesGo (Norm a)
 
 type family ObjTreesGo (a :: Obj Nat) :: Rep where
-  ObjTreesGo ('FObj.Atom j) = '[ 'Leaf j]
+  ObjTreesGo ('FObj.Atom j) = '[ 'Bare j]
   ObjTreesGo ('FObj.Tensor a b) =
     FuseRep (ObjTreesGo a) (ObjTreesGo b)
   ObjTreesGo ('FObj.Sum a b) =
@@ -115,8 +115,8 @@ type family ObjTreesGo (a :: Obj Nat) :: Rep where
 
 -- | Root @2j@ label of a fusion tree.
 type family Root (t :: Irrep) :: Nat where
-  Root ('Leaf j) = j
-  Root ('Node j _ _) = j
+  Root ('Bare j) = j
+  Root ('From j '(_, _)) = j
 
 -- | Space of one fusion tree: root irrep only (children are type indices).
 type family ToVTree (t :: Irrep) :: Type where
@@ -129,15 +129,15 @@ type family ToVRep (ts :: Rep) :: Type where
     (ToVTree t, ToVRep (s ': rest))
 
 -- | Attach children @t1@, @t2@ to every CG outcome label.
-type family NodesFromCG (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) :: Rep where
-  NodesFromCG _ _ '[] = '[]
-  NodesFromCG t1 t2 ('(j, _) ': rest) =
-    'Node j t1 t2 ': NodesFromCG t1 t2 rest
+type family FromCG (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) :: Rep where
+  FromCG _ _ '[] = '[]
+  FromCG t1 t2 ('(j, _) ': rest) =
+    'From j '(t1, t2) ': FromCG t1 t2 rest
 
--- | CG fuse of two fusion trees: one @'Node@ per allowed total @2j@.
+-- | CG fuse of two fusion trees: one @'From@ per allowed total @2j@.
 type family FuseTrees (t1 :: Irrep) (t2 :: Irrep) :: Rep where
   FuseTrees t1 t2 =
-    NodesFromCG t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
+    FromCG t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
 
 type family FuseRepOne (t1 :: Irrep) (qs :: Rep) :: Rep where
   FuseRepOne _ '[] = '[]
@@ -151,7 +151,7 @@ type family FuseRep (rs :: Rep) (qs :: Rep) :: Rep where
     Append (FuseRepOne t1 qs) (FuseRep rest qs)
 
 -- | Monoidal unit as a singleton tree list (bare trivial irrep).
-type Unit = '[ 'Leaf 0]
+type Unit = '[ 'Bare 0]
 
 -- | Keep only total-charge-0 trees (SU(2) intertwiners / invariants).
 --
@@ -159,17 +159,17 @@ type Unit = '[ 'Leaf 0]
 -- definitional (needed by 'FilterTrivialC').
 type family FilterTrivial (ts :: Rep) :: Rep where
   FilterTrivial '[] = '[]
-  FilterTrivial ('Leaf j ': rest) =
-    FilterTrivialLeaf (CmpNat j 0) j rest
-  FilterTrivial ('Node j l r ': rest) =
-    FilterTrivialNode (CmpNat j 0) j l r rest
+  FilterTrivial ('Bare j ': rest) =
+    FilterTrivialBare (CmpNat j 0) j rest
+  FilterTrivial ('From j '(l, r) ': rest) =
+    FilterTrivialFrom (CmpNat j 0) j l r rest
 
-type family FilterTrivialLeaf (o :: Ordering) (j :: Nat) (rest :: Rep) :: Rep where
-  FilterTrivialLeaf 'EQ _j rest = 'Leaf 0 ': FilterTrivial rest
-  FilterTrivialLeaf 'GT _j rest = FilterTrivial rest
-  FilterTrivialLeaf 'LT _j rest = FilterTrivial rest
+type family FilterTrivialBare (o :: Ordering) (j :: Nat) (rest :: Rep) :: Rep where
+  FilterTrivialBare 'EQ _j rest = 'Bare 0 ': FilterTrivial rest
+  FilterTrivialBare 'GT _j rest = FilterTrivial rest
+  FilterTrivialBare 'LT _j rest = FilterTrivial rest
 
-type family FilterTrivialNode
+type family FilterTrivialFrom
   (o :: Ordering)
   (j :: Nat)
   (l :: Irrep)
@@ -177,13 +177,13 @@ type family FilterTrivialNode
   (rest :: Rep)
   :: Rep
   where
-  FilterTrivialNode 'EQ _j l r rest = 'Node 0 l r ': FilterTrivial rest
-  FilterTrivialNode 'GT _j _l _r rest = FilterTrivial rest
-  FilterTrivialNode 'LT _j _l _r rest = FilterTrivial rest
+  FilterTrivialFrom 'EQ _j l r rest = 'From 0 '(l, r) ': FilterTrivial rest
+  FilterTrivialFrom 'GT _j _l _r rest = FilterTrivial rest
+  FilterTrivialFrom 'LT _j _l _r rest = FilterTrivial rest
 
 -- | Drop @Unit@ left children after @0 ⊗ t → t@:
--- @'Node _ ('Leaf 0) t ↦ t@.
+-- @'From _ '( 'Bare 0, t) ↦ t@.
 type family UnitorCodomain (uc :: Rep) :: Rep where
   UnitorCodomain '[] = '[]
-  UnitorCodomain ('Node _j ('Leaf 0) t ': rest) =
+  UnitorCodomain ('From _j '( 'Bare 0, t) ': rest) =
     t ': UnitorCodomain rest

@@ -448,35 +448,35 @@ class KnownHomFused (a :: Obj Nat) where
 --
 -- Interim singlet walk (paired with 'cup'). True fused η once channel-native F
 -- lands.
-idHomLeaf
+idHomBare
   :: forall j
    . ( KnownNat j
-     , KnownRep (FuseRep '[ 'Leaf j] '[ 'Leaf j])
+     , KnownRep (FuseRep '[ 'Bare j] '[ 'Bare j])
      )
-  => RepV (FuseRep '[ 'Leaf j] '[ 'Leaf j])
-idHomLeaf = go (repSing @(FuseRep '[ 'Leaf j] '[ 'Leaf j]))
+  => RepV (FuseRep '[ 'Bare j] '[ 'Bare j])
+idHomBare = go (repSing @(FuseRep '[ 'Bare j] '[ 'Bare j]))
   where
     go :: forall ts. SRep ts -> RepV ts
     go SRepNil = RNil
     go (SRepCons (t :: SIrrepTree u) rest) =
       case t of
-        SNode @d _l _r ->
+        SFrom @d _l _r ->
           case sameNat (Proxy @d) (Proxy @0) of
             Just Refl -> RCons @u (konst 1) (go rest)
             Nothing -> RCons @u zeroV (go rest)
-        SLeaf {} ->
-          error "idHomLeaf: expected Hom Node channels"
+        SBare {} ->
+          error "idHomBare: expected Hom From channels"
 
--- | Simple atom: identity via 'idHomLeaf' (@ObjSpineSU2 ('Atom j) ~ '[ '(j,1)]@).
+-- | Simple atom: identity via 'idHomBare' (@ObjSpineSU2 ('Atom j) ~ '[ '(j,1)]@).
 instance
   ( KnownNat j
-  , KnownRep (FuseRep '[ 'Leaf j] '[ 'Leaf j])
+  , KnownRep (FuseRep '[ 'Bare j] '[ 'Bare j])
   , ObjSpineSU2 ('FObj.Atom j) ~ '[ '(j, 1)]
-  , ObjRep ('FObj.Atom j) ~ '[ 'Leaf j]
+  , ObjRep ('FObj.Atom j) ~ '[ 'Bare j]
   ) =>
   KnownHomFused ('FObj.Atom j)
   where
-  idHomFusedVal = idHomLeaf @j
+  idHomFusedVal = idHomBare @j
 
 -- Category \/ monoidal structure: HomUnfused (complete). HomFused Category lives
 -- with the tree compose ladder (see 'composeHomFused').
@@ -557,7 +557,7 @@ cup
   => RepV (FuseRep b b)
   -> RepV Unit
 cup bb =
-  RCons @('Leaf 0) (konst (cupHomTreesScalar @(FuseRep b b) bb)) RNil
+  RCons @('Bare 0) (konst (cupHomTreesScalar @(FuseRep b b) bb)) RNil
   where
     -- Singlet walk via 'SRep': @sameNat@ refines @j ~ 0@ so payloads stay @C 1@.
     cupHomTreesScalar
@@ -571,11 +571,11 @@ cup bb =
         go SRepNil RNil = 0
         go (SRepCons t rest) (RCons v rs) =
           case t of
-            SLeaf @j ->
+            SBare @j ->
               case sameNat (Proxy @j) (Proxy @0) of
                 Just Refl -> (konst 1 <.> v) + go rest rs
                 Nothing -> go rest rs
-            SNode @j l _r ->
+            SFrom @j l _r ->
               case sameNat (Proxy @j) (Proxy @0) of
                 Just Refl ->
                   su2CupFactor (rootLab l) * (konst 1 <.> v) + go rest rs
@@ -603,9 +603,9 @@ unitorHom
 unitorHom =
   fuseMapRight @a @(FuseRep Unit c) @c (unitor @c)
 
--- | Left unitor on fusion trees: @Unit ⊗ c → c@ (drop @'Leaf 0@ left child).
+-- | Left unitor on fusion trees: @Unit ⊗ c → c@ (drop @'Bare 0@ left child).
 --
--- For each @t@ in @c@, @FuseTrees ('Leaf 0) t = '[ 'Node (Root t) ('Leaf 0) t ]@
+-- For each @t@ in @c@, @FuseTrees ('Bare 0) t = '[ 'From (Root t) '( 'Bare 0, t) ]@
 -- (SU(2): @0 ⊗ j = j@); payloads are already the root irrep of @t@.
 unitor
   :: forall c
@@ -616,7 +616,7 @@ unitor
   -> RepV c
 unitor = go (repSing @(FuseRep Unit c))
   where
-    -- @sameNat@ refines left child to @'Leaf 0@; 'UnitorCodomain' drops it.
+    -- @sameNat@ refines left child to @'Bare 0@; 'UnitorCodomain' drops it.
     go
       :: forall uc
        . SRep uc
@@ -625,30 +625,30 @@ unitor = go (repSing @(FuseRep Unit c))
     go SRepNil RNil = RNil
     go (SRepCons t rest) (RCons v rs) =
       case t of
-        SNode @j l r ->
+        SFrom @j l r ->
           case l of
-            SLeaf @zj ->
+            SBare @zj ->
               case sameNat (Proxy @zj) (Proxy @0) of
                 Just Refl ->
                   case r of
-                    SLeaf @rj ->
+                    SBare @rj ->
                       case sameNat (Proxy @rj) (Proxy @j) of
                         Just Refl ->
-                          RCons @('Leaf rj) v (go rest rs)
+                          RCons @('Bare rj) v (go rest rs)
                         Nothing ->
                           error "unitor: root mismatch after 0⊗t"
-                    SNode @rj @rl @rr _l _r ->
+                    SFrom @rj @rl @rr _l _r ->
                       case sameNat (Proxy @rj) (Proxy @j) of
                         Just Refl ->
-                          RCons @('Node rj rl rr) v (go rest rs)
+                          RCons @('From rj '(rl, rr)) v (go rest rs)
                         Nothing ->
                           error "unitor: root mismatch after 0⊗t"
                 Nothing ->
-                  error "unitor: expected left child 'Leaf 0"
-            SNode {} ->
-              error "unitor: expected left child 'Leaf 0"
-        SLeaf {} ->
-          error "unitor: expected Node from FuseRep Unit"
+                  error "unitor: expected left child 'Bare 0"
+            SFrom {} ->
+              error "unitor: expected left child 'Bare 0"
+        SBare {} ->
+          error "unitor: expected From from FuseRep Unit"
 
 -- | Fused Hom compose as the five Mac Lane morphisms.
 composeHomTrees
@@ -707,7 +707,7 @@ forgetHomFusedHalf
   :: HomFused Atom1 Atom1
   -> HomUnfused Atom1 Atom1
 forgetHomFusedHalf (HomFused r) =
-  let u = unfuseTrees @('Leaf 1) @('Leaf 1) r
+  let u = unfuseTrees @('Bare 1) @('Bare 1) r
       mid = (su2DualIsoHalfInv ⊗^ (id :: C 2 +> C 2)) $ u
       packed = (sqrt 2 :+ 0) *^ mid
       m = fromTensor -+$=> packed :: C 2 +> C 2

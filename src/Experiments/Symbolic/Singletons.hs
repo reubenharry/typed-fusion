@@ -39,20 +39,20 @@ data SIrrep (j :: Nat) where
 
 -- | Singleton for a genealogy-preserving 'Irrep' tree.
 data SIrrepTree (t :: Irrep) where
-  SLeaf
+  SBare
     :: forall j
      . ( KnownNat j
        , KnownNat (IrrepDim j)
        )
-    => SIrrepTree ('Leaf j)
-  SNode
+    => SIrrepTree ('Bare j)
+  SFrom
     :: forall j l r
      . ( KnownNat j
        , KnownNat (IrrepDim j)
        )
     => SIrrepTree l
     -> SIrrepTree r
-    -> SIrrepTree ('Node j l r)
+    -> SIrrepTree ('From j '(l, r))
 
 -- | Materialize 'SIrrepTree' for a statically known tree.
 class KnownIrrep (t :: Irrep) where
@@ -62,9 +62,9 @@ instance
   ( KnownNat j
   , KnownNat (IrrepDim j)
   ) =>
-  KnownIrrep ('Leaf j)
+  KnownIrrep ('Bare j)
   where
-  irrepSing = SLeaf @j
+  irrepSing = SBare @j
 
 instance
   ( KnownNat j
@@ -72,9 +72,9 @@ instance
   , KnownIrrep l
   , KnownIrrep r
   ) =>
-  KnownIrrep ('Node j l r)
+  KnownIrrep ('From j '(l, r))
   where
-  irrepSing = SNode @j (irrepSing @l) (irrepSing @r)
+  irrepSing = SFrom @j (irrepSing @l) (irrepSing @r)
 
 -- | Singleton spine for 'Rep'.
 data SRep (ts :: Rep) where
@@ -102,5 +102,5 @@ instance
 
 -- | Root @2j@ as an 'Int' (for channel keys / Racah packing).
 rootLab :: SIrrepTree t -> Int
-rootLab (SLeaf @j) = fromIntegral (natVal (Proxy @j))
-rootLab (SNode @j _ _) = fromIntegral (natVal (Proxy @j))
+rootLab (SBare @j) = fromIntegral (natVal (Proxy @j))
+rootLab (SFrom @j _ _) = fromIntegral (natVal (Proxy @j))

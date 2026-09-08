@@ -38,6 +38,7 @@ data SU3Lab = SU3L Nat Nat
 instance FusionTheory SU3Lab SU3Th where
   type UnitLab SU3Th = 'SU3L 0 0
   type FuseN SU3Th a b = SU3FuseN a b
+  type DualLab SU3Th ('SU3L p q) = 'SU3L q p
 
 -- | Unitors only — general SU(3) @FuseN@ needs type-level LR.
 type family SU3FuseN (a :: SU3Lab) (b :: SU3Lab) :: [(SU3Lab, Nat)] where

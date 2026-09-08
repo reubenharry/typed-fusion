@@ -42,6 +42,7 @@ instance FusionTheory MultLab MultTh where
   type FuseN MultTh 'MX 'MOne = '[ '( 'MX, 1)]
   -- | Nontrivial: two copies of @X@ in @X⊗X@.
   type FuseN MultTh 'MX 'MX = '[ '( 'MOne, 1), '( 'MX, 2)]
+  type DualLab MultTh j = j
 
 instance FiniteIrr MultLab MultTh where
   type Irr MultTh = '[ 'MOne, 'MX]

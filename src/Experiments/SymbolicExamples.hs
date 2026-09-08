@@ -22,6 +22,7 @@ import Data.VectorSpace (InnerSpace ((<.>)), (*^), (^-^))
 import Experiments.Categorical.Associative (Associative (..))
 import Experiments.Categorical.Bifunctor (Bifunctor (..))
 import Experiments.Fusion.Obj as FObj
+import Experiments.Fusion.SU2 (SU2Th)
 import Experiments.Symbolic
 import GHC.TypeLits (Nat)
 import Math.LinearMap.Category
@@ -40,15 +41,15 @@ import qualified Data.Vector.Storable as VS
 
 import Prelude hiding (id, (.), ($))
 
-exampleRep :: RepV '[ 'Leaf 1, 'Leaf 3]
+exampleRep :: RepV '[ 'Bare 1, 'Bare 3]
 exampleRep =
-  RCons @('Leaf 1) (konst 1) $
-    RCons @('Leaf 3) (konst 1) RNil
+  RCons @('Bare 1) (konst 1) $
+    RCons @('Bare 3) (konst 1) RNil
 
 exampleUnfused :: ToVObj (Tensor ('Atom 1) ('Atom 1))
 exampleUnfused = konst 1 ⊗ konst 1
 
-example :: RepV (FuseRep '[ 'Leaf 1] '[ 'Leaf 1])
+example :: RepV (FuseRep '[ 'Bare 1] '[ 'Bare 1])
 example = undefined
 
 type TW = Tensor ('Atom 1) ('Atom 1)
@@ -71,34 +72,34 @@ baz = undefined
 
 fuseExample
   :: ToVObj ('Tensor ('Atom 1) ('Atom 1))
-  -> RepV '[ 'Node 0 ('Leaf 1) ('Leaf 1), 'Node 2 ('Leaf 1) ('Leaf 1)]
-fuseExample = fuseTrees @('Leaf 1) @('Leaf 1)
+  -> RepV '[ 'From 0 '( 'Bare 1, 'Bare 1), 'From 2 '( 'Bare 1, 'Bare 1)]
+fuseExample = fuseTrees @('Bare 1) @('Bare 1)
 
 -- | Genealogy @(½⊗½)⊗1@: fuse @exampleUnfused@ then a spin-1 leaf.
 fuseExample2
-  :: ToVRep (FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+  :: ToVRep (FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 2])
 fuseExample2 =
-  repVToV @(FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2]) $
+  repVToV @(FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 2]) $
     fuseRepTerm
       (fuseExample exampleUnfused)
-      (RCons @('Leaf 2) (konst 1) RNil)
+      (RCons @('Bare 2) (konst 1) RNil)
 
 -- | Trivial (total-charge-0) sector of 'fuseExample2'.
 fuseExample3
   :: ToVRep
        ( FilterTrivial
-           (FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+           (FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 2])
        )
 fuseExample3 =
   repVToV
     @( FilterTrivial
-         (FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+         (FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 2])
      )
     $ filterTrivialRepV
-        @(FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+        @(FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 2])
         ( fuseRepTerm
             (fuseExample exampleUnfused)
-            (RCons @('Leaf 2) (konst 1) RNil)
+            (RCons @('Bare 2) (konst 1) RNil)
         )
 
 -- | Unfused nested Kronecker @((½⊗½)⊗1)@.
@@ -110,13 +111,13 @@ fuseExample4 = (konst 1 ⊗ konst 1) ⊗ konst 1
 -- | Endomorphism on leaf-½ Hom (singlet / triplet channels).
 f :: RepV (FuseRep (ObjRep ('FObj.Atom 1)) (ObjRep ('FObj.Atom 1)))
 f =
-  RCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
-    RCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) RNil
+  RCons @('From 0 '( 'Bare 1, 'Bare 1)) (konst 0.3) $
+    RCons @('From 2 '( 'Bare 1, 'Bare 1)) (konst 0.7) RNil
 
 g :: RepV (FuseRep (ObjRep ('FObj.Atom 1)) (ObjRep ('FObj.Atom 1)))
 g =
-  RCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.5) $
-    RCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst (-0.2)) RNil
+  RCons @('From 0 '( 'Bare 1, 'Bare 1)) (konst 0.5) $
+    RCons @('From 2 '( 'Bare 1, 'Bare 1)) (konst (-0.2)) RNil
 
 -- | @g ∘ f@ spelled as the five Mac Lane morphisms in 'composeHomTrees'.
 composeFGSteps :: RepV Hom11
@@ -124,13 +125,13 @@ composeFGSteps =
   let -- 1. @f ⊗ g@
       step1 = fuseRepTerm @Hom11 @Hom11 f g
       -- 2. outer F: @(a*⊗b) ⊗ (b*⊗c) → a* ⊗ (b ⊗ (b*⊗c))@
-      step2 = fmoveOuterHom @Leaf1 @Leaf1 @Leaf1 step1
+      step2 = fmoveOuterHom @Bare1 @Bare1 @Bare1 step1
       -- 3. @id ⊗ F@: @a* ⊗ (b ⊗ (b*⊗c)) → a* ⊗ ((b ⊗ b*) ⊗ c)@
-      step3 = fmoveInnerHom @Leaf1 @Leaf1 @Leaf1 step2
+      step3 = fmoveInnerHom @Bare1 @Bare1 @Bare1 step2
       -- 4. @id ⊗ (cup ⊗ id)@: contract the middle Hom to @Unit@
-      step4 = cupTensorIdHom @Leaf1 @Leaf1 @Leaf1 step3
+      step4 = cupTensorIdHom @Bare1 @Bare1 @Bare1 step3
       -- 5. @id ⊗ λ@: absorb @Unit@ on the left of @c@
-      step5 = unitorHom @Leaf1 @Leaf1 step4
+      step5 = unitorHom @Bare1 @Bare1 step4
    in step5
 
 -- | Right unitor absorbs @Unit@ on Dual-left HomUnfused (@m ⊗ 1 ≅ m@).
@@ -327,7 +328,7 @@ cupCapRoundtripSpinHalfOk :: Bool
 cupCapRoundtripSpinHalfOk =
   let u = 0.7 :+ 0
       capped = scaleRepV @Hom11 u (idHomFusedVal @Atom1)
-      RCons v RNil = cup @Leaf1 capped
+      RCons v RNil = cup @Bare1 capped
    in magnitude ((konst 1 <.> v) - ((-2) * u)) < 1e-9
 
 -- | All symbolic smokes in one place (for REPL / probes).
@@ -345,7 +346,7 @@ symbolicExamplesOk =
     , associateHomUnfusedRoundtripOk
     , cupCapRoundtripSpinHalfOk
     , composeHomTreesSelfTest
-    , composeHomTreesLeaf1TypedOk
+    , composeHomTreesBare1TypedOk
     ]
 
 
@@ -367,6 +368,9 @@ type family AssertEqIrrep (a :: Irrep) (b :: Irrep) :: Bool where
 
 type family AssertEqSpine (a :: Spine Nat) (b :: Spine Nat) :: Bool where
   AssertEqSpine a a = 'True
+
+type family AssertEqObj (a :: FObj.Obj Nat) (b :: FObj.Obj Nat) :: Bool where
+  AssertEqObj a a = 'True
 
 -- | Atom → singleton spine.
 type SmokeObjSpineAtom =
@@ -393,32 +397,32 @@ type SmokeObjSpineMult =
 -- | Fused Hom is 'RepV' of 'FuseRep' (genealogy-preserving).
 type SmokeHomFused =
   AssertEqType
-    (ToVRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]))
+    (ToVRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]))
     (ToVRep Hom11)
 
 -- | @½ ⊗ ½@ fusion trees: singlet and triplet channels (no coalesce).
 type SmokeFuseTrees =
   AssertEqRep
-    (FuseTrees ('Leaf 1) ('Leaf 1))
-    '[ 'Node 0 ('Leaf 1) ('Leaf 1)
-     , 'Node 2 ('Leaf 1) ('Leaf 1)
+    (FuseTrees ('Bare 1) ('Bare 1))
+    '[ 'From 0 '( 'Bare 1, 'Bare 1)
+     , 'From 2 '( 'Bare 1, 'Bare 1)
      ]
 
 -- | 'ObjTrees' on an atom is a singleton leaf.
 type SmokeObjTreesAtom =
-  AssertEqRep (ObjTrees ('FObj.Atom 1)) '[ 'Leaf 1]
+  AssertEqRep (ObjTrees ('FObj.Atom 1)) '[ 'Bare 1]
 
 -- | 'ObjTrees' of @½ ⊗ ½@ matches 'FuseTrees' / 'FuseRep' on leaves.
 type SmokeObjTreesHalfHalf =
   AssertEqRep
     (ObjTrees ('FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1)))
-    (FuseTrees ('Leaf 1) ('Leaf 1))
+    (FuseTrees ('Bare 1) ('Bare 1))
 
 -- | 'ObjTrees' of a sum is flat 'Append' (no coalesce).
 type SmokeObjTreesSum =
   AssertEqRep
     (ObjTrees ('FObj.Sum ('FObj.Atom 2) ('FObj.Atom 0)))
-    '[ 'Leaf 2, 'Leaf 0]
+    '[ 'Bare 2, 'Bare 0]
 
 -- | 'Norm' then fuse: @(0 ⊕ 1) ⊗ ½@ equals the distributed sum of tensors.
 type SmokeObjTreesDist =
@@ -444,65 +448,85 @@ type SmokeObjTreesAssocL =
     )
     AssocL111
 
+-- | SU(2) simples are self-dual.
+type SmokeDualObjAtom =
+  AssertEqObj (FObj.DualObj SU2Th ('FObj.Atom 1)) ('FObj.Atom 1)
+
+-- | Dual reverses tensor order (labels unchanged for SU(2)).
+type SmokeDualObjTensor =
+  AssertEqObj
+    ( FObj.DualObj SU2Th
+        ('FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 2))
+    )
+    ('FObj.Tensor ('FObj.Atom 2) ('FObj.Atom 1))
+
+-- | Dual distributes over sums.
+type SmokeDualObjSum =
+  AssertEqObj
+    ( FObj.DualObj SU2Th
+        ('FObj.Sum ('FObj.Atom 0) ('FObj.Atom 2))
+    )
+    ('FObj.Sum ('FObj.Atom 0) ('FObj.Atom 2))
+
 -- | Root of a fusion tree is the channel label.
 type SmokeRootNode =
   AssertEqNat
-    (Root ('Node 0 ('Leaf 1) ('Leaf 1)))
+    (Root ('From 0 '( 'Bare 1, 'Bare 1)))
     0
 
 -- | 'ToVTree' is the root irrep space only (@j=1 ⇒ C 2@; @j=2 ⇒ C 3@).
 type SmokeToVTree =
   AssertEqType
-    (ToVTree ('Node 2 ('Leaf 1) ('Leaf 1)))
+    (ToVTree ('From 2 '( 'Bare 1, 'Bare 1)))
     (C 3)
 
 -- | 'ToVRep' nests root spaces.
 type SmokeToVRep =
   AssertEqType
-    (ToVRep (FuseTrees ('Leaf 1) ('Leaf 1)))
+    (ToVRep (FuseTrees ('Bare 1) ('Bare 1)))
     (C 1, C 3)
 
 -- | List fuse distributes over tree pairs.
 type SmokeFuseRep =
   AssertEqRep
-    (FuseRep '[ 'Leaf 1] '[ 'Leaf 1])
-    (FuseTrees ('Leaf 1) ('Leaf 1))
+    (FuseRep '[ 'Bare 1] '[ 'Bare 1])
+    (FuseTrees ('Bare 1) ('Bare 1))
 
 -- | Left-assoc @½⊗½⊗½@ equals the concrete 'AssocL111' spine used by 'fmoveTrees111'.
 type SmokeAssocL111 =
   AssertEqRep
-    ( FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 1] )
+    ( FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 1] )
     AssocL111
 
 type SmokeAssocR111 =
   AssertEqRep
-    ( FuseRep '[ 'Leaf 1] (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) )
+    ( FuseRep '[ 'Bare 1] (FuseRep '[ 'Bare 1] '[ 'Bare 1]) )
     AssocR111
 
 type SmokeAssocL110 =
   AssertEqRep
-    ( FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 0] )
+    ( FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 0] )
     AssocL110
 
 type SmokeAssocR110 =
   AssertEqRep
-    ( FuseRep '[ 'Leaf 1] (FuseRep '[ 'Leaf 1] '[ 'Leaf 0]) )
+    ( FuseRep '[ 'Bare 1] (FuseRep '[ 'Bare 1] '[ 'Bare 0]) )
     AssocR110
 
 type SmokeAssocL112 =
   AssertEqRep
-    ( FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2] )
+    ( FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 2] )
     AssocL112
 
 type SmokeAssocR112 =
   AssertEqRep
-    ( FuseRep '[ 'Leaf 1] (FuseRep '[ 'Leaf 1] '[ 'Leaf 2]) )
+    ( FuseRep '[ 'Bare 1] (FuseRep '[ 'Bare 1] '[ 'Bare 2]) )
     AssocR112
 
 -- | Concrete Leaf-½ Hom-compose spines match 'FuseRep' expansions.
 type SmokeHom11 =
   AssertEqRep
-    (FuseRep '[ 'Leaf 1] '[ 'Leaf 1])
+    (FuseRep '[ 'Bare 1] '[ 'Bare 1])
     Hom11
 
 type SmokeDom111 =
@@ -512,20 +536,20 @@ type SmokeDom111 =
 
 type SmokeMid111 =
   AssertEqRep
-    (FuseRep '[ 'Leaf 1] AssocR111)
+    (FuseRep '[ 'Bare 1] AssocR111)
     Mid111
 
 type SmokeCupR111 =
   AssertEqRep
-    (FuseRep '[ 'Leaf 1] AssocL111)
+    (FuseRep '[ 'Bare 1] AssocL111)
     CupR111
 
 -- | Nested outer-F codomain (Mac Lane step 2) equals 'Mid111'.
 type SmokeAfterOuterF111 =
   AssertEqRep
     ( FuseRep
-        '[ 'Leaf 1]
-        (FuseRep '[ 'Leaf 1] (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]))
+        '[ 'Bare 1]
+        (FuseRep '[ 'Bare 1] (FuseRep '[ 'Bare 1] '[ 'Bare 1]))
     )
     Mid111
 
@@ -533,22 +557,22 @@ type SmokeAfterOuterF111 =
 type SmokeCupReady111 =
   AssertEqRep
     ( FuseRep
-        '[ 'Leaf 1]
-        (FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 1])
+        '[ 'Bare 1]
+        (FuseRep (FuseRep '[ 'Bare 1] '[ 'Bare 1]) '[ 'Bare 1])
     )
     CupR111
 
 -- | After @id ⊗ (cup ⊗ id)@: Unit remains as 'Unit' in the middle.
 type SmokeAfterCup111 =
   AssertEqRep
-    (FuseRep '[ 'Leaf 1] (FuseRep Unit '[ 'Leaf 1]))
-    '[ 'Node 0 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))
-     , 'Node 2 ('Leaf 1) ('Node 1 ('Leaf 0) ('Leaf 1))
+    (FuseRep '[ 'Bare 1] (FuseRep Unit '[ 'Bare 1]))
+    '[ 'From 0 '( 'Bare 1, 'From 1 '( 'Bare 0, 'Bare 1))
+     , 'From 2 '( 'Bare 1, 'From 1 '( 'Bare 0, 'Bare 1))
      ]
 
 type SmokeHom00 =
   AssertEqRep
-    (FuseRep '[ 'Leaf 0] '[ 'Leaf 0])
+    (FuseRep '[ 'Bare 0] '[ 'Bare 0])
     Hom00
 
 type SmokeDom000 =
@@ -558,7 +582,7 @@ type SmokeDom000 =
 
 type SmokeCupR000 =
   AssertEqRep
-    (FuseRep '[ 'Leaf 0] (FuseRep Hom00 '[ 'Leaf 0]))
+    (FuseRep '[ 'Bare 0] (FuseRep Hom00 '[ 'Bare 0]))
     CupR000
 
 -- | Flat layout equals reduced HMatrix packing for @½⊗½⊗½@ (both associations).
@@ -594,6 +618,15 @@ smokeObjTreesDist = Proxy
 
 smokeObjTreesAssocL :: Proxy SmokeObjTreesAssocL
 smokeObjTreesAssocL = Proxy
+
+smokeDualObjAtom :: Proxy SmokeDualObjAtom
+smokeDualObjAtom = Proxy
+
+smokeDualObjTensor :: Proxy SmokeDualObjTensor
+smokeDualObjTensor = Proxy
+
+smokeDualObjSum :: Proxy SmokeDualObjSum
+smokeDualObjSum = Proxy
 
 smokeRootNode :: Proxy SmokeRootNode
 smokeRootNode = Proxy
@@ -644,7 +677,7 @@ fmoveTreesSelfTest =
   checkFmoveTrees111 sampleAssocL111
     && checkFmoveTrees110 sampleAssocL110
     && checkFmoveTrees112 sampleAssocL112
-    && checkFmoveTreesLeaves @1 @2 @1 (fillRepVScaled @( FuseRep (FuseRep Leaf1 Leaf2) Leaf1 ))
+    && checkFmoveTreesLeaves @1 @2 @1 (fillRepVScaled @( FuseRep (FuseRep Bare1 Bare2) Bare1 ))
 
 -- | Force the F-move self-test at module load (fails loud if broken).
 fmoveTreesSelfTestOk :: ()
@@ -658,10 +691,10 @@ fuseMapRightFinvSelfTest :: Bool
 fuseMapRightFinvSelfTest =
   let leaf = RCons (konst 1) RNil
       assocR = vToRepV @AssocR111 (konst 0.5, (konst 0.25, konst 0.125))
-      mid = fuseTensorTrees @Leaf1 @AssocR111 (TensorTrees leaf assocR)
+      mid = fuseTensorTrees @Bare1 @AssocR111 (TensorTrees leaf assocR)
       cupGen = fuseMapRightFinv111 mid
       expected =
-        fuseTensorTrees @Leaf1 @AssocL111 $
+        fuseTensorTrees @Bare1 @AssocL111 $
           TensorTrees leaf (fmoveInvTrees111 assocR)
       close a b =
         let d = a ^-^ b
@@ -694,12 +727,12 @@ composeHomTreesSelfTest =
     && checkHomInterCategory111
     && checkForgetHomFusedId111
     && checkForgetHomInterCompose111
-    && checkLeaf2FmoveSmoke
+    && checkBare2FmoveSmoke
     && checkFmoveOuter111
     && checkFuseMapLeftId111
-    && checkUnitorLeaf1
+    && checkUnitorBare1
     && checkUnitorHom11
-    && checkCupLeafHom
+    && checkCupBareHom
 
 composeHomTreesSelfTestOk :: ()
 composeHomTreesSelfTestOk =
@@ -708,12 +741,12 @@ composeHomTreesSelfTestOk =
     else error "composeHomTreesSelfTest failed: id/unit laws on leaf Hom"
 
 -- | Typechecks five-morphism 'composeHomTrees' at leaf-½ (do not evaluate).
-composeHomTreesLeaf1
+composeHomTreesBare1
   :: RepV Hom11 -> RepV Hom11 -> RepV Hom11
-composeHomTreesLeaf1 = composeHomTrees @Leaf1 @Leaf1 @Leaf1
+composeHomTreesBare1 = composeHomTrees @Bare1 @Bare1 @Bare1
 
-composeHomTreesLeaf1TypedOk :: Bool
-composeHomTreesLeaf1TypedOk =
-  let _ty = composeHomTreesLeaf1
-      _cup = cupTensorIdHomLeaf1
+composeHomTreesBare1TypedOk :: Bool
+composeHomTreesBare1TypedOk =
+  let _ty = composeHomTreesBare1
+      _cup = cupTensorIdHomBare1
    in True

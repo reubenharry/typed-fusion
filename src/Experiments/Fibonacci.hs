@@ -123,6 +123,7 @@ instance FusionTheory Simple FibTh where
   type FuseN FibTh 'One 'Tau = '[ '( 'Tau, 1)]
   type FuseN FibTh 'Tau 'One = '[ '( 'Tau, 1)]
   type FuseN FibTh 'Tau 'Tau = '[ '( 'One, 1), '( 'Tau, 1)]
+  type DualLab FibTh j = j
 
 instance FiniteIrr Simple FibTh where
   type Irr FibTh = '[ 'One, 'Tau]

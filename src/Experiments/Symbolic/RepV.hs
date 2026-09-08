@@ -94,11 +94,11 @@ appendRepV RNil r2 = r2
 appendRepV (RCons v rest) r2 =
   RCons v (appendRepV rest r2)
 
--- | Walk CG channels for a pair of trees → 'RepV' of @'Node@ outcomes.
+-- | Walk CG channels for a pair of trees → 'RepV' of @'From@ outcomes.
 class FuseTreesGo (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) where
   fuseTreesGo
     :: C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2))
-    -> RepV (NodesFromCG t1 t2 cg)
+    -> RepV (FromCG t1 t2 cg)
 
 instance FuseTreesGo t1 t2 '[] where
   fuseTreesGo _ = RNil
@@ -115,7 +115,7 @@ instance
   FuseTreesGo t1 t2 ('(j, m) ': rest)
   where
   fuseTreesGo v =
-    RCons @('Node j t1 t2)
+    RCons @('From j '(t1, t2))
       (fuseCGChannel @(Root t1) @(Root t2) @j $ v)
       (fuseTreesGo @t1 @t2 @rest v)
 
@@ -134,7 +134,7 @@ fuseTrees =
 -- | Inverse of 'fuseTrees' on the CG image: sum channel embeddings.
 class UnfuseTreesGo (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) where
   unfuseTreesGo
-    :: RepV (NodesFromCG t1 t2 cg)
+    :: RepV (FromCG t1 t2 cg)
     -> C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2))
 
 instance
@@ -259,8 +259,8 @@ scaleRepV s = go (repSing @ts)
     go SRepNil RNil = RNil
     go (SRepCons t rest) (RCons v rs) =
       case t of
-        SLeaf {} -> RCons (s *^ v) (go rest rs)
-        SNode {} -> RCons (s *^ v) (go rest rs)
+        SBare {} -> RCons (s *^ v) (go rest rs)
+        SFrom {} -> RCons (s *^ v) (go rest rs)
 
 approxRepV
   :: forall ts
@@ -278,8 +278,8 @@ approxRepV = go (repSing @ts)
     go SRepNil RNil RNil = True
     go (SRepCons t rest) (RCons a as) (RCons b bs) =
       case t of
-        SLeaf {} -> closeVec a b && go rest as bs
-        SNode {} -> closeVec a b && go rest as bs
+        SBare {} -> closeVec a b && go rest as bs
+        SFrom {} -> closeVec a b && go rest as bs
     go _ _ _ = False
 
 
@@ -295,11 +295,11 @@ instance FilterTrivialC '[] where
   filterTrivialRepV RNil = RNil
   embedTrivialRepV RNil = RNil
 
-instance {-# OVERLAPPING #-} FilterTrivialC rest => FilterTrivialC ('Leaf 0 ': rest) where
+instance {-# OVERLAPPING #-} FilterTrivialC rest => FilterTrivialC ('Bare 0 ': rest) where
   filterTrivialRepV (RCons v rs) =
-    RCons @('Leaf 0) v (filterTrivialRepV @rest rs)
+    RCons @('Bare 0) v (filterTrivialRepV @rest rs)
   embedTrivialRepV (RCons v rs) =
-    RCons @('Leaf 0) v (embedTrivialRepV @rest rs)
+    RCons @('Bare 0) v (embedTrivialRepV @rest rs)
 
 instance {-# OVERLAPPABLE #-}
   ( KnownNat j
@@ -307,22 +307,22 @@ instance {-# OVERLAPPABLE #-}
   , KnownNat (IrrepDim j)
   , FilterTrivialC rest
   ) =>
-  FilterTrivialC ('Leaf j ': rest)
+  FilterTrivialC ('Bare j ': rest)
   where
   filterTrivialRepV (RCons _ rs) = filterTrivialRepV @rest rs
   embedTrivialRepV fr =
-    RCons @('Leaf j) zeroV (embedTrivialRepV @rest fr)
+    RCons @('Bare j) zeroV (embedTrivialRepV @rest fr)
 
 instance {-# OVERLAPPING #-}
-  ( KnownIrrep ('Node 0 l r)
+  ( KnownIrrep ('From 0 '(l, r))
   , FilterTrivialC rest
   ) =>
-  FilterTrivialC ('Node 0 l r ': rest)
+  FilterTrivialC ('From 0 '(l, r) ': rest)
   where
   filterTrivialRepV (RCons v rs) =
-    RCons @('Node 0 l r) v (filterTrivialRepV @rest rs)
+    RCons @('From 0 '(l, r)) v (filterTrivialRepV @rest rs)
   embedTrivialRepV (RCons v rs) =
-    RCons @('Node 0 l r) v (embedTrivialRepV @rest rs)
+    RCons @('From 0 '(l, r)) v (embedTrivialRepV @rest rs)
 
 instance {-# OVERLAPPABLE #-}
   ( KnownNat j
@@ -332,8 +332,8 @@ instance {-# OVERLAPPABLE #-}
   , KnownIrrep r
   , FilterTrivialC rest
   ) =>
-  FilterTrivialC ('Node j l r ': rest)
+  FilterTrivialC ('From j '(l, r) ': rest)
   where
   filterTrivialRepV (RCons _ rs) = filterTrivialRepV @rest rs
   embedTrivialRepV fr =
-    RCons @('Node j l r) zeroV (embedTrivialRepV @rest fr)
+    RCons @('From j '(l, r)) zeroV (embedTrivialRepV @rest fr)

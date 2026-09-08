@@ -16,11 +16,14 @@ import GHC.TypeLits (Nat)
 
 -- | Fusion tree: one inhabited SU(2) channel plus genealogy.
 --
--- @'Leaf j@ is a bare @2j@ label. @'Node j l r@ is the CG outcome @j@ of
--- coupling children @l@ and @r@ (SU(2) multiplicity-free; no channel index).
+-- @'Bare j@ is a bare @2j@ label. @j `'From` '(l, r)@ is the CG outcome @j@
+-- of coupling children @l@ and @r@ (SU(2) multiplicity-free; no channel index).
+--
+-- Children are paired so @From@ can be infix (Haskell infix constructors are
+-- binary).
 data Irrep
-  = Leaf Nat
-  | Node Nat Irrep Irrep
+  = Bare Nat
+  | Nat `From` (Irrep, Irrep)
 
 -- | Representation as a list of fusion trees (same-root trees stay distinct).
 type Rep = [Irrep]
