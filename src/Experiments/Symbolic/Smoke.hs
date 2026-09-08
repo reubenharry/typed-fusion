@@ -38,11 +38,14 @@ module Experiments.Symbolic.Smoke
   , checkHomFusedCategory222
   , checkHomFusedCategory333
   , checkHomInterCategory111
+  , checkForgetHomFusedId111
+  , checkForgetHomInterCompose111
   , checkLeaf2FmoveSmoke
   , checkFmoveOuter111
   , checkFuseMapLeftId111
   ) where
 
+import Control.Category.Constrained.Prelude (Category (..), (.), id)
 import Data.Complex (Complex ((:+)), conjugate, magnitude, realPart)
 import Data.Proxy (Proxy (..))
 import Data.VectorSpace (InnerSpace ((<.>)), (^-^))
@@ -58,31 +61,32 @@ import GHC.TypeLits (KnownNat)
 import Math.VectorSpace.DimensionAware (toArray)
 import Numeric.LinearAlgebra.Static (konst)
 
+import Prelude hiding (id, (.))
 
--- | Triple-leaf F-move via label-driven 'fmoveTreesLeaves'.
+-- | Triple-leaf F-move via 'CanFmoveTrees'.
 fmoveTrees111 :: RepV AssocL111 -> RepV AssocR111
-fmoveTrees111 = fmoveTreesLeaves @1 @1 @1
+fmoveTrees111 = fmoveTrees @Leaf1 @Leaf1 @Leaf1
 
 fmoveInvTrees111 :: RepV AssocR111 -> RepV AssocL111
-fmoveInvTrees111 = fmoveInvTreesLeaves @1 @1 @1
+fmoveInvTrees111 = fmoveInvTrees @Leaf1 @Leaf1 @Leaf1
 
 fmoveTrees000 :: RepV AssocL000 -> RepV AssocR000
-fmoveTrees000 = fmoveTreesLeaves @0 @0 @0
+fmoveTrees000 = fmoveTrees @Leaf0 @Leaf0 @Leaf0
 
 fmoveInvTrees000 :: RepV AssocR000 -> RepV AssocL000
-fmoveInvTrees000 = fmoveInvTreesLeaves @0 @0 @0
+fmoveInvTrees000 = fmoveInvTrees @Leaf0 @Leaf0 @Leaf0
 
 fmoveTrees110 :: RepV AssocL110 -> RepV AssocR110
-fmoveTrees110 = fmoveTreesLeaves @1 @1 @0
+fmoveTrees110 = fmoveTrees @Leaf1 @Leaf1 @Leaf0
 
 fmoveInvTrees110 :: RepV AssocR110 -> RepV AssocL110
-fmoveInvTrees110 = fmoveInvTreesLeaves @1 @1 @0
+fmoveInvTrees110 = fmoveInvTrees @Leaf1 @Leaf1 @Leaf0
 
 fmoveTrees112 :: RepV AssocL112 -> RepV AssocR112
-fmoveTrees112 = fmoveTreesLeaves @1 @1 @2
+fmoveTrees112 = fmoveTrees @Leaf1 @Leaf1 @Leaf2
 
 fmoveInvTrees112 :: RepV AssocR112 -> RepV AssocL112
-fmoveInvTrees112 = fmoveInvTreesLeaves @1 @1 @2
+fmoveInvTrees112 = fmoveInvTrees @Leaf1 @Leaf1 @Leaf2
 
 -- | @Fuse(id, F-inv)@ on Mid — instance of 'fuseMapRight'.
 fuseMapRightFinv111 :: RepV Mid111 -> RepV CupR111
@@ -110,7 +114,7 @@ cupTensorIdHomLeaf1
   -> RepV (FuseRep Leaf1 (FuseRep Unit Leaf1))
 cupTensorIdHomLeaf1 = cupTensorIdHom @Leaf1 @Leaf1 @Leaf1
 
--- | Approx equality on Hom / association spines (forgetful flat).
+-- | Approx equality on Hom / association spines (expanded spine-order flat).
 approxHomTrees
   :: forall ts
    . KnownRep ts
@@ -118,8 +122,8 @@ approxHomTrees
   -> RepV ts
   -> Bool
 approxHomTrees u v =
-  let bu = repVToForgetFlat @ts u
-      bv = repVToForgetFlat @ts v
+  let bu = repVToExpandedFlat @ts u
+      bv = repVToExpandedFlat @ts v
       err =
         VS.sum $
           VS.zipWith
@@ -158,7 +162,9 @@ checkFmoveTreesLeaves
   => RepV ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
   -> Bool
 checkFmoveTreesLeaves tv =
-  let rt = fmoveInvTreesLeaves @ja @jb @jc (fmoveTreesLeaves @ja @jb @jc tv)
+  let rt =
+        fmoveInvTrees @('[ 'Leaf ja]) @('[ 'Leaf jb]) @('[ 'Leaf jc])
+          (fmoveTrees @('[ 'Leaf ja]) @('[ 'Leaf jb]) @('[ 'Leaf jc]) tv)
    in approxRepV
         @( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
         tv
@@ -283,7 +289,7 @@ checkComposeHomTrees121 =
 -- | Atom-leaf F round-trip for @½⊗1⊗½@ via polymorphic 'CanFmoveTrees'.
 checkFmoveTreesLeaves121 :: Bool
 checkFmoveTreesLeaves121 =
-  let assocL = sampleAssocLLeaves @1 @2 @1
+  let assocL = fillRepVScaled @( FuseRep (FuseRep Leaf1 Leaf2) Leaf1 )
       rt =
         fmoveInvTrees @Leaf1 @Leaf2 @Leaf1
           (fmoveTrees @Leaf1 @Leaf2 @Leaf1 assocL)
@@ -348,13 +354,48 @@ checkHomInterCategory111 =
         && approxHomTrees @Inter11 fid (unHomInter f)
         && approxHomTrees @Inter11 idf (unHomInter f)
 
+-- | Forgetful densify of fused id matches unfused id on spin-½.
+checkForgetHomFusedId111 :: Bool
+checkForgetHomFusedId111 =
+  let fusedId = id :: HomFused Atom1 Atom1
+      unfusedId = id :: HomUnfused Atom1 Atom1
+      forgotten = forgetHomFusedHalf fusedId
+   in approxHomUnfused forgotten unfusedId
+
+-- | Forgetful densify is a functor on the intertwiner (singlet) sector:
+-- @forget(g ∘_Inter f) = forget(g) ∘_Unfused forget(f)@ for scaled ids.
+checkForgetHomInterCompose111 :: Bool
+checkForgetHomInterCompose111 =
+  let f :: HomInter Atom1 Atom1
+      f = HomInter $ scaleRepV @Inter11 (0.4 :+ 0) (idHomInterVal @Atom1)
+      g :: HomInter Atom1 Atom1
+      g = HomInter $ scaleRepV @Inter11 ((-0.5) :+ 0) (idHomInterVal @Atom1)
+      -- Embed intertwiners to HomFused, densify, compare compose both ways.
+      emb (HomInter t) =
+        HomFused (embedTrivialRepV @(FuseRep Leaf1 Leaf1) t)
+      lhs =
+        forgetHomFusedHalf
+          (composeHomFused @Atom1 @Atom1 @Atom1 (emb g) (emb f))
+      rhs = forgetHomFusedHalf (emb g) . forgetHomFusedHalf (emb f)
+   in approxHomUnfused lhs rhs
+
+approxHomUnfused
+  :: HomUnfused Atom1 Atom1
+  -> HomUnfused Atom1 Atom1
+  -> Bool
+approxHomUnfused (HomUnfused u) (HomUnfused v) =
+  let du = toArray u
+      dv = toArray v
+   in VS.length du == VS.length dv
+        && VS.and (VS.zipWith (\x y -> magnitude (x - y) < 1e-9) du dv)
+
 -- | Spin-1 leaf smoke: atom F + outer Hom F round-trips.
 checkLeaf2FmoveSmoke :: Bool
 checkLeaf2FmoveSmoke =
-  let assocL = sampleAssocLLeaves @2 @2 @2
+  let assocL = fillRepVScaled @( FuseRep (FuseRep Leaf2 Leaf2) Leaf2 )
       assocOk =
         approxHomTrees @( FuseRep (FuseRep Leaf2 Leaf2) Leaf2 ) assocL $
-          fmoveInvTreesLeaves @2 @2 @2 (fmoveTreesLeaves @2 @2 @2 assocL)
+          fmoveInvTrees @Leaf2 @Leaf2 @Leaf2 (fmoveTrees @Leaf2 @Leaf2 @Leaf2 assocL)
       idH = idHomLeaf @2
       dom = fuseRepTerm @Hom22 @Hom22 idH idH
       mid = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 dom

@@ -61,13 +61,13 @@ f22 =
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @Hom22 @Hom22 f22 idHom22
+  let domFid = fuseRepTerm @Hom22 @Hom22 f22 (idHomLeaf @2)
       outerFid = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domFid
       cupFid = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerFid
       outFid =
         unitorHom @Leaf2 @Leaf2
           (cupTensorIdHom @Leaf2 @Leaf2 @Leaf2 cupFid)
-      domIdf = fuseRepTerm @Hom22 @Hom22 idHom22 f22
+      domIdf = fuseRepTerm @Hom22 @Hom22 (idHomLeaf @2) f22
       outerIdf = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domIdf
       cupIdf = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerIdf
       outIdf =
@@ -75,9 +75,9 @@ main = do
           (cupTensorIdHom @Leaf2 @Leaf2 @Leaf2 cupIdf)
   dumpNZ "outer Fid (Hom-pres)" outerFid
   dumpNZ "cupR Fid" cupFid
-  putStrLn $ "outFid = " ++ show (VS.toList (repVToForgetFlat @Hom22 outFid))
+  putStrLn $ "outFid = " ++ show (VS.toList (repVToExpandedFlat @Hom22 outFid))
   putStrLn ""
   dumpNZ "outer Idf (Hom-pres)" outerIdf
   dumpNZ "cupR Idf" cupIdf
-  putStrLn $ "outIdf = " ++ show (VS.toList (repVToForgetFlat @Hom22 outIdf))
-  putStrLn $ "f22    = " ++ show (VS.toList (repVToForgetFlat @Hom22 f22))
+  putStrLn $ "outIdf = " ++ show (VS.toList (repVToExpandedFlat @Hom22 outIdf))
+  putStrLn $ "f22    = " ++ show (VS.toList (repVToExpandedFlat @Hom22 f22))

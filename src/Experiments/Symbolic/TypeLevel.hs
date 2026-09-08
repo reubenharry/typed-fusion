@@ -10,6 +10,7 @@
 -- 'HomUnfused' indexes by 'Experiments.Fusion.Obj.Obj' trees.
 -- 'HomFused' indexes 'Obj Nat' (via 'ObjSpineSU2' / 'ObjRep' → leaf 'Rep');
 -- morphisms are genealogy 'FuseRep' / 'RepV' (fusion-tree lists).
+-- 'ObjTrees' interprets an @Obj@ as a genealogy 'Rep' (@Norm@, then 'FuseRep').
 module Experiments.Symbolic.TypeLevel
   ( -- * Irrep dimension
     IrrepDim
@@ -22,6 +23,8 @@ module Experiments.Symbolic.TypeLevel
   , ObjSpine
   , ObjSpineSU2
   , ObjRep
+    -- * Genealogy Obj → Rep
+  , ObjTrees
     -- * Fusion trees
   , Root
   , ToVTree
@@ -36,7 +39,7 @@ module Experiments.Symbolic.TypeLevel
   ) where
 
 import Data.Kind (Type)
-import Experiments.Fusion.Obj (Obj, ObjSpine)
+import Experiments.Fusion.Obj (Norm, Obj, ObjSpine)
 import qualified Experiments.Fusion.Obj as FObj
 import Experiments.Fusion.SU2 (SU2Th)
 import Experiments.Fusion.Unbounded (Spine)
@@ -60,9 +63,9 @@ type family IrrepDim (j :: Nat) :: Nat where
 --------------------------------------------------------------------------------
 
 -- | Interpret an @Obj@ tree as a nested space (no CG fuse).
--- Atoms carry a trivial copy leg @C 1 ⊗ C (j+1)@ (unit multiplicity).
+-- Atoms are bare irrep spaces @C (j+1)@; the monoidal unit is @C 1@.
 type family ToVObj (a :: Obj Nat) :: Type where
-  ToVObj ('FObj.Atom j) = C 1 ⊗ C (IrrepDim j)
+  ToVObj ('FObj.Atom j) = C (IrrepDim j)
   ToVObj ('FObj.Tensor a b) = ToVObj a ⊗ ToVObj b
   ToVObj ('FObj.Sum a b) = (ToVObj a, ToVObj b)
 
@@ -88,6 +91,23 @@ type ObjSpineSU2 (a :: Obj Nat) = ObjSpine SU2Th a
 
 -- | Leaf 'Rep' of an @Obj@ after skeletal fuse (@SpineRep ∘ ObjSpineSU2@).
 type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
+
+--------------------------------------------------------------------------------
+-- Genealogy Obj → Rep (association-preserving; distributes ⊗ over ⊕)
+--------------------------------------------------------------------------------
+
+-- | Interpret an @Obj@ tree as a genealogy 'Rep'.
+--
+-- First 'Norm' (distribute @⊗@ over @⊕@, flatten sums), then:
+-- @'Atom j ↦ '[ 'Leaf j]@, @'Tensor ↦ 'FuseRep@, @'Sum ↦ 'Append@.
+type ObjTrees (a :: Obj Nat) = ObjTreesGo (Norm a)
+
+type family ObjTreesGo (a :: Obj Nat) :: Rep where
+  ObjTreesGo ('FObj.Atom j) = '[ 'Leaf j]
+  ObjTreesGo ('FObj.Tensor a b) =
+    FuseRep (ObjTreesGo a) (ObjTreesGo b)
+  ObjTreesGo ('FObj.Sum a b) =
+    Append (ObjTreesGo a) (ObjTreesGo b)
 
 --------------------------------------------------------------------------------
 -- Fusion trees: genealogy-preserving Irrep / Rep

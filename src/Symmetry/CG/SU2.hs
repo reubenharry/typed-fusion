@@ -179,7 +179,8 @@ cgChannel j1 j2 tj =
   in  take (tj + 1) (drop row0 mat)
 
 -- | One total-@j@ CG channel as a typed linear map on irrep legs
--- (@C (j₁+1) ⊗ C (j₂+1) → C (j+1)@), using the same matrix as 'cgChannel'.
+-- (@C (j₁+1) ⊗ C (j₂+1) → C (j+1)@). Densifies 'cgChannel' once per
+-- monomorphic use, then applies via hmatrix @#>@.
 fuseCGChannel
   :: forall j1 j2 j
    . ( KnownNat j1
@@ -201,20 +202,25 @@ fuseCGChannel
   => (C (j1 + 1) ⊗ C (j2 + 1)) +> C (j + 1)
 fuseCGChannel = arr (LinearFunction applyCG)
   where
+    tj1 = fromIntegral (natVal (Proxy @j1)) :: Int
+    tj2 = fromIntegral (natVal (Proxy @j2)) :: Int
+    tj = fromIntegral (natVal (Proxy @j)) :: Int
+    dIn = (tj1 + 1) * (tj2 + 1)
+    dOut = tj + 1
+    -- Densify CG rows once per monomorphic channel; apply as mat-vec.
+    !matFlat =
+      VS.fromList
+        [c :+ 0 | row <- cgChannel tj1 tj2 tj, c <- row]
     applyCG :: C (j1 + 1) ⊗ C (j2 + 1) -> C (j + 1)
     applyCG v =
-      let tj1 = fromIntegral (natVal (Proxy @j1))
-          tj2 = fromIntegral (natVal (Proxy @j2))
-          tj = fromIntegral (natVal (Proxy @j))
-          dIn = (tj1 + 1) * (tj2 + 1)
-          chan = cgChannel tj1 tj2 tj
-          vin = toArray v
-      in unsafeFromArray @(C (j + 1)) $
-        VS.generate (tj + 1) $ \row ->
-          sum
-            [ ((chan !! fromIntegral row !! col) :+ 0) * (vin VS.! col)
-            | col <- [0 .. dIn - 1]
-            ]
+      let vin = toArray v
+       in unsafeFromArray @(C (j + 1)) $
+            VS.generate dOut $ \row ->
+              VS.sum $
+                VS.zipWith
+                  (*)
+                  (VS.slice (row * dIn) dIn matFlat)
+                  vin
 
 -- | Inverse of 'fuseCGChannel' on the channel image (real CG ⇒ transpose).
 unfuseCGChannel
@@ -238,20 +244,22 @@ unfuseCGChannel
   => C (j + 1) +> (C (j1 + 1) ⊗ C (j2 + 1))
 unfuseCGChannel = arr (LinearFunction applyUnfuse)
   where
+    tj1 = fromIntegral (natVal (Proxy @j1)) :: Int
+    tj2 = fromIntegral (natVal (Proxy @j2)) :: Int
+    tj = fromIntegral (natVal (Proxy @j)) :: Int
+    dIn = (tj1 + 1) * (tj2 + 1)
+    dOut = tj + 1
+    !matFlat =
+      VS.fromList
+        [c :+ 0 | row <- cgChannel tj1 tj2 tj, c <- row]
     applyUnfuse :: C (j + 1) -> C (j1 + 1) ⊗ C (j2 + 1)
     applyUnfuse w =
-      let tj1 = fromIntegral (natVal (Proxy @j1))
-          tj2 = fromIntegral (natVal (Proxy @j2))
-          tj = fromIntegral (natVal (Proxy @j))
-          dIn = (tj1 + 1) * (tj2 + 1)
-          chan = cgChannel tj1 tj2 tj
-          win = toArray w
-      in unsafeFromArray @(C (j1 + 1) ⊗ C (j2 + 1)) $
-        VS.generate dIn $ \col ->
-          sum
-            [ ((chan !! row !! fromIntegral col) :+ 0) * (win VS.! row)
-            | row <- [0 .. tj]
-            ]
+      let win = toArray w
+       in unsafeFromArray @(C (j1 + 1) ⊗ C (j2 + 1)) $
+            VS.generate dIn $ \col ->
+              VS.sum $
+                VS.generate dOut $ \row ->
+                  (matFlat VS.! (row * dIn + col)) * (win VS.! row)
 
 -- | @(tj, multiplicity, flat offset)@ for an SU(2) spine.
 sectorsSU2 :: SRep SU2 r -> [(Int, Int, Int)]

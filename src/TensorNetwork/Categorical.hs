@@ -33,6 +33,7 @@ module TensorNetwork.Categorical
   , lunit
   , lunitInv
   , runit
+  , runitInv
   , fuseBond
   , splitBond
   , mergeCopyAxis
@@ -123,23 +124,30 @@ oneC1 = konst 1
 scalarizeC1 :: LinearFunction ℂ (C 1) ℂ
 scalarizeC1 = applyDualVector -+$> oneC1
 
--- | Left unitor at the @C 1@ boundary bond: @(C 1 ⊗ v) +> v@.
-lunit
-  :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
-  => (C 1 ⊗ v) +> v
-lunit = undefined
-
--- | Inverse left unitor: @v +> (C 1 ⊗ v)@.
-lunitInv
-  :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
-  => v +> (C 1 ⊗ v)
-lunitInv = undefined
-
 -- | Right unitor: @(v ⊗ C 1) +> v@.
 runit
   :: forall v. (LinearSpace v, Scalar v ~ ℂ)
   => (v ⊗ C 1) +> v
 runit = arr (fromFlatTensor . (fmapTensor -+$> scalarizeC1))
+
+-- | Inverse right unitor: @v +> (v ⊗ C 1)@.
+runitInv
+  :: forall v. (LinearSpace v, Scalar v ~ ℂ)
+  => v +> (v ⊗ C 1)
+runitInv = arr (LinearFunction (\x -> x ⊗ oneC1))
+
+-- | Left unitor at the @C 1@ boundary bond: @(C 1 ⊗ v) +> v@.
+-- Defined from 'runit' via the symmetric braiding (Vect has no left-flat primitive).
+lunit
+  :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
+  => (C 1 ⊗ v) +> v
+lunit = runit . swapMap
+
+-- | Inverse left unitor: @v +> (C 1 ⊗ v)@.
+lunitInv
+  :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))
+  => v +> (C 1 ⊗ v)
+lunitInv = swapMap . runitInv
 
 -- | Kronecker fusion @C a ⊗ C b → C (a·b)@, via matching 'toArray' layouts
 -- (same representation as the static @C (a·b)@ buffer — not 'unsafeCoerce').

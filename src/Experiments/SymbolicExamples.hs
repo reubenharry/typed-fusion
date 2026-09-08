@@ -36,10 +36,102 @@ import Math.LinearMap.Category.Class (asTensor, fromTensor)
 import Math.LinearMap.Coercion ((-+$=>))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Numeric.LinearAlgebra.Static (C, konst)
-import TensorNetwork.Categorical ((⊗^))
 import qualified Data.Vector.Storable as VS
 
 import Prelude hiding (id, (.), ($))
+
+exampleRep :: RepV '[ 'Leaf 1, 'Leaf 3]
+exampleRep =
+  RCons @('Leaf 1) (konst 1) $
+    RCons @('Leaf 3) (konst 1) RNil
+
+exampleUnfused :: ToVObj (Tensor ('Atom 1) ('Atom 1))
+exampleUnfused = konst 1 ⊗ konst 1
+
+example :: RepV (FuseRep '[ 'Leaf 1] '[ 'Leaf 1])
+example = undefined
+
+type TW = Tensor ('Atom 1) ('Atom 1)
+
+type Irr (a :: Nat) = 'Atom a
+type (:**:) (a :: Nat) (b :: Nat) =  ToVRep (FuseRep (ObjRep (Irr a)) (ObjRep (Irr b)))
+type Unfused obj =  ToVObj obj
+type (:*:) (a :: Obj Nat) (b :: Obj Nat) =  'FObj.Tensor a b
+
+-- Leaf: Irrep
+-- Node: a `From` (b,c) 
+
+type Fused obj = ToVRep (ObjTrees obj)
+
+foo :: Unfused (TW)
+foo = undefined
+
+baz :: Fused ( (Irr 1 :*: Irr 1) :*: Irr 2)
+baz = undefined
+
+fuseExample
+  :: ToVObj ('Tensor ('Atom 1) ('Atom 1))
+  -> RepV '[ 'Node 0 ('Leaf 1) ('Leaf 1), 'Node 2 ('Leaf 1) ('Leaf 1)]
+fuseExample = fuseTrees @('Leaf 1) @('Leaf 1)
+
+-- | Genealogy @(½⊗½)⊗1@: fuse @exampleUnfused@ then a spin-1 leaf.
+fuseExample2
+  :: ToVRep (FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+fuseExample2 =
+  repVToV @(FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2]) $
+    fuseRepTerm
+      (fuseExample exampleUnfused)
+      (RCons @('Leaf 2) (konst 1) RNil)
+
+-- | Trivial (total-charge-0) sector of 'fuseExample2'.
+fuseExample3
+  :: ToVRep
+       ( FilterTrivial
+           (FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+       )
+fuseExample3 =
+  repVToV
+    @( FilterTrivial
+         (FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+     )
+    $ filterTrivialRepV
+        @(FuseRep (FuseRep '[ 'Leaf 1] '[ 'Leaf 1]) '[ 'Leaf 2])
+        ( fuseRepTerm
+            (fuseExample exampleUnfused)
+            (RCons @('Leaf 2) (konst 1) RNil)
+        )
+
+-- | Unfused nested Kronecker @((½⊗½)⊗1)@.
+fuseExample4
+  :: ToVObj
+       ('FObj.Tensor ('FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1)) ('FObj.Atom 2))
+fuseExample4 = (konst 1 ⊗ konst 1) ⊗ konst 1
+
+-- | Endomorphism on leaf-½ Hom (singlet / triplet channels).
+f :: RepV (FuseRep (ObjRep ('FObj.Atom 1)) (ObjRep ('FObj.Atom 1)))
+f =
+  RCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.3) $
+    RCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst 0.7) RNil
+
+g :: RepV (FuseRep (ObjRep ('FObj.Atom 1)) (ObjRep ('FObj.Atom 1)))
+g =
+  RCons @('Node 0 ('Leaf 1) ('Leaf 1)) (konst 0.5) $
+    RCons @('Node 2 ('Leaf 1) ('Leaf 1)) (konst (-0.2)) RNil
+
+-- | @g ∘ f@ spelled as the five Mac Lane morphisms in 'composeHomTrees'.
+composeFGSteps :: RepV Hom11
+composeFGSteps =
+  let -- 1. @f ⊗ g@
+      step1 = fuseRepTerm @Hom11 @Hom11 f g
+      -- 2. outer F: @(a*⊗b) ⊗ (b*⊗c) → a* ⊗ (b ⊗ (b*⊗c))@
+      step2 = fmoveOuterHom @Leaf1 @Leaf1 @Leaf1 step1
+      -- 3. @id ⊗ F@: @a* ⊗ (b ⊗ (b*⊗c)) → a* ⊗ ((b ⊗ b*) ⊗ c)@
+      step3 = fmoveInnerHom @Leaf1 @Leaf1 @Leaf1 step2
+      -- 4. @id ⊗ (cup ⊗ id)@: contract the middle Hom to @Unit@
+      step4 = cupTensorIdHom @Leaf1 @Leaf1 @Leaf1 step3
+      -- 5. @id ⊗ λ@: absorb @Unit@ on the left of @c@
+      step5 = unitorHom @Leaf1 @Leaf1 step4
+   in step5
 
 -- | Right unitor absorbs @Unit@ on Dual-left HomUnfused (@m ⊗ 1 ≅ m@).
 unitRunitMorTrivialOk :: Bool
@@ -116,12 +208,12 @@ composeMorObjRightUnitOk =
 
 -- | Unfused 'HomUnfused' composition matches ordinary map composition.
 --
--- Objects: spin-½ (@C 1 ⊗ C 2@) → spin-½ → spin-1 (@C 1 ⊗ C 3@), with @id@ on
--- the trivial copy leg. Hom elements are @asTensor@ of the linear maps;
--- @g . f@ is compared to @g ∘ f@ on the standard basis.
+-- Objects: spin-½ (@C 2@) → spin-½ → spin-1 (@C 3@). Hom elements are
+-- @asTensor@ of the linear maps; @g . f@ is compared to @g ∘ f@ on the
+-- standard basis.
 composeMorObjMatchesMatMulOk :: Bool
 composeMorObjMatchesMatMulOk =
-  let -- Irrep-leg maps (column action on coordinate lists).
+  let -- Irrep maps (column action on coordinate lists).
       fLeg :: C 2 +> C 2
       fLeg =
         arr . LinearFunction $ \v ->
@@ -132,23 +224,19 @@ composeMorObjMatchesMatMulOk =
         arr . LinearFunction $ \v ->
           let [a, b] = VS.toList (toArray v)
            in unsafeFromArray (VS.fromList [a, b, a + b])
-      uf :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 2)
-      uf = id ⊗^ fLeg
-      ug :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
-      ug = id ⊗^ gLeg
       fHom =
-        HomUnfused (asTensor -+$=> uf)
+        HomUnfused (asTensor -+$=> fLeg)
           :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
       gHom =
-        HomUnfused (asTensor -+$=> ug)
+        HomUnfused (asTensor -+$=> gLeg)
           :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 2)
       hHom = gHom . fHom
-      h = fromTensor -+$=> unHomUnfused hHom :: (C 1 ⊗ C 2) +> (C 1 ⊗ C 3)
+      h = fromTensor -+$=> unHomUnfused hHom :: C 2 +> C 3
       e0 = unsafeFromArray (VS.fromList [1, 0]) :: C 2
       e1 = unsafeFromArray (VS.fromList [0, 1]) :: C 2
-      xs = [(konst 1 ⊗ e0), (konst 1 ⊗ e1)]
+      xs = [e0, e1]
       agree x =
-        toVApproxEq (toArray (h $ x)) (toArray (ug $ (uf $ x)))
+        toVApproxEq (toArray (h $ x)) (toArray (gLeg $ (fLeg $ x)))
    in all agree xs
 
 -- | @composeMorObj id id ≅ id@ on spin-½ (true unfused Hom).
@@ -316,6 +404,46 @@ type SmokeFuseTrees =
      , 'Node 2 ('Leaf 1) ('Leaf 1)
      ]
 
+-- | 'ObjTrees' on an atom is a singleton leaf.
+type SmokeObjTreesAtom =
+  AssertEqRep (ObjTrees ('FObj.Atom 1)) '[ 'Leaf 1]
+
+-- | 'ObjTrees' of @½ ⊗ ½@ matches 'FuseTrees' / 'FuseRep' on leaves.
+type SmokeObjTreesHalfHalf =
+  AssertEqRep
+    (ObjTrees ('FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1)))
+    (FuseTrees ('Leaf 1) ('Leaf 1))
+
+-- | 'ObjTrees' of a sum is flat 'Append' (no coalesce).
+type SmokeObjTreesSum =
+  AssertEqRep
+    (ObjTrees ('FObj.Sum ('FObj.Atom 2) ('FObj.Atom 0)))
+    '[ 'Leaf 2, 'Leaf 0]
+
+-- | 'Norm' then fuse: @(0 ⊕ 1) ⊗ ½@ equals the distributed sum of tensors.
+type SmokeObjTreesDist =
+  AssertEqRep
+    ( ObjTrees
+        ('FObj.Tensor
+           ('FObj.Sum ('FObj.Atom 0) ('FObj.Atom 2))
+           ('FObj.Atom 1))
+    )
+    ( ObjTrees
+        ('FObj.Sum
+           ('FObj.Tensor ('FObj.Atom 0) ('FObj.Atom 1))
+           ('FObj.Tensor ('FObj.Atom 2) ('FObj.Atom 1)))
+    )
+
+-- | Nested tensor keeps association (@ObjTrees@ = left-assoc 'FuseRep').
+type SmokeObjTreesAssocL =
+  AssertEqRep
+    ( ObjTrees
+        ('FObj.Tensor
+           ('FObj.Tensor ('FObj.Atom 1) ('FObj.Atom 1))
+           ('FObj.Atom 1))
+    )
+    AssocL111
+
 -- | Root of a fusion tree is the channel label.
 type SmokeRootNode =
   AssertEqNat
@@ -452,6 +580,21 @@ smokeHomFused = Proxy
 smokeFuseTrees :: Proxy SmokeFuseTrees
 smokeFuseTrees = Proxy
 
+smokeObjTreesAtom :: Proxy SmokeObjTreesAtom
+smokeObjTreesAtom = Proxy
+
+smokeObjTreesHalfHalf :: Proxy SmokeObjTreesHalfHalf
+smokeObjTreesHalfHalf = Proxy
+
+smokeObjTreesSum :: Proxy SmokeObjTreesSum
+smokeObjTreesSum = Proxy
+
+smokeObjTreesDist :: Proxy SmokeObjTreesDist
+smokeObjTreesDist = Proxy
+
+smokeObjTreesAssocL :: Proxy SmokeObjTreesAssocL
+smokeObjTreesAssocL = Proxy
+
 smokeRootNode :: Proxy SmokeRootNode
 smokeRootNode = Proxy
 
@@ -501,7 +644,7 @@ fmoveTreesSelfTest =
   checkFmoveTrees111 sampleAssocL111
     && checkFmoveTrees110 sampleAssocL110
     && checkFmoveTrees112 sampleAssocL112
-    && checkFmoveTreesLeaves @1 @2 @1 (sampleAssocLLeaves @1 @2 @1)
+    && checkFmoveTreesLeaves @1 @2 @1 (fillRepVScaled @( FuseRep (FuseRep Leaf1 Leaf2) Leaf1 ))
 
 -- | Force the F-move self-test at module load (fails loud if broken).
 fmoveTreesSelfTestOk :: ()
@@ -549,6 +692,8 @@ composeHomTreesSelfTest =
     && checkHomFusedCategory222
     && checkHomFusedCategory333
     && checkHomInterCategory111
+    && checkForgetHomFusedId111
+    && checkForgetHomInterCompose111
     && checkLeaf2FmoveSmoke
     && checkFmoveOuter111
     && checkFuseMapLeftId111

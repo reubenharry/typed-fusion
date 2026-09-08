@@ -65,10 +65,10 @@ f22 =
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @Hom22 @Hom22 f22 idHom22
+  let domFid = fuseRepTerm @Hom22 @Hom22 f22 (idHomLeaf @2)
       outerFid = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domFid
       cupFid = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerFid
-      domIdf = fuseRepTerm @Hom22 @Hom22 idHom22 f22
+      domIdf = fuseRepTerm @Hom22 @Hom22 (idHomLeaf @2) f22
       outerIdf = fmoveOuterHom @Leaf2 @Leaf2 @Leaf2 domIdf
       cupIdf = fmoveInnerHom @Leaf2 @Leaf2 @Leaf2 outerIdf
   dumpTrees @(FuseRep Hom22 Hom22) "dom Fid (f⊗id)" domFid

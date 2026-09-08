@@ -51,7 +51,7 @@ import qualified Data.Vector.Sized as VS
 import Data.IndexedListLiterals (IndexedListLiterals)
 import Experiments.General 
 import Symmetry.Orphans hiding (U1, SU2, Irrep, (⊗)) 
-
+-- import Hlist (HList(..))
 
 
 example1 :: C 2
@@ -78,8 +78,8 @@ example4' :: Irrep U1 (Pos 2) -- j = 1/2
 example4' = Irrep 1
 
 
-example5 :: Fuse SU2 '[ '(1, Atom 1)] '[ '(3, Atom 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
-example5 = undefined
+example5 :: Fuse SU2 '[ '(1, Atom 1)] '[ '(1, Atom 1)] -- 1/2 ⊗ 1/2 = 0 ⊕ 2
+example5 =    undefined 
 
 example6 :: Fuse SU2 '[ '(1, Atom 1)] '[ '(3, Atom 1)] -- 1/2 ⊗ 3/2 = 1 ⊕ 2
 example6 = undefined

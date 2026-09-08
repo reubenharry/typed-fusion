@@ -23,6 +23,8 @@ module Experiments.Symbolic.RepV
   , appendRepV
   , FuseTreesGo (..)
   , fuseTrees
+  , UnfuseTreesGo (..)
+  , unfuseTrees
   , FuseRepTermC
   , FuseRepOneTermC
   , fuseRepTerm
@@ -35,7 +37,7 @@ import Control.Arrow.Constrained (($))
 import Data.Complex (Complex, magnitude)
 import Data.Kind (Constraint)
 import Data.VectorSpace
-  ( AdditiveGroup (zeroV)
+  ( AdditiveGroup (zeroV, (^+^))
   , Scalar
   , VectorSpace ((*^))
   )
@@ -48,7 +50,7 @@ import GHC.TypeLits (CmpNat, KnownNat, Nat)
 import Math.LinearMap.Category (TensorSpace, type (⊗), (⊗))
 import Math.VectorSpace.DimensionAware (toArray)
 import Numeric.LinearAlgebra.Static (C)
-import Symmetry.CG.SU2 (fuseCGChannel)
+import Symmetry.CG.SU2 (fuseCGChannel, unfuseCGChannel)
 import Symmetry.Utils (Append)
 
 import Prelude hiding (($))
@@ -128,6 +130,53 @@ fuseTrees
   -> RepV (FuseTrees t1 t2)
 fuseTrees =
   fuseTreesGo @t1 @t2 @(TensorIrrepRepSU2 (Root t1) (Root t2))
+
+-- | Inverse of 'fuseTrees' on the CG image: sum channel embeddings.
+class UnfuseTreesGo (t1 :: Irrep) (t2 :: Irrep) (cg :: [(Nat, Nat)]) where
+  unfuseTreesGo
+    :: RepV (NodesFromCG t1 t2 cg)
+    -> C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2))
+
+instance
+  ( KnownNat (Root t1)
+  , KnownNat (Root t2)
+  , KnownNat (IrrepDim (Root t1))
+  , KnownNat (IrrepDim (Root t2))
+  , AdditiveGroup
+      ( C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2)) )
+  ) =>
+  UnfuseTreesGo t1 t2 '[]
+  where
+  unfuseTreesGo RNil = zeroV
+
+instance
+  ( UnfuseTreesGo t1 t2 rest
+  , KnownNat j
+  , KnownNat (Root t1)
+  , KnownNat (Root t2)
+  , KnownNat (IrrepDim (Root t1))
+  , KnownNat (IrrepDim (Root t2))
+  , KnownNat (IrrepDim j)
+  , AdditiveGroup
+      ( C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2)) )
+  ) =>
+  UnfuseTreesGo t1 t2 ('(j, m) ': rest)
+  where
+  unfuseTreesGo (RCons v rest) =
+    (unfuseCGChannel @(Root t1) @(Root t2) @j $ v)
+      ^+^ unfuseTreesGo @t1 @t2 @rest rest
+
+-- | Unfuse a 'FuseTrees' spine back to the product of root spaces.
+unfuseTrees
+  :: forall t1 t2
+   . ( KnownIrrep t1
+     , KnownIrrep t2
+     , UnfuseTreesGo t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
+     )
+  => RepV (FuseTrees t1 t2)
+  -> ToVTree t1 ⊗ ToVTree t2
+unfuseTrees =
+  unfuseTreesGo @t1 @t2 @(TensorIrrepRepSU2 (Root t1) (Root t2))
 
 -- | Constraints for walking 'FuseRep' at the term level.
 type family FuseRepTermC (rs :: Rep) (qs :: Rep) :: Constraint where

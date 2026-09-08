@@ -15,31 +15,25 @@
 
 -- | F-moves and FuseRep naturality on genealogy spines.
 --
--- Channel collect/scatter helpers are module-private.
+-- Production 'fuseMapRight'/'fuseMapLeft' use expanded spine-order flats
+-- (no coalesced 'ForgetRep'). Atom F-moves still route through Fusion.SU2
+-- collect/scatter flats as an oracle — typed per-channel @C (d+1)@ F is a
+-- follow-on (Phase 4).
 module Experiments.Symbolic.FMove
   ( CanFmoveTrees (..)
   , CanFmoveOuterHom (..)
   , fmoveTreesAtoms
   , fmoveInvTreesAtoms
-  , fmoveTreesLeaves
-  , fmoveInvTreesLeaves
-  , fmoveOuterHomLeaves
-  , fmoveInvOuterHomLeaves
   , fmoveTreesHomLeft
   , fmoveInvTreesHomLeft
   , fmoveOuterLeafHom
   , fmoveInvOuterLeafHom
-  , sampleAssocLLeaves
   , TensorTrees (..)
-  , mapTensorTreesRight
   , fuseTensorTrees
   , fuseMapRight
   , fuseMapLeft
-  , repVToForgetFlat
-  , forgetFlatToRepV
   , repVToExpandedFlat
   , expandedFlatToRepV
-  , forgetSectorPairs
   ) where
 
 import Data.Complex (Complex ((:+)))
@@ -407,12 +401,6 @@ instance
 data TensorTrees (a :: Rep) (q :: Rep) where
   TensorTrees :: RepV a -> RepV q -> TensorTrees a q
 
-mapTensorTreesRight
-  :: (RepV q -> RepV q')
-  -> TensorTrees a q
-  -> TensorTrees a q'
-mapTensorTreesRight f (TensorTrees a q) = TensorTrees a (f q)
-
 fuseTensorTrees
   :: forall a q
    . ( KnownRep a
@@ -472,36 +460,6 @@ fmoveInvTreesHomLeft =
     @(FuseRep '[ 'Leaf ja] '[ 'Leaf ja])
     @('[ 'Leaf jb])
     @('[ 'Leaf jc])
-
--- | Deterministic sample on left-assoc atom spine (sector flats → scatter).
-sampleAssocLLeaves
-  :: forall ja jb jc
-   . ( KnownNat ja
-     , KnownNat jb
-     , KnownNat jc
-     , KnownRep ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
-     )
-  => RepV ( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] )
-sampleAssocLLeaves =
-  let a = fromIntegral (natVal (Proxy @ja)) :: Int
-      b = fromIntegral (natVal (Proxy @jb)) :: Int
-      c = fromIntegral (natVal (Proxy @jc)) :: Int
-      chans =
-        [ ( d
-          , e
-          , a
-          , b
-          , c
-          , VS.replicate
-              (d + 1)
-              ((0.1 * fromIntegral (d + e + 1)) :+ 0)
-          )
-        | (d, _, _) <- leftSectors a b c
-        , e <- allowedE a b c d
-        ]
-   in scatterAssocLChannel
-        (repSing @( FuseRep (FuseRep '[ 'Leaf ja] '[ 'Leaf jb]) '[ 'Leaf jc] ))
-        (Map.fromList [((d, e, ra, rb, rc), v) | (d, e, ra, rb, rc, v) <- chans])
 
 -- | Collect left-assoc Hom channels @(d, e, h, irrep)@ from
 -- @((a⊗b)_e ⊗ Hom_h)_d@. Key includes Hom root @h@ so F cannot reshuffle
@@ -677,110 +635,11 @@ fmoveInvOuterLeafHom tv =
         (repSing @ls)
         (Map.fromList [((d, e, h), v) | (d, e, h, v) <- out])
 
--- | Forgetful coalesced flat of a 'RepV' (same layout as 'fuseSU2Flat' output /
--- 'ForgetRep'): sectors sorted by root @2j@, multiplicity = spine order.
-repVToForgetFlat
-  :: forall ts
-   . KnownRep ts
-  => RepV ts
-  -> VS.Vector (Complex Double)
-repVToForgetFlat = packRootChannels . collectRootChannels (repSing @ts)
-
-collectRootChannels
-  :: SRep ts
-  -> RepV ts
-  -> [(Int, VS.Vector (Complex Double))]
-collectRootChannels SRepNil RNil = []
-collectRootChannels (SRepCons t rest) (RCons v rs) =
-  case t of
-    SLeaf @j ->
-      (fromIntegral (natVal (Proxy @j)), toArray v)
-        : collectRootChannels rest rs
-    SNode @j _ _ ->
-      (fromIntegral (natVal (Proxy @j)), toArray v)
-        : collectRootChannels rest rs
-collectRootChannels _ _ =
-  error "collectRootChannels: RepV / SRep mismatch"
-
-packRootChannels
-  :: [(Int, VS.Vector (Complex Double))]
-  -> VS.Vector (Complex Double)
-packRootChannels chans =
-  let byJ =
-        Prelude.foldl
-          (\m (j, v) -> Map.insertWith (flip (++)) j [v] m)
-          Map.empty
-          chans
-   in VS.concat [VS.concat vs | (_, vs) <- Map.toAscList byJ]
-
--- | Inverse of 'repVToForgetFlat' for a known spine (pops mult copies in spine order).
-forgetFlatToRepV
-  :: forall ts
-   . KnownRep ts
-  => VS.Vector (Complex Double)
-  -> RepV ts
-forgetFlatToRepV buf =
-  let s = repSing @ts
-      byJ0 = splitForgetByRoots (treeRootList s) buf
-   in scatterRootChannels s byJ0
-
-splitForgetByRoots
-  :: [Int]
-  -> VS.Vector (Complex Double)
-  -> Map.Map Int [VS.Vector (Complex Double)]
-splitForgetByRoots roots buf =
-  let counts =
-        Prelude.foldl
-          (\m j -> Map.insertWith (+) j 1 m)
-          Map.empty
-          roots
-      sortedJs = Map.keys counts
-      offsets =
-        Map.fromList $
-          zip
-            sortedJs
-            (scanl (+) 0 [counts Map.! j * (j + 1) | j <- sortedJs])
-      sliceJ j =
-        let mult = counts Map.! j
-            d = j + 1
-            off = offsets Map.! j
-         in [ VS.slice (off + μ * d) d buf
-            | μ <- [0 .. mult - 1]
-            ]
-   in Map.fromList [(j, sliceJ j) | j <- sortedJs]
-
-scatterRootChannels
-  :: SRep ts
-  -> Map.Map Int [VS.Vector (Complex Double)]
-  -> RepV ts
-scatterRootChannels SRepNil _ = RNil
-scatterRootChannels (SRepCons (t :: SIrrepTree u) rest) m =
-  case t of
-    SLeaf @j ->
-      let tj = fromIntegral (natVal (Proxy @j)) :: Int
-       in case Map.lookup tj m of
-            Just (v : vs) ->
-              RCons @u
-                (unsafeFromArray v)
-                (scatterRootChannels rest (Map.insert tj vs m))
-            _ ->
-              error "scatterRootChannels: missing multiplicity slot"
-    SNode @j _ _ ->
-      let tj = fromIntegral (natVal (Proxy @j)) :: Int
-       in case Map.lookup tj m of
-            Just (v : vs) ->
-              RCons @u
-                (unsafeFromArray v)
-                (scatterRootChannels rest (Map.insert tj vs m))
-            _ ->
-              error "scatterRootChannels: missing multiplicity slot"
-
 -- | Naturality of @Fuse(a, –)@: @refuse ∘ (id ⊗ f) ∘ unfuse@ on fusion trees.
 --
--- Uses /expanded/ sector lists (one multiplicity slot per tree in spine order)
--- so same-root genealogies are not coalesced before @id ⊗ f@. Coalesced forget
--- flats reshuffle @Fuse(Leaf, Assoc)@ multiplicity and break Hom-compose unit
--- laws for spin-1.
+-- Production path packs/unpacks /expanded/ spine-order root flats (one slot per
+-- tree) — never coalesced 'ForgetRep' sectors — then applies the CG naturality
+-- helpers. Same-root genealogies stay distinct, matching 'Expr' / 'FuseRep'.
 fuseMapRight
   :: forall a q q'
    . ( KnownRep a
@@ -796,11 +655,31 @@ fuseMapRight f tv =
   let secsA = repExpandedSectors (repSing @a)
       secsQ = repExpandedSectors (repSing @q)
       secsQ' = repExpandedSectors (repSing @q')
-      fFlat =
-        repVToExpandedFlat @q' . f . expandedFlatToRepV @q
-      vin = repVToForgetFlat @(FuseRep a q) tv
+      fFlat = repVToExpandedFlat @q' . f . expandedFlatToRepV @q
+      vin = repVToExpandedFlat @(FuseRep a q) tv
       vout = fuseMapRightFlatSectors secsA secsQ secsQ' fFlat vin
-   in forgetFlatToRepV @(FuseRep a q') vout
+   in expandedFlatToRepV @(FuseRep a q') vout
+
+-- | Naturality of @Fuse(–, b)@: @refuse ∘ (f ⊗ id) ∘ unfuse@.
+fuseMapLeft
+  :: forall a a' b
+   . ( KnownRep a
+     , KnownRep a'
+     , KnownRep b
+     , KnownRep (FuseRep a b)
+     , KnownRep (FuseRep a' b)
+     )
+  => (RepV a -> RepV a')
+  -> RepV (FuseRep a b)
+  -> RepV (FuseRep a' b)
+fuseMapLeft f tv =
+  let secsA = repExpandedSectors (repSing @a)
+      secsA' = repExpandedSectors (repSing @a')
+      secsB = repExpandedSectors (repSing @b)
+      fFlat = repVToExpandedFlat @a' . f . expandedFlatToRepV @a
+      vin = repVToExpandedFlat @(FuseRep a b) tv
+      vout = fuseMapLeftFlatSectors secsA secsA' secsB fFlat vin
+   in expandedFlatToRepV @(FuseRep a' b) vout
 
 -- | Expanded @(tj, 1, off)@ sectors — one slot per tree (spine order).
 repExpandedSectors :: SRep ts -> [(Int, Int, Int)]
@@ -849,37 +728,3 @@ expandedFlatToRepV buf = go 0 (repSing @ts)
           let d = fromIntegral (natVal (Proxy @j)) + 1
               v = unsafeFromArray (VS.slice off d buf)
            in RCons @u v (go (off + d) rest)
-
--- | Coalesced @(tj, multiplicity)@ pairs matching 'ForgetRep' / 'fuseSU2Flat'.
-forgetSectorPairs :: SRep ts -> [(Int, Int)]
-forgetSectorPairs =
-  Map.toAscList
-    . Prelude.foldl
-      (\m j -> Map.insertWith (+) j 1 m)
-      Map.empty
-    . treeRootList
-
-treeRootList :: SRep ts -> [Int]
-treeRootList SRepNil = []
-treeRootList (SRepCons t rest) = rootLab t : treeRootList rest
-
-fuseMapLeft
-  :: forall a a' b
-   . ( KnownRep a
-     , KnownRep a'
-     , KnownRep b
-     , KnownRep (FuseRep a b)
-     , KnownRep (FuseRep a' b)
-     )
-  => (RepV a -> RepV a')
-  -> RepV (FuseRep a b)
-  -> RepV (FuseRep a' b)
-fuseMapLeft f tv =
-  let secsA = repExpandedSectors (repSing @a)
-      secsA' = repExpandedSectors (repSing @a')
-      secsB = repExpandedSectors (repSing @b)
-      fFlat =
-        repVToExpandedFlat @a' . f . expandedFlatToRepV @a
-      vin = repVToForgetFlat @(FuseRep a b) tv
-      vout = fuseMapLeftFlatSectors secsA secsA' secsB fFlat vin
-   in forgetFlatToRepV @(FuseRep a' b) vout

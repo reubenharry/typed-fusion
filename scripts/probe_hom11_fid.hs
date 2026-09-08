@@ -65,7 +65,7 @@ f11 =
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @Hom11 @Hom11 f11 idHom11
+  let domFid = fuseRepTerm @Hom11 @Hom11 f11 (idHomLeaf @1)
       outerFid = fmoveOuterHom @Leaf1 @Leaf1 @Leaf1 domFid
       cupFid = fmoveInnerHom @Leaf1 @Leaf1 @Leaf1 outerFid
       outFid =
@@ -74,5 +74,5 @@ main = do
   dumpTrees @(FuseRep Hom11 Hom11) "Hom11 dom Fid" domFid
   dumpTrees "Hom11 outer Fid" outerFid
   dumpTrees "Hom11 cupR Fid" cupFid
-  putStrLn $ "outFid flat = " ++ show (VS.toList (repVToForgetFlat @Hom11 outFid))
-  putStrLn $ "f11 flat    = " ++ show (VS.toList (repVToForgetFlat @Hom11 f11))
+  putStrLn $ "outFid flat = " ++ show (VS.toList (repVToExpandedFlat @Hom11 outFid))
+  putStrLn $ "f11 flat    = " ++ show (VS.toList (repVToExpandedFlat @Hom11 f11))
