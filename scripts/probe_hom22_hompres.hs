@@ -8,9 +8,9 @@
 
 import Data.Complex
 import Data.Proxy
-import Experiments.Symbolic.Core
-import Experiments.Symbolic.Expr
-import Experiments.Symbolic.TypeLevel
+import Hom.Core
+import Hom.Expr
+import Hom.TypeLevel
 import GHC.TypeLits (natVal)
 import Math.VectorSpace.DimensionAware (toArray)
 import Numeric.LinearAlgebra.Static (konst)
@@ -18,34 +18,34 @@ import qualified Data.Vector.Storable as VS
 
 dumpNZ
   :: forall ts
-   . KnownRep ts
+   . KnownFTrees ts
   => String
   -> RepV ts
   -> IO ()
 dumpNZ label tv = do
   putStrLn $ "=== " ++ label ++ " ==="
-  go 0 (repSing @ts) tv
+  go 0 (fTreesSing @ts) tv
   where
-    go :: Int -> SRep ts' -> RepV ts' -> IO ()
-    go _ SRepNil RNil = pure ()
-    go i (SRepCons t rest) (RCons v rs) = do
+    go :: Int -> SFTrees ts' -> RepV ts' -> IO ()
+    go _ SFTreesNil RNil = pure ()
+    go i (SFTreesCons t rest) (RCons v rs) = do
       let arr :: VS.Vector (Complex Double)
           arr = case t of
             SI {} -> toArray v
             SFrom {} -> toArray v
           nrm = VS.sum $ VS.map (\x -> realPart (x * conjugate x)) arr
       if nrm > 1e-18
-        then putStrLn $ show i ++ ": keep=" ++ show (isCupKeep t) ++ " ||v||^2=" ++ show nrm ++ "  " ++ showIrrep t
+        then putStrLn $ show i ++ ": keep=" ++ show (isCupKeep t) ++ " ||v||^2=" ++ show nrm ++ "  " ++ showFTree t
         else pure ()
       go (i + 1) rest rs
     go _ _ _ = pure ()
 
-    showIrrep :: forall t. SIrrepTree t -> String
-    showIrrep (SI @j) = "L" ++ show (natVal (Proxy @j))
-    showIrrep (SFrom @j l r) =
-      "N" ++ show (natVal (Proxy @j)) ++ "(" ++ showIrrep l ++ "," ++ showIrrep r ++ ")"
+    showFTree :: forall t. SFTree t -> String
+    showFTree (SI @j) = "L" ++ show (natVal (Proxy @j))
+    showFTree (SFrom @j l r) =
+      "N" ++ show (natVal (Proxy @j)) ++ "(" ++ showFTree l ++ "," ++ showFTree r ++ ")"
 
-    isCupKeep :: forall t. SIrrepTree t -> Bool
+    isCupKeep :: forall t. SFTree t -> Bool
     isCupKeep (SFrom @_ @_ @_ _ r) = case r of
       SFrom @_ @_ @_ mid _ -> case mid of
         SFrom @m _ _ -> natVal (Proxy @m) == 0

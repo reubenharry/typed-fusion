@@ -1,8 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
 
-import Experiments.Symbolic.Core
-import Experiments.SymbolicExamples
+import Hom.Core
+import Hom.Examples
 
 main :: IO ()
 main = do
