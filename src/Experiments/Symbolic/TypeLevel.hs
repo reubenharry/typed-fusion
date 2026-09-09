@@ -18,7 +18,7 @@ module Experiments.Symbolic.TypeLevel
   , ToVObj
     -- * Skeletal objects (HomFused)
   , Spine
-  , ReplicateBare
+  , ReplicateI
   , SpineRep
   , ObjSpine
   , ObjSpineSU2
@@ -73,23 +73,23 @@ type family ToVObj (a :: Obj Nat) :: Type where
 -- Skeletal objects → bare Rep (HomFused object index)
 --------------------------------------------------------------------------------
 
--- | @n@ copies of @'Bare j@ (multiplicity expand).
-type family ReplicateBare (n :: Nat) (j :: Nat) :: Rep where
-  ReplicateBare 0 _j = '[]
-  ReplicateBare 1 j = '[ 'Bare j]
-  ReplicateBare n j = 'Bare j ': ReplicateBare (n - 1) j
+-- | @n@ copies of @'I j@ (multiplicity expand).
+type family ReplicateI (n :: Nat) (j :: Nat) :: Rep where
+  ReplicateI 0 _j = '[]
+  ReplicateI 1 j = '[ 'I j]
+  ReplicateI n j = 'I j ': ReplicateI (n - 1) j
 
 -- | Expand a finite-support multiplicity spine to a bare-only 'Rep'.
--- Order: spine order, @n@ consecutive @'Bare j@ per sector.
+-- Order: spine order, @n@ consecutive @'I j@ per sector.
 type family SpineRep (sp :: Spine Nat) :: Rep where
   SpineRep '[] = '[]
   SpineRep ('(j, n) ': rest) =
-    Append (ReplicateBare n j) (SpineRep rest)
+    Append (ReplicateI n j) (SpineRep rest)
 
 -- | @Obj Nat → Spine Nat@ via SU(2) FuseNorm (no FiniteIrr).
 type ObjSpineSU2 (a :: Obj Nat) = ObjSpine SU2Th a
 
--- | Bare 'Rep' of an @Obj@ after skeletal fuse (@SpineRep ∘ ObjSpineSU2@).
+-- | I 'Rep' of an @Obj@ after skeletal fuse (@SpineRep ∘ ObjSpineSU2@).
 type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
 
 --------------------------------------------------------------------------------
@@ -99,11 +99,11 @@ type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
 -- | Interpret an @Obj@ tree as a genealogy 'Rep'.
 --
 -- First 'Norm' (distribute @⊗@ over @⊕@, flatten sums), then:
--- @'Atom j ↦ '[ 'Bare j]@, @'Tensor ↦ 'FuseRep@, @'Sum ↦ 'Append@.
+-- @'Atom j ↦ '[ 'I j]@, @'Tensor ↦ 'FuseRep@, @'Sum ↦ 'Append@.
 type ObjTrees (a :: Obj Nat) = ObjTreesGo (Norm a)
 
 type family ObjTreesGo (a :: Obj Nat) :: Rep where
-  ObjTreesGo ('FObj.Atom j) = '[ 'Bare j]
+  ObjTreesGo ('FObj.Atom j) = '[ 'I j]
   ObjTreesGo ('FObj.Tensor a b) =
     FuseRep (ObjTreesGo a) (ObjTreesGo b)
   ObjTreesGo ('FObj.Sum a b) =
@@ -115,7 +115,7 @@ type family ObjTreesGo (a :: Obj Nat) :: Rep where
 
 -- | Root @2j@ label of a fusion tree.
 type family Root (t :: Irrep) :: Nat where
-  Root ('Bare j) = j
+  Root ('I j) = j
   Root ('From j '(_, _)) = j
 
 -- | Space of one fusion tree: root irrep only (children are type indices).
@@ -151,7 +151,7 @@ type family FuseRep (rs :: Rep) (qs :: Rep) :: Rep where
     Append (FuseRepOne t1 qs) (FuseRep rest qs)
 
 -- | Monoidal unit as a singleton tree list (bare trivial irrep).
-type Unit = '[ 'Bare 0]
+type Unit = '[ 'I 0]
 
 -- | Keep only total-charge-0 trees (SU(2) intertwiners / invariants).
 --
@@ -159,15 +159,15 @@ type Unit = '[ 'Bare 0]
 -- definitional (needed by 'FilterTrivialC').
 type family FilterTrivial (ts :: Rep) :: Rep where
   FilterTrivial '[] = '[]
-  FilterTrivial ('Bare j ': rest) =
-    FilterTrivialBare (CmpNat j 0) j rest
+  FilterTrivial ('I j ': rest) =
+    FilterTrivialI (CmpNat j 0) j rest
   FilterTrivial ('From j '(l, r) ': rest) =
     FilterTrivialFrom (CmpNat j 0) j l r rest
 
-type family FilterTrivialBare (o :: Ordering) (j :: Nat) (rest :: Rep) :: Rep where
-  FilterTrivialBare 'EQ _j rest = 'Bare 0 ': FilterTrivial rest
-  FilterTrivialBare 'GT _j rest = FilterTrivial rest
-  FilterTrivialBare 'LT _j rest = FilterTrivial rest
+type family FilterTrivialI (o :: Ordering) (j :: Nat) (rest :: Rep) :: Rep where
+  FilterTrivialI 'EQ _j rest = 'I 0 ': FilterTrivial rest
+  FilterTrivialI 'GT _j rest = FilterTrivial rest
+  FilterTrivialI 'LT _j rest = FilterTrivial rest
 
 type family FilterTrivialFrom
   (o :: Ordering)
@@ -182,8 +182,8 @@ type family FilterTrivialFrom
   FilterTrivialFrom 'LT _j _l _r rest = FilterTrivial rest
 
 -- | Drop @Unit@ left children after @0 ⊗ t → t@:
--- @'From _ '( 'Bare 0, t) ↦ t@.
+-- @'From _ '( 'I 0, t) ↦ t@.
 type family UnitorCodomain (uc :: Rep) :: Rep where
   UnitorCodomain '[] = '[]
-  UnitorCodomain ('From _j '( 'Bare 0, t) ': rest) =
+  UnitorCodomain ('From _j '( 'I 0, t) ': rest) =
     t ': UnitorCodomain rest

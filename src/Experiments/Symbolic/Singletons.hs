@@ -39,12 +39,12 @@ data SIrrep (j :: Nat) where
 
 -- | Singleton for a genealogy-preserving 'Irrep' tree.
 data SIrrepTree (t :: Irrep) where
-  SBare
+  SI
     :: forall j
      . ( KnownNat j
        , KnownNat (IrrepDim j)
        )
-    => SIrrepTree ('Bare j)
+    => SIrrepTree ('I j)
   SFrom
     :: forall j l r
      . ( KnownNat j
@@ -62,9 +62,9 @@ instance
   ( KnownNat j
   , KnownNat (IrrepDim j)
   ) =>
-  KnownIrrep ('Bare j)
+  KnownIrrep ('I j)
   where
-  irrepSing = SBare @j
+  irrepSing = SI @j
 
 instance
   ( KnownNat j
@@ -102,5 +102,5 @@ instance
 
 -- | Root @2j@ as an 'Int' (for channel keys / Racah packing).
 rootLab :: SIrrepTree t -> Int
-rootLab (SBare @j) = fromIntegral (natVal (Proxy @j))
+rootLab (SI @j) = fromIntegral (natVal (Proxy @j))
 rootLab (SFrom @j _ _) = fromIntegral (natVal (Proxy @j))

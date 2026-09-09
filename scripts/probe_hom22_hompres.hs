@@ -31,7 +31,7 @@ dumpNZ label tv = do
     go i (SRepCons t rest) (RCons v rs) = do
       let arr :: VS.Vector (Complex Double)
           arr = case t of
-            SBare {} -> toArray v
+            SI {} -> toArray v
             SFrom {} -> toArray v
           nrm = VS.sum $ VS.map (\x -> realPart (x * conjugate x)) arr
       if nrm > 1e-18
@@ -41,7 +41,7 @@ dumpNZ label tv = do
     go _ _ _ = pure ()
 
     showIrrep :: forall t. SIrrepTree t -> String
-    showIrrep (SBare @j) = "L" ++ show (natVal (Proxy @j))
+    showIrrep (SI @j) = "L" ++ show (natVal (Proxy @j))
     showIrrep (SFrom @j l r) =
       "N" ++ show (natVal (Proxy @j)) ++ "(" ++ showIrrep l ++ "," ++ showIrrep r ++ ")"
 
@@ -49,30 +49,30 @@ dumpNZ label tv = do
     isCupKeep (SFrom @_ @_ @_ _ r) = case r of
       SFrom @_ @_ @_ mid _ -> case mid of
         SFrom @m _ _ -> natVal (Proxy @m) == 0
-        SBare {} -> False
-      SBare {} -> False
+        SI {} -> False
+      SI {} -> False
     isCupKeep _ = False
 
 f22 :: RepV Hom22
 f22 =
-  RCons @('From 0 '( 'Bare 2, 'Bare 2)) (konst 0.2) $
-    RCons @('From 2 '( 'Bare 2, 'Bare 2)) (konst 0.3) $
-      RCons @('From 4 '( 'Bare 2, 'Bare 2)) (konst 0.5) RNil
+  RCons @('From 0 '( 'I 2, 'I 2)) (konst 0.2) $
+    RCons @('From 2 '( 'I 2, 'I 2)) (konst 0.3) $
+      RCons @('From 4 '( 'I 2, 'I 2)) (konst 0.5) RNil
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @Hom22 @Hom22 f22 (idHomBare @2)
-      outerFid = fmoveOuterHom @Bare2 @Bare2 @Bare2 domFid
-      cupFid = fmoveInnerHom @Bare2 @Bare2 @Bare2 outerFid
+  let domFid = fuseRepTerm @Hom22 @Hom22 f22 (idHomI @2)
+      outerFid = fmoveOuterHom @I2 @I2 @I2 domFid
+      cupFid = fmoveInnerHom @I2 @I2 @I2 outerFid
       outFid =
-        unitorHom @Bare2 @Bare2
-          (cupTensorIdHom @Bare2 @Bare2 @Bare2 cupFid)
-      domIdf = fuseRepTerm @Hom22 @Hom22 (idHomBare @2) f22
-      outerIdf = fmoveOuterHom @Bare2 @Bare2 @Bare2 domIdf
-      cupIdf = fmoveInnerHom @Bare2 @Bare2 @Bare2 outerIdf
+        unitorHom @I2 @I2
+          (cupTensorIdHom @I2 @I2 @I2 cupFid)
+      domIdf = fuseRepTerm @Hom22 @Hom22 (idHomI @2) f22
+      outerIdf = fmoveOuterHom @I2 @I2 @I2 domIdf
+      cupIdf = fmoveInnerHom @I2 @I2 @I2 outerIdf
       outIdf =
-        unitorHom @Bare2 @Bare2
-          (cupTensorIdHom @Bare2 @Bare2 @Bare2 cupIdf)
+        unitorHom @I2 @I2
+          (cupTensorIdHom @I2 @I2 @I2 cupIdf)
   dumpNZ "outer Fid (Hom-pres)" outerFid
   dumpNZ "cupR Fid" cupFid
   putStrLn $ "outFid = " ++ show (VS.toList (repVToExpandedFlat @Hom22 outFid))

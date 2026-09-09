@@ -62,7 +62,7 @@ import Symmetry.CG.SU2
 
 -- | 3-factor F-move on fusion-tree spines: @(x⊗y)⊗z → x⊗(y⊗z)@.
 --
--- Bare triples: polymorphic instance via 'fmoveTreesBares' → 'fmoveTreesAtoms'
+-- I triples: polymorphic instance via 'fmoveTreesIs' → 'fmoveTreesAtoms'
 -- (@FuseRep (FuseRep a b) c → FuseRep a (FuseRep b c)@). Outer Hom F
 -- (@z = FuseRep b c@) cannot put that type family in an instance head — use
 -- 'CanFmoveOuterHom' instead.
@@ -106,9 +106,9 @@ collectAssocLChannel (SRepCons t rest) (RCons v rs) =
           , toArray v
           )
             : collectAssocLChannel rest rs
-        SBare {} ->
+        SI {} ->
           error "collectAssocLChannel: expected From intermediate (not left-assoc FuseRep?)"
-        SBare {} ->
+        SI {} ->
           error "collectAssocLChannel: leaf in association spine (not left-assoc FuseRep?)"
 
 -- | Collect right-assoc channels from @(a_i ⊗ (b_j⊗c_k)_f)_d@.
@@ -130,9 +130,9 @@ collectAssocRChannel (SRepCons t rest) (RCons v rs) =
           , toArray v
           )
             : collectAssocRChannel rest rs
-        SBare {} ->
+        SI {} ->
           error "collectAssocRChannel: expected From intermediate (not right-assoc FuseRep?)"
-        SBare {} ->
+        SI {} ->
           error "collectAssocRChannel: leaf in association spine (not right-assoc FuseRep?)"
 
 -- | @(d, mid, ra, rb, rc)@ channel map → AssocL spine.
@@ -156,9 +156,9 @@ scatterAssocLChannel (SRepCons (t :: SIrrepTree u) rest) m =
            in RCons @u
                 (unsafeFromArray (Map.findWithDefault (zeroLike5 key m) key m))
                 (scatterAssocLChannel rest m)
-        SBare {} ->
+        SI {} ->
           error "scatterAssocLChannel: expected From intermediate"
-    SBare {} ->
+    SI {} ->
       error "scatterAssocLChannel: leaf in association spine"
 
 scatterAssocRChannel
@@ -181,9 +181,9 @@ scatterAssocRChannel (SRepCons (t :: SIrrepTree u) rest) m =
            in RCons @u
                 (unsafeFromArray (Map.findWithDefault (zeroLike5 key m) key m))
                 (scatterAssocRChannel rest m)
-        SBare {} ->
+        SI {} ->
           error "scatterAssocRChannel: expected From intermediate"
-    SBare {} ->
+    SI {} ->
       error "scatterAssocRChannel: leaf in association spine"
 
 -- | Zero vector for a missing 5-key channel (same @d@-block length as peers).
@@ -282,31 +282,31 @@ fmoveInvTreesAtoms tv =
         (Map.fromList [((d, e, ra, rb, rc), v) | (d, e, ra, rb, rc, v) <- out])
 
 -- | Atom-leaf triple F-move from type-level @2j@.
-fmoveTreesBares
+fmoveTreesIs
   :: forall ja jb jc
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownRep ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) '[ 'Bare jc] )
-     , KnownRep ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] '[ 'Bare jc]) )
+     , KnownRep ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) '[ 'I jc] )
+     , KnownRep ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] '[ 'I jc]) )
      )
-  => RepV ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) '[ 'Bare jc] )
-  -> RepV ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] '[ 'Bare jc]) )
-fmoveTreesBares =
-  fmoveTreesAtoms @('[ 'Bare ja]) @('[ 'Bare jb]) @('[ 'Bare jc])
+  => RepV ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) '[ 'I jc] )
+  -> RepV ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] '[ 'I jc]) )
+fmoveTreesIs =
+  fmoveTreesAtoms @('[ 'I ja]) @('[ 'I jb]) @('[ 'I jc])
 
 fmoveInvTreesLeaves
   :: forall ja jb jc
    . ( KnownNat ja
      , KnownNat jb
      , KnownNat jc
-     , KnownRep ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) '[ 'Bare jc] )
-     , KnownRep ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] '[ 'Bare jc]) )
+     , KnownRep ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) '[ 'I jc] )
+     , KnownRep ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] '[ 'I jc]) )
      )
-  => RepV ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] '[ 'Bare jc]) )
-  -> RepV ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) '[ 'Bare jc] )
+  => RepV ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] '[ 'I jc]) )
+  -> RepV ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) '[ 'I jc] )
 fmoveInvTreesLeaves =
-  fmoveInvTreesAtoms @('[ 'Bare ja]) @('[ 'Bare jb]) @('[ 'Bare jc])
+  fmoveInvTreesAtoms @('[ 'I ja]) @('[ 'I jb]) @('[ 'I jc])
 
 -- | Outer Hom F for three bare labels (Hom = 'FuseRep' of the last two).
 fmoveOuterHomLeaves
@@ -315,27 +315,27 @@ fmoveOuterHomLeaves
      , KnownNat jb
      , KnownNat jc
      , KnownRep
-         ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+         ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) (FuseRep '[ 'I jb] '[ 'I jc])
          )
      , KnownRep
-         ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] (FuseRep '[ 'Bare jb] '[ 'Bare jc]))
+         ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] (FuseRep '[ 'I jb] '[ 'I jc]))
          )
      )
   => RepV
        ( FuseRep
-           (FuseRep '[ 'Bare ja] '[ 'Bare jb])
-           (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+           (FuseRep '[ 'I ja] '[ 'I jb])
+           (FuseRep '[ 'I jb] '[ 'I jc])
        )
   -> RepV
        ( FuseRep
-           '[ 'Bare ja]
-           (FuseRep '[ 'Bare jb] (FuseRep '[ 'Bare jb] '[ 'Bare jc]))
+           '[ 'I ja]
+           (FuseRep '[ 'I jb] (FuseRep '[ 'I jb] '[ 'I jc]))
        )
 fmoveOuterHomLeaves =
   fmoveOuterLeafHom @ja @jb
-    @( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+    @( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) (FuseRep '[ 'I jb] '[ 'I jc])
      )
-    @( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] (FuseRep '[ 'Bare jb] '[ 'Bare jc]))
+    @( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] (FuseRep '[ 'I jb] '[ 'I jc]))
      )
 
 fmoveInvOuterHomLeaves
@@ -344,55 +344,55 @@ fmoveInvOuterHomLeaves
      , KnownNat jb
      , KnownNat jc
      , KnownRep
-         ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+         ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) (FuseRep '[ 'I jb] '[ 'I jc])
          )
      , KnownRep
-         ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] (FuseRep '[ 'Bare jb] '[ 'Bare jc]))
+         ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] (FuseRep '[ 'I jb] '[ 'I jc]))
          )
      )
   => RepV
        ( FuseRep
-           '[ 'Bare ja]
-           (FuseRep '[ 'Bare jb] (FuseRep '[ 'Bare jb] '[ 'Bare jc]))
+           '[ 'I ja]
+           (FuseRep '[ 'I jb] (FuseRep '[ 'I jb] '[ 'I jc]))
        )
   -> RepV
        ( FuseRep
-           (FuseRep '[ 'Bare ja] '[ 'Bare jb])
-           (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+           (FuseRep '[ 'I ja] '[ 'I jb])
+           (FuseRep '[ 'I jb] '[ 'I jc])
        )
 fmoveInvOuterHomLeaves =
   fmoveInvOuterLeafHom @ja @jb
-    @( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] (FuseRep '[ 'Bare jb] '[ 'Bare jc]))
+    @( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] (FuseRep '[ 'I jb] '[ 'I jc]))
      )
-    @( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+    @( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) (FuseRep '[ 'I jb] '[ 'I jc])
      )
 
--- | Any three atom leaves: F via 'fmoveTreesBares' (no per-triple FlatXXX).
+-- | Any three atom leaves: F via 'fmoveTreesIs' (no per-triple FlatXXX).
 instance
   ( KnownNat ja
   , KnownNat jb
   , KnownNat jc
-  , KnownRep ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) '[ 'Bare jc] )
-  , KnownRep ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] '[ 'Bare jc]) )
+  , KnownRep ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) '[ 'I jc] )
+  , KnownRep ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] '[ 'I jc]) )
   ) =>
-  CanFmoveTrees '[ 'Bare ja] '[ 'Bare jb] '[ 'Bare jc]
+  CanFmoveTrees '[ 'I ja] '[ 'I jb] '[ 'I jc]
   where
-  fmoveTrees = fmoveTreesBares @ja @jb @jc
+  fmoveTrees = fmoveTreesIs @ja @jb @jc
   fmoveInvTrees = fmoveInvTreesLeaves @ja @jb @jc
 
--- | Bare outer Hom F: any three bare labels (Hom = 'FuseRep' of last two).
+-- | I outer Hom F: any three bare labels (Hom = 'FuseRep' of last two).
 instance
   ( KnownNat ja
   , KnownNat jb
   , KnownNat jc
   , KnownRep
-      ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare jb]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+      ( FuseRep (FuseRep '[ 'I ja] '[ 'I jb]) (FuseRep '[ 'I jb] '[ 'I jc])
       )
   , KnownRep
-      ( FuseRep '[ 'Bare ja] (FuseRep '[ 'Bare jb] (FuseRep '[ 'Bare jb] '[ 'Bare jc]))
+      ( FuseRep '[ 'I ja] (FuseRep '[ 'I jb] (FuseRep '[ 'I jb] '[ 'I jc]))
       )
   ) =>
-  CanFmoveOuterHom '[ 'Bare ja] '[ 'Bare jb] '[ 'Bare jc]
+  CanFmoveOuterHom '[ 'I ja] '[ 'I jb] '[ 'I jc]
   where
   fmoveOuterHom = fmoveOuterHomLeaves @ja @jb @jc
   fmoveInvOuterHom = fmoveInvOuterHomLeaves @ja @jb @jc
@@ -411,7 +411,7 @@ fuseTensorTrees
   -> RepV (FuseRep a q)
 fuseTensorTrees (TensorTrees a q) = fuseRepTerm @a @q a q
 
--- | Hom-left nested F: left factor @FuseRep '[ 'Bare ja] '[ 'Bare ja]@.
+-- | Hom-left nested F: left factor @FuseRep '[ 'I ja] '[ 'I ja]@.
 -- Plain functions (Nat-indexed so 'FuseRep' stays out of instance heads).
 fmoveTreesHomLeft
   :: forall ja jb jc
@@ -419,23 +419,23 @@ fmoveTreesHomLeft
      , KnownNat jb
      , KnownNat jc
      , KnownRep
-         ( FuseRep (FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) '[ 'Bare jb]) '[ 'Bare jc]
+         ( FuseRep (FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) '[ 'I jb]) '[ 'I jc]
          )
      , KnownRep
-         ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+         ( FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) (FuseRep '[ 'I jb] '[ 'I jc])
          )
      )
   => RepV
-       ( FuseRep (FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) '[ 'Bare jb]) '[ 'Bare jc]
+       ( FuseRep (FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) '[ 'I jb]) '[ 'I jc]
        )
   -> RepV
-       ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+       ( FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) (FuseRep '[ 'I jb] '[ 'I jc])
        )
 fmoveTreesHomLeft =
   fmoveTreesAtoms
-    @(FuseRep '[ 'Bare ja] '[ 'Bare ja])
-    @('[ 'Bare jb])
-    @('[ 'Bare jc])
+    @(FuseRep '[ 'I ja] '[ 'I ja])
+    @('[ 'I jb])
+    @('[ 'I jc])
 
 fmoveInvTreesHomLeft
   :: forall ja jb jc
@@ -443,23 +443,23 @@ fmoveInvTreesHomLeft
      , KnownNat jb
      , KnownNat jc
      , KnownRep
-         ( FuseRep (FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) '[ 'Bare jb]) '[ 'Bare jc]
+         ( FuseRep (FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) '[ 'I jb]) '[ 'I jc]
          )
      , KnownRep
-         ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+         ( FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) (FuseRep '[ 'I jb] '[ 'I jc])
          )
      )
   => RepV
-       ( FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) (FuseRep '[ 'Bare jb] '[ 'Bare jc])
+       ( FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) (FuseRep '[ 'I jb] '[ 'I jc])
        )
   -> RepV
-       ( FuseRep (FuseRep (FuseRep '[ 'Bare ja] '[ 'Bare ja]) '[ 'Bare jb]) '[ 'Bare jc]
+       ( FuseRep (FuseRep (FuseRep '[ 'I ja] '[ 'I ja]) '[ 'I jb]) '[ 'I jc]
        )
 fmoveInvTreesHomLeft =
   fmoveInvTreesAtoms
-    @(FuseRep '[ 'Bare ja] '[ 'Bare ja])
-    @('[ 'Bare jb])
-    @('[ 'Bare jc])
+    @(FuseRep '[ 'I ja] '[ 'I ja])
+    @('[ 'I jb])
+    @('[ 'I jc])
 
 -- | Collect left-assoc Hom channels @(d, e, h, irrep)@ from
 -- @((a⊗b)_e ⊗ Hom_h)_d@. Key includes Hom root @h@ so F cannot reshuffle
@@ -480,9 +480,9 @@ collectAssocLHom (SRepCons t rest) (RCons v rs) =
           , toArray v
           )
             : collectAssocLHom rest rs
-        SBare {} ->
+        SI {} ->
           error "collectAssocLHom: expected From intermediate"
-    SBare {} ->
+    SI {} ->
       error "collectAssocLHom: leaf in association spine"
 
 -- | Collect right-assoc Hom channels @(d, f, h, irrep)@ from
@@ -503,9 +503,9 @@ collectAssocRHom (SRepCons t rest) (RCons v rs) =
           , toArray v
           )
             : collectAssocRHom rest rs
-        SBare {} ->
+        SI {} ->
           error "collectAssocRHom: expected From intermediate"
-    SBare {} ->
+    SI {} ->
       error "collectAssocRHom: leaf in association spine"
 
 scatterAssocLHom
@@ -524,7 +524,7 @@ scatterAssocLHom (SRepCons (t :: SIrrepTree u) rest) m =
        in RCons @u
             (unsafeFromArray (Map.findWithDefault (zeroLike key m) key m))
             (scatterAssocLHom rest m)
-    SBare {} ->
+    SI {} ->
       error "scatterAssocLHom: leaf in association spine"
 
 scatterAssocRHom
@@ -545,9 +545,9 @@ scatterAssocRHom (SRepCons (t :: SIrrepTree u) rest) m =
            in RCons @u
                 (unsafeFromArray (Map.findWithDefault (zeroLike key m) key m))
                 (scatterAssocRHom rest m)
-        SBare {} ->
+        SI {} ->
           error "scatterAssocRHom: expected From intermediate"
-    SBare {} ->
+    SI {} ->
       error "scatterAssocRHom: leaf in association spine"
 
 -- | Zero vector matching any sample in @m@ (same irrep dim as that @d@ block).
@@ -704,7 +704,7 @@ repVToExpandedFlat = go (repSing @ts)
     go SRepNil RNil = VS.empty
     go (SRepCons t rest) (RCons v rs) =
       case t of
-        SBare {} -> toArray v VS.++ go rest rs
+        SI {} -> toArray v VS.++ go rest rs
         SFrom {} -> toArray v VS.++ go rest rs
     go _ _ = error "repVToExpandedFlat: RepV / SRep mismatch"
 
@@ -720,7 +720,7 @@ expandedFlatToRepV buf = go 0 (repSing @ts)
     go _ SRepNil = RNil
     go off (SRepCons (t :: SIrrepTree u) rest) =
       case t of
-        SBare @j ->
+        SI @j ->
           let d = fromIntegral (natVal (Proxy @j)) + 1
               v = unsafeFromArray (VS.slice off d buf)
            in RCons @u v (go (off + d) rest)

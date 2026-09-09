@@ -259,7 +259,7 @@ scaleRepV s = go (repSing @ts)
     go SRepNil RNil = RNil
     go (SRepCons t rest) (RCons v rs) =
       case t of
-        SBare {} -> RCons (s *^ v) (go rest rs)
+        SI {} -> RCons (s *^ v) (go rest rs)
         SFrom {} -> RCons (s *^ v) (go rest rs)
 
 approxRepV
@@ -278,7 +278,7 @@ approxRepV = go (repSing @ts)
     go SRepNil RNil RNil = True
     go (SRepCons t rest) (RCons a as) (RCons b bs) =
       case t of
-        SBare {} -> closeVec a b && go rest as bs
+        SI {} -> closeVec a b && go rest as bs
         SFrom {} -> closeVec a b && go rest as bs
     go _ _ _ = False
 
@@ -295,11 +295,11 @@ instance FilterTrivialC '[] where
   filterTrivialRepV RNil = RNil
   embedTrivialRepV RNil = RNil
 
-instance {-# OVERLAPPING #-} FilterTrivialC rest => FilterTrivialC ('Bare 0 ': rest) where
+instance {-# OVERLAPPING #-} FilterTrivialC rest => FilterTrivialC ('I 0 ': rest) where
   filterTrivialRepV (RCons v rs) =
-    RCons @('Bare 0) v (filterTrivialRepV @rest rs)
+    RCons @('I 0) v (filterTrivialRepV @rest rs)
   embedTrivialRepV (RCons v rs) =
-    RCons @('Bare 0) v (embedTrivialRepV @rest rs)
+    RCons @('I 0) v (embedTrivialRepV @rest rs)
 
 instance {-# OVERLAPPABLE #-}
   ( KnownNat j
@@ -307,11 +307,11 @@ instance {-# OVERLAPPABLE #-}
   , KnownNat (IrrepDim j)
   , FilterTrivialC rest
   ) =>
-  FilterTrivialC ('Bare j ': rest)
+  FilterTrivialC ('I j ': rest)
   where
   filterTrivialRepV (RCons _ rs) = filterTrivialRepV @rest rs
   embedTrivialRepV fr =
-    RCons @('Bare j) zeroV (embedTrivialRepV @rest fr)
+    RCons @('I j) zeroV (embedTrivialRepV @rest fr)
 
 instance {-# OVERLAPPING #-}
   ( KnownIrrep ('From 0 '(l, r))

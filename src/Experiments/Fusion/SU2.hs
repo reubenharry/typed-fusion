@@ -3,16 +3,22 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoStarIsType #-}
 
 -- | SU(2) representation category as 'FusionTheory' \/ 'FusionData'.
 --
 -- Type-level labels are @Nat@ (@2j@). Term-level @TermLab = Int@.
+-- Spin fractions have kind 'Spin' (@1/2@, @3/2@, …); reduce with 'TJ' to a
+-- @2j@ label (@TJ (1/2) = 1@, @TJ (1/1) = 2@).
 -- @fSymbol@ is the screenshot amplitude @[F^{abc}_d]_{ef}@ (Racah \/ CG),
 -- matching 'Symmetry.CG.FSymbol' Schur blocks for atom triples.
 module Experiments.Fusion.SU2
   ( SU2Th
+  , Spin (..)
+  , type (/)
+  , TJ
   , su2FuseOutcomes
   , su2RPhase
   , su2FSymbol
@@ -34,7 +40,7 @@ import Data.List (elemIndex)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Experiments.Fusion.Data (FusionData (..))
 import Experiments.Fusion.Theory (FusionTheory (..))
-import GHC.TypeLits (Nat)
+import GHC.TypeLits (Nat, type (*), type Div)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
@@ -43,6 +49,20 @@ import Symmetry.CG.SU2 (cgMatrixTwoIrreps, fusionChannels)
 import Symmetry.Tensor (TensorIrrepRepSU2)
 
 data SU2Th
+
+-- | Spin @j = n/d@ (not a fusion label). Reduce with 'TJ' to @2j :: Nat@.
+data Spin = Nat :/ Nat
+
+-- | Build a 'Spin': @1/2@, @3/2@, @1/1@, …
+type family (/) (n :: Nat) (d :: Nat) :: Spin where
+  n / d = n ':/ d
+
+infixl 7 /
+
+-- | @j = n/d ↦ 2j@. Requires @d@ divides @2n@.
+-- @TJ (1/2) = 1@, @TJ (1/1) = 2@, @TJ (3/2) = 3@.
+type family TJ (s :: Spin) :: Nat where
+  TJ (n :/ d) = Div (2 * n) d
 
 instance FusionTheory Nat SU2Th where
   type UnitLab SU2Th = 0
