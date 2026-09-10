@@ -35,7 +35,7 @@ library
         Hom.Expr
         Hom.TypeLevel
         Hom.Singletons
-        Hom.RepV
+        Hom.FTreeV
         Hom.FMove
         Hom.Core
         Hom.Smoke

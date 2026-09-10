@@ -434,24 +434,24 @@ disassociateBlocks =
 -- Named morphisms
 --------------------------------------------------------------------------------
 
-cup :: Fib ('Atom 'One) ((('Atom 'Tau) :⊗: ('Atom 'Tau)))
+cup :: Fib ('Irrep 'One) ((('Irrep 'Tau) :⊗: ('Irrep 'Tau)))
 cup =
   Fib $
     HomCons
       (fromList [phi] :: M 1 1)
       (HomCons (konst 0 :: M 1 0) HomNil)
 
-cap :: Fib ((('Atom 'Tau) :⊗: ('Atom 'Tau))) ('Atom 'One)
+cap :: Fib ((('Irrep 'Tau) :⊗: ('Irrep 'Tau))) ('Irrep 'One)
 cap =
   Fib $
     HomCons
       (fromList [1] :: M 1 1)
       (HomCons (konst 0 :: M 0 1) HomNil)
 
-fuse :: Fib ((('Atom 'Tau) :⊗: ('Atom 'Tau))) ((('Atom 'One) :⊕: ('Atom 'Tau)))
+fuse :: Fib ((('Irrep 'Tau) :⊗: ('Irrep 'Tau))) ((('Irrep 'One) :⊕: ('Irrep 'Tau)))
 fuse = Fib idHom
 
-split :: Fib ((('Atom 'One) :⊕: ('Atom 'Tau))) ((('Atom 'Tau) :⊗: ('Atom 'Tau)))
+split :: Fib ((('Irrep 'One) :⊕: ('Irrep 'Tau))) ((('Irrep 'Tau) :⊗: ('Irrep 'Tau)))
 split = Fib idHom
 
 eqFib :: (KnownMult a, KnownMult b, FibHom a b) => Fib a b -> Fib a b -> Bool
@@ -590,18 +590,18 @@ instance Associative Fib (:⊗:) where
           [natI @(MultOne c), natI @(MultTau c)]
 
 instance Monoidal Fib (:⊗:) where
-  type Id Fib (:⊗:) = 'Atom 'One
+  type Id Fib (:⊗:) = 'Irrep 'One
 
-  idl :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib ('Atom 'One :⊗: a)) => Fib ('Atom 'One :⊗: a) a
+  idl :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib ('Irrep 'One :⊗: a)) => Fib ('Irrep 'One :⊗: a) a
   idl = Fib idHom
 
-  idr :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (a :⊗: 'Atom 'One)) => Fib (a :⊗: 'Atom 'One) a
+  idr :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib (a :⊗: 'Irrep 'One)) => Fib (a :⊗: 'Irrep 'One) a
   idr = Fib idHom
 
-  coidl :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib ('Atom 'One :⊗: a)) => Fib a ('Atom 'One :⊗: a)
+  coidl :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib ('Irrep 'One :⊗: a)) => Fib a ('Irrep 'One :⊗: a)
   coidl = Fib idHom
 
-  coidr :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (a :⊗: 'Atom 'One)) => Fib a (a :⊗: 'Atom 'One)
+  coidr :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib (a :⊗: 'Irrep 'One)) => Fib a (a :⊗: 'Irrep 'One)
   coidr = Fib idHom
 
 instance Braided Fib (:⊗:) where

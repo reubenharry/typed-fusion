@@ -5,8 +5,8 @@
 -- | Symbolic SU(2) fusion-tree kinds.
 --
 -- Unfused Hom indexes 'Fusion.Obj.Obj' trees. Fused Hom indexes
--- the same 'Obj' trees (via 'ObjSpineSU2' / 'ObjRep'); morphisms are
--- genealogy-preserving fusion trees ('FTree' \/ 'FTrees' / 'FuseRep').
+-- the same 'Obj' trees (via 'ObjSpineSU2' / 'ObjFTrees'); morphisms are
+-- genealogy-preserving fusion trees ('FTree' \/ 'FTrees' / 'FuseFTrees').
 module Hom.Expr
   ( FTree (..)
   , FTrees
@@ -16,13 +16,13 @@ import GHC.TypeLits (Nat)
 
 -- | Fusion tree: one inhabited SU(2) channel plus genealogy.
 --
--- @'I j@ is a bare @2j@ label. @j `'From` '(l, r)@ is the CG outcome @j@
+-- @'IrrepTree j@ is a bare @2j@ label. @j `'From` '(l, r)@ is the CG outcome @j@
 -- of coupling children @l@ and @r@ (SU(2) multiplicity-free; no channel index).
 --
 -- Children are paired so @From@ can be infix (Haskell infix constructors are
 -- binary).
 data FTree
-  = I Nat
+  = IrrepTree Nat
   | Nat `From` (FTree, FTree)
 
 -- | List of fusion trees (same-root trees stay distinct).

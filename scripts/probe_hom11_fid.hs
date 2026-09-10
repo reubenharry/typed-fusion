@@ -20,18 +20,18 @@ dumpTrees
   :: forall ts
    . KnownFTrees ts
   => String
-  -> RepV ts
+  -> FTreeV ts
   -> IO ()
 dumpTrees label tv = do
   putStrLn $ "=== " ++ label ++ " ==="
   go 0 (fTreesSing @ts) tv
   where
-    go :: Int -> SFTrees ts' -> RepV ts' -> IO ()
-    go _ SFTreesNil RNil = pure ()
-    go i (SFTreesCons t rest) (RCons v rs) = do
+    go :: Int -> SFTrees ts' -> FTreeV ts' -> IO ()
+    go _ SFTreesNil FNil = pure ()
+    go i (SFTreesCons t rest) (FCons v rs) = do
       let arr :: VS.Vector (Complex Double)
           arr = case t of
-            SI {} -> toArray v
+            SIrrepTree {} -> toArray v
             SFrom {} -> toArray v
           nrm = VS.sum $ VS.map (\x -> realPart (x * conjugate x)) arr
       when (nrm > 1e-20) $
@@ -45,7 +45,7 @@ dumpTrees label tv = do
     when b m = if b then m else pure ()
 
     showFTree :: forall t. SFTree t -> String
-    showFTree (SI @j) = "L" ++ show (natVal (Proxy @j))
+    showFTree (SIrrepTree @j) = "L" ++ show (natVal (Proxy @j))
     showFTree (SFrom @j l r) =
       "N" ++ show (natVal (Proxy @j))
         ++ "(" ++ showFTree l ++ "," ++ showFTree r ++ ")"
@@ -54,25 +54,25 @@ dumpTrees label tv = do
     isCupKeep (SFrom @_ @_ @_ _ r) = case r of
       SFrom @_ @_ @_ mid _ -> case mid of
         SFrom @m _ _ -> natVal (Proxy @m) == 0
-        SI {} -> False
-      SI {} -> False
+        SIrrepTree {} -> False
+      SIrrepTree {} -> False
     isCupKeep _ = False
 
-f11 :: RepV (FuseRep '[ 'I 1] '[ 'I 1])
+f11 :: FTreeV (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1])
 f11 =
-  RCons @('From 0 '( 'I 1, 'I 1)) (konst 0.3) $
-    RCons @('From 2 '( 'I 1, 'I 1)) (konst 0.7) RNil
+  FCons @('From 0 '( 'IrrepTree 1, 'IrrepTree 1)) (konst 0.3) $
+    FCons @('From 2 '( 'IrrepTree 1, 'IrrepTree 1)) (konst 0.7) FNil
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @(FuseRep '[ 'I 1] '[ 'I 1]) @(FuseRep '[ 'I 1] '[ 'I 1]) f11 (idHomFTrees @('[ 'I 1]))
-      outerFid = fmoveOuterHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) domFid
-      cupFid = fmoveInnerHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) outerFid
+  let domFid = fuseFTreesTerm @(FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) @(FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) f11 (idHomFTrees @('[ 'IrrepTree 1]))
+      outerFid = fmoveOuterHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) domFid
+      cupFid = fmoveInnerHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) outerFid
       outFid =
-        unitorHom @('[ 'I 1]) @('[ 'I 1])
-          (cupTensorIdHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) cupFid)
-  dumpTrees @(FuseRep (FuseRep '[ 'I 1] '[ 'I 1]) (FuseRep '[ 'I 1] '[ 'I 1])) "Hom11 dom Fid" domFid
+        unitorHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1])
+          (cupTensorIdHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) cupFid)
+  dumpTrees @(FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1])) "Hom11 dom Fid" domFid
   dumpTrees "Hom11 outer Fid" outerFid
   dumpTrees "Hom11 cupR Fid" cupFid
-  putStrLn $ "outFid flat = " ++ show (VS.toList (repVToExpandedFlat @(FuseRep '[ 'I 1] '[ 'I 1]) outFid))
-  putStrLn $ "f11 flat    = " ++ show (VS.toList (repVToExpandedFlat @(FuseRep '[ 'I 1] '[ 'I 1]) f11))
+  putStrLn $ "outFid flat = " ++ show (VS.toList (fTreeVToExpandedFlat @(FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) outFid))
+  putStrLn $ "f11 flat    = " ++ show (VS.toList (fTreeVToExpandedFlat @(FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) f11))

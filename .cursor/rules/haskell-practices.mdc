@@ -27,8 +27,8 @@ procedural simulation that happens to compute the right numbers.
 - Unfused cups use **right duals**: @ε : a ⊗ a* → I@ ('cupUnfusedObj'),
   @η : I → a* ⊗ a@ ('capUnfusedObj'). Hom packing is Dual-left, so @id = η@.
   Bridging @η@ to @ε@ needs an explicit braid (@swapMap@), not a silent type lie.
-- Fused 'HomFused' identity is @'idHomFTrees' (ObjRep a)@: position-diagonal
-  leaf ids on cartesian 'FuseRep' — not an 'Obj'-indexed method class.
+- Fused 'HomFused' identity is @'idHomFTrees' (ObjFTrees a)@: position-diagonal
+  leaf ids on cartesian 'FuseFTrees' — not an 'Obj'-indexed method class.
 
 Anti-boilerplate, library-first constructors, and “don’t unpack buffers” below
 are consequences of this principle.
@@ -79,8 +79,8 @@ recursion scheme once and write a non-recursive algebra. Do not hand-roll
 - Do not invent parallel APIs that duplicate Fixed / General / Reference with
   slight renames.
 - In Hom / fusion-object code, import `Obj` constructors unqualified
-  (`Atom`, `(:⊗:)`, `(:⊕:)`) and write `'Atom j`, `a :⊗: b`, `a :⊕: b` —
-  not `'FObj.Atom` / `Tensor` / `Sum`.
+  (`Irrep`, `(:⊗:)`, `(:⊕:)`) and write `'Irrep j`, `a :⊗: b`, `a :⊕: b` —
+  not `'FObj.Irrep` / `Tensor` / `Sum`.
 
 ### Call sites before names
 
@@ -148,9 +148,15 @@ arguments, existing schemes (`HMap` / `MapSU2Mult1`-style walkers), and
 one.
 
 **OK:** empty-method classes that **bundle constraints** and carry **inductive
-instances** over a type-level tree (`KnownToVObj` over `Obj`: Atom / `:⊗:` /
+instances** over a type-level tree (`KnownToVObj` over `Obj`: Irrep / `:⊗:` /
 `:⊕:`). That is not OO — a `ConstraintKinds` synonym cannot hold those
 instances. Same idea as marker classes that add a law (`Symmetric`).
+
+**OK:** forward `ConstraintKinds` synonyms that bundle known parts
+(`KnownHomTrees a b` = `KnownFTrees a/b/(FuseFTrees a b)` + `FuseFTreesTermC`).
+Prefer that over repeating the same four lines; do **not** invent a method
+class (`CanFmove*`, `FilterTrivialC`) when a plain function plus `KnownFTrees`
+(and `cmpNat` / singletons for spine case-splits) already states the obligation.
 
 ```haskell
 -- BAD: new class for one algebra on an HList walk

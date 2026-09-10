@@ -91,7 +91,9 @@ type errors by substituting `undefined`. Prefer folds over hand-rolled
 recursion. **Type classes sparingly** — only for type-level recursion or
 overload that cannot be a plain function / shared composition; they are a code
 stain when reached for by OO/traits analogy. Prefer existing classes +
-`newtype`, or one scheme class with rank-2 algebras. Custom types keep
+`newtype`, or one scheme class with rank-2 algebras. Forward constraint
+bundles that need no induction are `ConstraintKinds` synonyms
+(`KnownHomTrees`), not method classes. Custom types keep
 conceptual distinctions (bond/site/morphism ≠ raw arrays/tuples).
 
 ### Small increments

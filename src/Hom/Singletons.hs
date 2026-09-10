@@ -15,8 +15,7 @@
 
 -- | Term-level singletons for genealogy-preserving 'FTree' / 'FTrees' trees.
 module Hom.Singletons
-  ( SIrrep (..)
-  , SFTree (..)
+  ( SFTree (..)
   , KnownFTree (..)
   , SFTrees (..)
   , KnownFTrees (..)
@@ -26,25 +25,16 @@ module Hom.Singletons
 import Data.Proxy (Proxy (..))
 import Hom.Expr
 import Hom.TypeLevel (IrrepDim)
-import GHC.TypeLits (KnownNat, Nat, natVal)
-
--- | Singleton for an irrep label (@2j@ as 'Nat').
-data SIrrep (j :: Nat) where
-  SAtomI
-    :: forall j
-     . ( KnownNat j
-       , KnownNat (IrrepDim j)
-       )
-    => SIrrep j
+import GHC.TypeLits (KnownNat, natVal)
 
 -- | Singleton for a genealogy-preserving 'FTree' tree.
 data SFTree (t :: FTree) where
-  SI
+  SIrrepTree
     :: forall j
      . ( KnownNat j
        , KnownNat (IrrepDim j)
        )
-    => SFTree ('I j)
+    => SFTree ('IrrepTree j)
   SFrom
     :: forall j l r
      . ( KnownNat j
@@ -62,9 +52,9 @@ instance
   ( KnownNat j
   , KnownNat (IrrepDim j)
   ) =>
-  KnownFTree ('I j)
+  KnownFTree ('IrrepTree j)
   where
-  fTreeSing = SI @j
+  fTreeSing = SIrrepTree @j
 
 instance
   ( KnownNat j
@@ -102,5 +92,5 @@ instance
 
 -- | Root @2j@ as an 'Int' (for channel keys / Racah packing).
 rootLab :: SFTree t -> Int
-rootLab (SI @j) = fromIntegral (natVal (Proxy @j))
+rootLab (SIrrepTree @j) = fromIntegral (natVal (Proxy @j))
 rootLab (SFrom @j _ _) = fromIntegral (natVal (Proxy @j))

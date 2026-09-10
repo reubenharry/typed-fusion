@@ -8,9 +8,9 @@
 -- | Type-level spaces and fuse for symbolic SU(2).
 --
 -- 'HomUnfused' indexes by 'Fusion.Obj.Obj' trees.
--- 'HomFused' indexes 'Obj Nat' (via 'ObjSpineSU2' / 'ObjRep' → bare 'FTrees');
--- morphisms are genealogy 'FuseRep' / 'RepV' (fusion-tree lists).
--- 'ObjTrees' interprets an @Obj@ as a genealogy 'FTrees' (@Norm@, then 'FuseRep').
+-- 'HomFused' indexes 'Obj Nat' (via 'ObjSpineSU2' / 'ObjFTrees' → bare 'FTrees');
+-- morphisms are genealogy 'FuseFTrees' / 'FTreeV' (fusion-tree lists).
+-- 'ObjTrees' interprets an @Obj@ as a genealogy 'FTrees' (@Norm@, then 'FuseFTrees').
 module Hom.TypeLevel
   ( -- * Irrep dimension
     IrrepDim
@@ -18,28 +18,28 @@ module Hom.TypeLevel
   , ToVObj
     -- * Skeletal objects (HomFused)
   , Spine
-  , ReplicateI
-  , SpineRep
+  , ReplicateIrrep
+  , SpineFTrees
   , ObjSpine
   , ObjSpineSU2
-  , ObjRep
+  , ObjFTrees
     -- * Genealogy Obj → FTrees
   , ObjTrees
     -- * Fusion trees
   , Root
   , ToVTree
-  , ToVRep
+  , ToVFTrees
   , FromCG
   , FuseTrees
-  , FuseRepOne
-  , FuseRep
+  , FuseFTreesOne
+  , FuseFTrees
   , FilterTrivial
   , Unit
   , UnitorCodomain
   ) where
 
 import Data.Kind (Type)
-import Fusion.Obj (Norm, Obj (Atom, (:⊗:), (:⊕:)), ObjSpine)
+import Fusion.Obj (Norm, Obj (Irrep, (:⊗:), (:⊕:)), ObjSpine)
 import Fusion.SU2 (SU2Th)
 import Fusion.Unbounded (Spine)
 import Symmetry.Tensor (TensorIrrepRepSU2)
@@ -64,7 +64,7 @@ type family IrrepDim (j :: Nat) :: Nat where
 -- | Interpret an @Obj@ tree as a nested space (no CG fuse).
 -- Atoms are bare irrep spaces @C (j+1)@; the monoidal unit is @C 1@.
 type family ToVObj (a :: Obj Nat) :: Type where
-  ToVObj ('Atom j) = C (IrrepDim j)
+  ToVObj ('Irrep j) = C (IrrepDim j)
   ToVObj ((a :⊗: b)) = ToVObj a ⊗ ToVObj b
   ToVObj ((a :⊕: b)) = (ToVObj a, ToVObj b)
 
@@ -72,24 +72,24 @@ type family ToVObj (a :: Obj Nat) :: Type where
 -- Skeletal objects → bare FTrees (HomFused object index)
 --------------------------------------------------------------------------------
 
--- | @n@ copies of @'I j@ (multiplicity expand).
-type family ReplicateI (n :: Nat) (j :: Nat) :: FTrees where
-  ReplicateI 0 _j = '[]
-  ReplicateI 1 j = '[ 'I j]
-  ReplicateI n j = 'I j ': ReplicateI (n - 1) j
+-- | @n@ copies of @'IrrepTree j@ (multiplicity expand).
+type family ReplicateIrrep (n :: Nat) (j :: Nat) :: FTrees where
+  ReplicateIrrep 0 _j = '[]
+  ReplicateIrrep 1 j = '[ 'IrrepTree j]
+  ReplicateIrrep n j = 'IrrepTree j ': ReplicateIrrep (n - 1) j
 
 -- | Expand a finite-support multiplicity spine to a bare-only 'FTrees'.
--- Order: spine order, @n@ consecutive @'I j@ per sector.
-type family SpineRep (sp :: Spine Nat) :: FTrees where
-  SpineRep '[] = '[]
-  SpineRep ('(j, n) ': rest) =
-    Append (ReplicateI n j) (SpineRep rest)
+-- Order: spine order, @n@ consecutive @'IrrepTree j@ per sector.
+type family SpineFTrees (sp :: Spine Nat) :: FTrees where
+  SpineFTrees '[] = '[]
+  SpineFTrees ('(j, n) ': rest) =
+    Append (ReplicateIrrep n j) (SpineFTrees rest)
 
 -- | @Obj Nat → Spine Nat@ via SU(2) FuseNorm (no FiniteIrr).
 type ObjSpineSU2 (a :: Obj Nat) = ObjSpine SU2Th a
 
--- | I 'FTrees' of an @Obj@ after skeletal fuse (@SpineRep ∘ ObjSpineSU2@).
-type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
+-- | Bare 'FTrees' of an @Obj@ after skeletal fuse (@SpineFTrees ∘ ObjSpineSU2@).
+type ObjFTrees (a :: Obj Nat) = SpineFTrees (ObjSpineSU2 a)
 
 --------------------------------------------------------------------------------
 -- Genealogy Obj → FTrees (association-preserving; distributes ⊗ over ⊕)
@@ -98,13 +98,13 @@ type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
 -- | Interpret an @Obj@ tree as a genealogy 'FTrees'.
 --
 -- First 'Norm' (distribute @⊗@ over @⊕@, flatten sums), then:
--- @'Atom j ↦ '[ 'I j]@, @':⊗:' ↦ 'FuseRep@, @':⊕:' ↦ 'Append@.
+-- @'Irrep j ↦ '[ 'IrrepTree j]@, @':⊗:' ↦ 'FuseFTrees@, @':⊕:' ↦ 'Append@.
 type ObjTrees (a :: Obj Nat) = ObjTreesGo (Norm a)
 
 type family ObjTreesGo (a :: Obj Nat) :: FTrees where
-  ObjTreesGo ('Atom j) = '[ 'I j]
+  ObjTreesGo ('Irrep j) = '[ 'IrrepTree j]
   ObjTreesGo ((a :⊗: b)) =
-    FuseRep (ObjTreesGo a) (ObjTreesGo b)
+    FuseFTrees (ObjTreesGo a) (ObjTreesGo b)
   ObjTreesGo ((a :⊕: b)) =
     Append (ObjTreesGo a) (ObjTreesGo b)
 
@@ -114,7 +114,7 @@ type family ObjTreesGo (a :: Obj Nat) :: FTrees where
 
 -- | Root @2j@ label of a fusion tree.
 type family Root (t :: FTree) :: Nat where
-  Root ('I j) = j
+  Root ('IrrepTree j) = j
   Root ('From j '(_, _)) = j
 
 -- | Space of one fusion tree: root irrep only (children are type indices).
@@ -122,10 +122,10 @@ type family ToVTree (t :: FTree) :: Type where
   ToVTree t = C (IrrepDim (Root t))
 
 -- | Forgetful direct-sum space of a 'FTrees': right-nested root payloads.
-type family ToVRep (ts :: FTrees) :: Type where
-  ToVRep '[t] = ToVTree t
-  ToVRep (t ': s ': rest) =
-    (ToVTree t, ToVRep (s ': rest))
+type family ToVFTrees (ts :: FTrees) :: Type where
+  ToVFTrees '[t] = ToVTree t
+  ToVFTrees (t ': s ': rest) =
+    (ToVTree t, ToVFTrees (s ': rest))
 
 -- | Attach children @t1@, @t2@ to every CG outcome label.
 type family FromCG (t1 :: FTree) (t2 :: FTree) (cg :: [(Nat, Nat)]) :: FTrees where
@@ -138,35 +138,35 @@ type family FuseTrees (t1 :: FTree) (t2 :: FTree) :: FTrees where
   FuseTrees t1 t2 =
     FromCG t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
 
-type family FuseRepOne (t1 :: FTree) (qs :: FTrees) :: FTrees where
-  FuseRepOne _ '[] = '[]
-  FuseRepOne t1 (t2 ': rest) =
-    Append (FuseTrees t1 t2) (FuseRepOne t1 rest)
+type family FuseFTreesOne (t1 :: FTree) (qs :: FTrees) :: FTrees where
+  FuseFTreesOne _ '[] = '[]
+  FuseFTreesOne t1 (t2 ': rest) =
+    Append (FuseTrees t1 t2) (FuseFTreesOne t1 rest)
 
 -- | Cartesian fuse of two 'FTrees' lists (distribute CG over pairs).
-type family FuseRep (rs :: FTrees) (qs :: FTrees) :: FTrees where
-  FuseRep '[] _ = '[]
-  FuseRep (t1 ': rest) qs =
-    Append (FuseRepOne t1 qs) (FuseRep rest qs)
+type family FuseFTrees (rs :: FTrees) (qs :: FTrees) :: FTrees where
+  FuseFTrees '[] _ = '[]
+  FuseFTrees (t1 ': rest) qs =
+    Append (FuseFTreesOne t1 qs) (FuseFTrees rest qs)
 
 -- | Monoidal unit as a singleton tree list (bare trivial irrep).
-type Unit = '[ 'I 0]
+type Unit = '[ 'IrrepTree 0]
 
 -- | Keep only total-charge-0 trees (SU(2) intertwiners / invariants).
 --
 -- Dispatches on @'CmpNat' j 0@ so @'CmpNat' j 0 ~ ''GT@ makes the drop
--- definitional (needed by 'FilterTrivialC').
+-- definitional (needed by 'filterTrivialFTreeV' / 'embedTrivialFTreeV').
 type family FilterTrivial (ts :: FTrees) :: FTrees where
   FilterTrivial '[] = '[]
-  FilterTrivial ('I j ': rest) =
-    FilterTrivialI (CmpNat j 0) j rest
+  FilterTrivial ('IrrepTree j ': rest) =
+    FilterTrivialIrrep (CmpNat j 0) j rest
   FilterTrivial ('From j '(l, r) ': rest) =
     FilterTrivialFrom (CmpNat j 0) j l r rest
 
-type family FilterTrivialI (o :: Ordering) (j :: Nat) (rest :: FTrees) :: FTrees where
-  FilterTrivialI 'EQ _j rest = 'I 0 ': FilterTrivial rest
-  FilterTrivialI 'GT _j rest = FilterTrivial rest
-  FilterTrivialI 'LT _j rest = FilterTrivial rest
+type family FilterTrivialIrrep (o :: Ordering) (j :: Nat) (rest :: FTrees) :: FTrees where
+  FilterTrivialIrrep 'EQ _j rest = 'IrrepTree 0 ': FilterTrivial rest
+  FilterTrivialIrrep 'GT _j rest = FilterTrivial rest
+  FilterTrivialIrrep 'LT _j rest = FilterTrivial rest
 
 type family FilterTrivialFrom
   (o :: Ordering)
@@ -181,8 +181,8 @@ type family FilterTrivialFrom
   FilterTrivialFrom 'LT _j _l _r rest = FilterTrivial rest
 
 -- | Drop @Unit@ left children after @0 ⊗ t → t@:
--- @'From _ '( 'I 0, t) ↦ t@.
+-- @'From _ '( 'IrrepTree 0, t) ↦ t@.
 type family UnitorCodomain (uc :: FTrees) :: FTrees where
   UnitorCodomain '[] = '[]
-  UnitorCodomain ('From _j '( 'I 0, t) ': rest) =
+  UnitorCodomain ('From _j '( 'IrrepTree 0, t) ': rest) =
     t ': UnitorCodomain rest
