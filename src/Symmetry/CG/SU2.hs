@@ -14,8 +14,7 @@
 --
 --   * @tj@ is twice the spin; irrep dimension is @tj + 1@.
 --   * Magnetic index @k = 0 .. tj@ corresponds to @tm = tj - 2k@ (highest weight first).
---   * Sector storage is multiplicity ⊗ irrep (mult slow, @m@ fast), matching
---     'Symmetry.HomBlock.su2ExpandBlock'.
+--   * Sector storage is multiplicity ⊗ irrep (mult slow, @m@ fast).
 --   * @C n ⊗ C m@ via 'toArray' uses second-factor-fastest: @i*m + j@.
 --   * Fused output matches coalesced @'Tensor' SU2 r q@: sectors sorted by @tj@,
 --     equal-@tj@ contributions merged into one multiplicity (CG walk order
@@ -23,11 +22,8 @@
 --
 -- Built by highest-weight + @J−@ (Condon–Shortley).
 module Symmetry.CG.SU2
-  ( fuseSU2Flat
-  , fuseSU2FlatSectors
-  , unfuseSU2Flat
+  ( fuseSU2FlatSectors
   , unfuseSU2FlatSectors
-  , fuseMapRightFlat
   , fuseMapRightFlatSectors
   , fuseMapLeftFlatSectors
   , fuseTreeLeftSectors
@@ -40,7 +36,6 @@ module Symmetry.CG.SU2
   , cgMatrixTwoIrreps
   , cgChannel
   , fusionChannels
-  , sectorsSU2
   , repDimOf
   ) where
 
@@ -48,14 +43,12 @@ import Control.Arrow.Constrained (arr)
 import Control.Monad.ST (runST)
 import Data.Complex (Complex (..))
 import Data.Proxy (Proxy (..))
-import Data.Singletons (fromSing)
 import GHC.TypeLits (KnownNat, Nat, natVal, type (+))
 import Data.VectorSpace (Scalar)
 import Math.LinearMap.Category
   ( type (+>), type (⊗), LSpace, TensorSpace
   , LinearFunction, pattern LinearFunction
   )
-import Control.Arrow.Constrained (arr)
 import Math.LinearMap.Category.Backend.HMatrix ()
 import Math.LinearMap.Category.Instances ()
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
@@ -64,8 +57,6 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
 import qualified Numeric.LinearAlgebra as LA
-import Symmetry.Group (Group (SU2))
-import Symmetry.RepSingleton (KnownRep (..), SRep (..), repSing)
 
 -- | Total-@tj@ channels in @j1 ⊗ j2@ (same order as 'TensorIrrepRepSU2').
 fusionChannels :: Int -> Int -> [Int]
@@ -261,18 +252,7 @@ unfuseCGChannel = arr (LinearFunction applyUnfuse)
                 VS.generate dOut $ \row ->
                   (matFlat VS.! (row * dIn + col)) * (win VS.! row)
 
--- | @(tj, multiplicity, flat offset)@ for an SU(2) spine.
-sectorsSU2 :: SRep SU2 r -> [(Int, Int, Int)]
-sectorsSU2 = go 0
-  where
-    go :: Int -> SRep SU2 r0 -> [(Int, Int, Int)]
-    go _ SRepNilSU2 = []
-    go !off (SRepConsSU2 @j @m sj rest) =
-      let tj = fromIntegral (fromSing sj)
-          mult = fromIntegral (natVal (Proxy @m))
-          stride = mult * (tj + 1)
-      in  (tj, mult, off) : go (off + stride) rest
-
+-- | @(tj, multiplicity, flat offset)@ spine length.
 repDimOf :: [(Int, Int, Int)] -> Int
 repDimOf [] = 0
 repDimOf secs =
@@ -281,15 +261,7 @@ repDimOf secs =
 
 -- | Apply CG fuse on flat Kronecker buffers (@toArray@ layout).
 -- Output layout matches coalesced @'Tensor' SU2@: sorted by @tj@, merged mult.
-fuseSU2Flat
-  :: SRep SU2 r
-  -> SRep SU2 q
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fuseSU2Flat sr sq =
-  fuseSU2FlatSectors (sectorsSU2 sr) (sectorsSU2 sq)
-
--- | Sector-list form of 'fuseSU2Flat' (@(tj, multiplicity, offset)@ spines).
+-- Sector form: @[(tj, multiplicity, offset)]@ spines.
 fuseSU2FlatSectors
   :: [(Int, Int, Int)]
   -> [(Int, Int, Int)]
@@ -369,17 +341,9 @@ sectorsFromPairs = go 0
     go !off ((tj, m) : rest) =
       (tj, m, off) : go (off + m * (tj + 1)) rest
 
--- | Inverse of 'fuseSU2Flat' (real CG ⇒ transpose): fused multiplet layout →
+-- | Inverse of 'fuseSU2FlatSectors' (real CG ⇒ transpose): fused multiplet layout →
 -- Kronecker product @Forget(r) ⊗ Forget(q)@ (@iR * dimQ + iQ@). Same total
 -- dimension — unitary isomorphism, not an embedding into a larger space.
-unfuseSU2Flat
-  :: SRep SU2 r
-  -> SRep SU2 q
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-unfuseSU2Flat sr sq =
-  unfuseSU2FlatSectors (sectorsSU2 sr) (sectorsSU2 sq)
-
 unfuseSU2FlatSectors
   :: [(Int, Int, Int)]
   -> [(Int, Int, Int)]
@@ -393,17 +357,6 @@ unfuseSU2FlatSectors secsR secsQ vout =
 
 -- | Naturality of fuse on the right: @refuse ∘ (id ⊗ f) ∘ unfuse@.
 -- @f@ acts on the forgetful flat of @q@ (@dimQ → dimQ'@).
-fuseMapRightFlat
-  :: SRep SU2 r
-  -> SRep SU2 q
-  -> SRep SU2 q'
-  -> (VS.Vector (Complex Double) -> VS.Vector (Complex Double))
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fuseMapRightFlat sr sq sq' =
-  fuseMapRightFlatSectors (sectorsSU2 sr) (sectorsSU2 sq) (sectorsSU2 sq')
-
--- | Sector-list form of 'fuseMapRightFlat'.
 fuseMapRightFlatSectors
   :: [(Int, Int, Int)]
   -> [(Int, Int, Int)]

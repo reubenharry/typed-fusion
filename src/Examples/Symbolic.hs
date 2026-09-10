@@ -5,6 +5,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{- HLINT ignore "Move brackets to avoid $" -}
+{- HLINT ignore "Redundant $" -}
 
 -- | Smokes for 'Hom': term-level checks and compile-time type equalities.
 -- Covers Dual-left 'HomUnfused' and genealogy 'HomFused' / 'composeHomTrees'.
@@ -43,26 +45,26 @@ import Prelude hiding (id, (.), ($))
 import Categorical.Linear (runit, swapMap)
 import Hom.Vec (vec)
 
--- exampleFTreeV :: FTreeV '[ 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (3 / 2))]
-example1 :: Unfused ('Irrep (Spin (1 / 2)) :⊕: 'Irrep (Spin (3 / 2)))
+-- exampleFTreeV :: FTreeV '[ 'IrrepTree (Spin (1/2)), 'IrrepTree (Spin (3 / 2))]
+example1 :: Unfused ('Irrep (Spin (1/2)) :⊕: 'Irrep (Spin (3 / 2)))
 example1 = (vec (1,2), vec (3,4,5,6))
 
-example2 :: Unfused ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2)))
+example2 :: Unfused ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))
 example2 = vec (1,2) ⊗ vec (3,4) ^+^ vec (5,6) ⊗ vec (7,8)
 
-example3 :: Fused ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2)))
+example3 :: Fused ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))
 example3 = (konst 1, vec (4,5,6))
 
-example4 :: Sym ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2)))
+example4 :: Sym ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))
 example4 = konst 2
 
-example5 :: Unfused (Dual ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2))) :⊗: 'Irrep (Spin (2 / 2)))
+example5 :: Unfused (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
 example5 =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
 
-example6 :: Fused (Dual ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2))) :⊗: 'Irrep (Spin (2 / 2)))
+example6 :: Fused (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
 example6 = (vec (1,2,3), (konst 1, (vec ( 2,3,4), vec (5,6,7,8,9))))
 
-example7 :: Sym (Dual ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2))) :⊗: 'Irrep (Spin (2 / 2)))
+example7 :: Sym (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
 example7 = konst 1
 
 
@@ -72,66 +74,62 @@ type Dual (a :: Obj Nat) = DualObj SU2Th a
 
 
 
-fuseExample :: ToVFTrees '[  
-    0 `From` '( 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (1 / 2))), 
-    2 `From` '( 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (1 / 2)))]
-fuseExample = fTreeVToV $ fuseTrees @('IrrepTree (Spin (1 / 2))) @('IrrepTree (Spin (1 / 2))) example2
+fuseExample :: ToVFTrees '[
+    0 `From` '( 'IrrepTree (Spin (1/2)), 'IrrepTree (Spin (1/2))),
+    2 `From` '( 'IrrepTree (Spin (1/2)), 'IrrepTree (Spin (1/2)))]
+fuseExample = fTreeVToV $ fuseTrees @('IrrepTree (Spin (1/2))) @('IrrepTree (Spin (1/2))) example2
 
 
--- | Trivial (total-charge-0) sector of 'fuseExample2'.
-fuseExample3
-  :: ToVFTrees
-       ( FilterTrivial
-           (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
-       )
-fuseExample3 =
-  fTreeVToV
-    @( FilterTrivial
-         (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
-     )
-    $ filterTrivialFTreeV
-        @(FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
-        ( fuseFTreesTerm
-            (fuseExample example2)
-            (FCons @('IrrepTree 2) (konst 1) FNil)
-        )
+-- -- | Trivial (total-charge-0) sector of 'fuseExample2'.
+-- fuseExample3
+--   :: ToVFTrees
+--        ( FilterTrivial
+--            (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
+--        )
+-- fuseExample3 =
+--   fTreeVToV
+--     @( FilterTrivial
+--          (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
+--      )
+--     $ filterTrivialFTreeV
+--         @(FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
+--         ( fuseFTreesTerm
+--             (fuseExample example2)
+--             (FCons @('IrrepTree 2) (konst 1) FNil)
+--         )
 
--- | Unfused nested Kronecker @((½⊗½)⊗1)@.
-fuseExample4
-  :: ToVObj
-       ((((('Irrep 1) :⊗: ('Irrep 1))) :⊗: ('Irrep 2)))
-fuseExample4 = (konst 1 ⊗ konst 1) ⊗ konst 1
 
 -- | Endomorphism on leaf-½ Hom (singlet / triplet channels).
-f :: FTreeV (FuseFTrees (ObjFTrees ('Irrep 1)) (ObjFTrees ('Irrep 1)))
-f =
-  FCons @('From 0 '( 'IrrepTree 1, 'IrrepTree 1)) (konst 0.3) $
-    FCons @('From 2 '( 'IrrepTree 1, 'IrrepTree 1)) (konst 0.7) FNil
+f, g :: HomFused ('Irrep (Spin (1/2))) ('Irrep (Spin (1/2)))
+f = HomFused (makeFTrees (konst 0.3, vec (1, 2, 3)))
+g = HomFused (makeFTrees (konst 0.5, vec (1, 2, 3)))
 
-g :: FTreeV (FuseFTrees (ObjFTrees ('Irrep 1)) (ObjFTrees ('Irrep 1)))
-g =
-  FCons @('From 0 '( 'IrrepTree 1, 'IrrepTree 1)) (konst 0.5) $
-    FCons @('From 2 '( 'IrrepTree 1, 'IrrepTree 1)) (konst (-0.2)) FNil
+type Half = 'Irrep (Spin (1/2))
+type HalfTree = 'IrrepTree (Spin (1/2))
 
 -- | @g ∘ f@ spelled as the five Mac Lane morphisms in 'composeHomTrees'.
-composeFGSteps :: FTreeV (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1])
+composeFGSteps :: HomFused ('Irrep (Spin (1/2))) ('Irrep (Spin (1/2)))
 composeFGSteps =
-  let -- 1. @f ⊗ g@
-      step1 =
-        fuseFTreesTerm
-          @(FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1])
-          @(FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1])
-          f
-          g
-      -- 2. outer F: @(a*⊗b) ⊗ (b*⊗c) → a* ⊗ (b ⊗ (b*⊗c))@
-      step2 = fmoveOuterHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) step1
-      -- 3. @id ⊗ F@: @a* ⊗ (b ⊗ (b*⊗c)) → a* ⊗ ((b ⊗ b*) ⊗ c)@
-      step3 = fmoveInnerHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) step2
-      -- 4. @id ⊗ (cup ⊗ id)@: contract the middle Hom to @Unit@
-      step4 = cupTensorIdHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) step3
-      -- 5. @id ⊗ λ@: absorb @Unit@ on the left of @c@
-      step5 = unitorHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) step4
-   in step5
+  let 
+      step1 :: FTreeV (ObjTrees ((Half :⊗: Half) :⊗: (Half :⊗: Half)))
+      step1 =  fuseFTreesTerm (unHomFused f)  (unHomFused g)
+      step2 :: FTreeV (ObjTrees (Half :⊗: (Half :⊗: (Half :⊗: Half))))
+      step2 = fmoveOuterHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step1
+      step3 :: FTreeV (ObjTrees (Half :⊗: (Half :⊗: Half :⊗: Half)))
+      step3 = fmoveInnerHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step2
+      step4 :: FTreeV (ObjTrees (Half :⊗: ('Irrep 0 :⊗: Half)))
+      step4 = cupTensorIdHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step3
+      step5 :: FTreeV (ObjTrees (Half :⊗: Half))
+      step5 = unitorHom @'[ HalfTree] @'[ HalfTree] step4
+   in HomFused step5
+
+
+
+
+
+
+
+   
 
 -- | Right unitor absorbs @Unit@ on Dual-left HomUnfused (@m ⊗ 1 ≅ m@).
 runitMorTrivialOk :: Bool

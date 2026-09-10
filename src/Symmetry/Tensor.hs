@@ -9,10 +9,10 @@
 --
 -- @'Tensor' g r q@ is the __coalesced__ fused spine: each irrep label appears at
 -- most once, multiplicities summed, sectors sorted by irrep label. That is the
--- layout expected by 'IntertwinerG' \/ F-symbols (multiplicity = fusion-channel
+-- layout expected by flat CG / F-symbol oracles (multiplicity = fusion-channel
 -- space). The raw unfused CG branching before coalesce is 'TensorRaw'.
 --
--- Runtime fuse maps ('Symmetry.CG.SU2.fuseSU2Flat', U(1) forget) must emit this
+-- Runtime fuse maps ('Symmetry.CG.SU2.fuseSU2FlatSectors') must emit this
 -- same coalesced order.
 module Symmetry.Tensor
   ( Tensor

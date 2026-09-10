@@ -44,10 +44,8 @@ library
         Hom.Vec
         -- SU(2) CG / type-level helpers
         Symmetry.Utils
-        Symmetry.ChargeEq
         Symmetry.Group
         Symmetry.SU2
-        Symmetry.RepSingleton
         Symmetry.Tensor
         Symmetry.CG.SU2
     hs-source-dirs:   src
