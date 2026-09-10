@@ -24,6 +24,11 @@ procedural simulation that happens to compute the right numbers.
 - When code drifts from the math presentation, treat that as a design bug:
   missing combinator, wrong domain, or an invented wrapper—not something to
   paper over with more helpers.
+- Unfused cups use **right duals**: @ε : a ⊗ a* → I@ ('cupUnfusedObj'),
+  @η : I → a* ⊗ a@ ('capUnfusedObj'). Hom packing is Dual-left, so @id = η@.
+  Bridging @η@ to @ε@ needs an explicit braid (@swapMap@), not a silent type lie.
+- Fused 'HomFused' identity is @'idHomFTrees' (ObjRep a)@: position-diagonal
+  leaf ids on cartesian 'FuseRep' — not an 'Obj'-indexed method class.
 
 Anti-boilerplate, library-first constructors, and “don’t unpack buffers” below
 are consequences of this principle.
@@ -73,6 +78,9 @@ recursion scheme once and write a non-recursive algebra. Do not hand-roll
 - If a small idea needs a lot of plumbing, **stop and redesign**.
 - Do not invent parallel APIs that duplicate Fixed / General / Reference with
   slight renames.
+- In Hom / fusion-object code, import `Obj` constructors unqualified
+  (`Atom`, `(:⊗:)`, `(:⊕:)`) and write `'Atom j`, `a :⊗: b`, `a :⊕: b` —
+  not `'FObj.Atom` / `Tensor` / `Sum`.
 
 ### Call sites before names
 
@@ -80,6 +88,12 @@ Before exporting a helper, grep callers. If nothing in the production path uses
 it (only a smoke, or only the helper’s own round-trip test), **delete or inline**
 — do not keep a named API “for clarity.” Thin unwraps of an existing morphism
 (`case f x of …`) belong at the use site, not as a parallel entry point.
+Smoke-only adapters belong in `*.Smoke` / `*.Examples`, not in production modules.
+
+**Proactive (do not wait to be asked):** when a general form lands, delete the
+specialized synonym in the same edit (`idHomI` once `idHomFTrees` exists;
+`unitLunit` once `lunit` is in scope). One-use local helpers that only name a
+literal matrix / one-liner should be inlined at their single call site.
 
 ### Prefer library instances and constructors
 
@@ -94,6 +108,21 @@ hand-rolling:
 - Dual / metric structure: existing `InnerSpace` / `vectorConjugate` /
   `hermitianNorm`-style maps — do not invent domain-specific dual wrappers that
   restate those
+
+### No synonym wrappers for existing morphisms
+
+Do **not** export `foo = bar` renames of library / categorical morphisms
+(`unitLunit = lunit`, `unitRunit = runit`, …). Call `lunit` / `runit` /
+`lunitInv` / `runitInv` (or the class methods `idl` / `idr`) directly.
+
+A new name is warranted only when it **adds a constraint, law, or domain** the
+underlying name does not already express (e.g. `swap = braid` under
+`Symmetric`, not under bare `Braided`). Domain comments belong on the use site
+or on a real composition — not on a synonym.
+
+Duplicate definitions of the same unitor in a second module
+(`TensorNetwork.Categorical` vs `Categorical.Linear`) are the same smell:
+re-export or import; do not restate.
 
 ### Stay on the typed value; don’t unpack buffers
 
@@ -117,6 +146,11 @@ operation that has a single implementation. Prefer plain functions, rank-2
 arguments, existing schemes (`HMap` / `MapSU2Mult1`-style walkers), and
 `newtype` wrappers. Prefer **reusing** an existing class over inventing a new
 one.
+
+**OK:** empty-method classes that **bundle constraints** and carry **inductive
+instances** over a type-level tree (`KnownToVObj` over `Obj`: Atom / `:⊗:` /
+`:⊕:`). That is not OO — a `ConstraintKinds` synonym cannot hold those
+instances. Same idea as marker classes that add a law (`Symmetric`).
 
 ```haskell
 -- BAD: new class for one algebra on an HList walk

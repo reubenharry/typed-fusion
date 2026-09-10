@@ -8,7 +8,7 @@
 
 -- | Theory-parameterized fusion trees: @Norm@, @Fuse@, @Mult@ from @FuseN@.
 --
--- @Stabilize@ \/ @Mults@ \/ @Mult@-on-@Tensor@ walk @Irr t@, so they are for
+-- @Stabilize@ \/ @Mults@ \/ @Mult@-on-@:⊗:@ walk @Irr t@, so they are for
 -- 'FiniteIrr' theories only (Fib, Ising, …). Unbounded Nat labels (SU(2)) use
 -- 'ObjSpine' instead: FuseNorm → CollectSimples → coalesced 'Spine'.
 -- Rigid duals: 'DualObj' (via 'DualLab'); no @'Dual@ constructor on 'Obj'.
@@ -39,11 +39,11 @@ import GHC.TypeLits (CmpNat, Nat, type (*), type (+), type (-))
 -- Trees
 --------------------------------------------------------------------------------
 
--- | Formal objects: simples, tensor, binary sums.
+-- | Formal objects: simples (@'Atom@), tensor (@':⊗:'@), binary sums (@':⊕:'@).
 data Obj lab
   = Atom lab
-  | Tensor (Obj lab) (Obj lab)
-  | Sum (Obj lab) (Obj lab)
+  | Obj lab :⊗: Obj lab
+  | Obj lab :⊕: Obj lab
 
 --------------------------------------------------------------------------------
 -- Dual (rigid rewrite; no 'Dual' constructor)
@@ -53,26 +53,26 @@ data Obj lab
 -- distribute over sums. Eliminates duals rather than storing a @'Dual@ node.
 type family DualObj (t :: Type) (a :: Obj lab) :: Obj lab where
   DualObj t ('Atom j) = 'Atom (DualLab t j)
-  DualObj t ('Tensor a b) = 'Tensor (DualObj t b) (DualObj t a)
-  DualObj t ('Sum a b) = 'Sum (DualObj t a) (DualObj t b)
+  DualObj t ((a :⊗: b)) = ((DualObj t b) :⊗: (DualObj t a))
+  DualObj t ((a :⊕: b)) = ((DualObj t a) :⊕: (DualObj t b))
 
 --------------------------------------------------------------------------------
 -- Norm
 --------------------------------------------------------------------------------
 
 type family FlattenSum (a :: Obj lab) (b :: Obj lab) :: Obj lab where
-  FlattenSum ('Sum a b) c = FlattenSum a (FlattenSum b c)
-  FlattenSum a ('Sum b c) = 'Sum a (FlattenSum b c)
-  FlattenSum a b = 'Sum a b
+  FlattenSum ((a :⊕: b)) c = FlattenSum a (FlattenSum b c)
+  FlattenSum a ((b :⊕: c)) = (a :⊕: (FlattenSum b c))
+  FlattenSum a b = (a :⊕: b)
 
 -- | Distribute @⊗@ over @⊕@, right-flatten sums. Does /not/ apply @FuseN@.
 type family Norm (a :: Obj lab) :: Obj lab where
   Norm ('Atom s) = 'Atom s
-  Norm ('Tensor ('Sum a b) c) = Norm ('Sum ('Tensor a c) ('Tensor b c))
-  Norm ('Tensor a ('Sum b c)) = Norm ('Sum ('Tensor a b) ('Tensor a c))
-  Norm ('Tensor a b) = 'Tensor (Norm a) (Norm b)
-  Norm ('Sum ('Sum a b) c) = Norm ('Sum a ('Sum b c))
-  Norm ('Sum a b) = FlattenSum (Norm a) (Norm b)
+  Norm ((((a :⊕: b)) :⊗: c)) = Norm ((((a :⊗: c)) :⊕: ((b :⊗: c))))
+  Norm ((a :⊗: ((b :⊕: c)))) = Norm ((((a :⊗: b)) :⊕: ((a :⊗: c))))
+  Norm ((a :⊗: b)) = ((Norm a) :⊗: (Norm b))
+  Norm ((((a :⊕: b)) :⊕: c)) = Norm ((a :⊕: ((b :⊕: c))))
+  Norm ((a :⊕: b)) = FlattenSum (Norm a) (Norm b)
 
 --------------------------------------------------------------------------------
 -- FuseN → object
@@ -89,7 +89,7 @@ type family NOfList (c :: lab) (xs :: [(lab, Nat)]) :: Nat where
 
 type family ReplicateObj (n :: Nat) (a :: Obj lab) :: Obj lab where
   ReplicateObj 1 a = a
-  ReplicateObj n a = 'Sum a (ReplicateObj (n - 1) a)
+  ReplicateObj n a = (a :⊕: (ReplicateObj (n - 1) a))
 
 -- | Expand @FuseN@ entries to a right-nested sum of atoms (duplicates = multiplicity).
 type family AtomsFromN (ns :: [(lab, Nat)]) :: Obj lab where
@@ -108,7 +108,7 @@ type family FuseLeft
   (isUnit :: Bool) :: Obj lab where
   FuseLeft _t _u b 'True = b
   FuseLeft t u ('Atom b) 'False = AtomsFromN (FuseN t u b)
-  FuseLeft t u b 'False = FuseNorm t (Norm ('Tensor ('Atom u) b))
+  FuseLeft t u b 'False = FuseNorm t (Norm ((('Atom u) :⊗: b)))
 
 type family FuseRight
   (t :: Type)
@@ -117,26 +117,26 @@ type family FuseRight
   (isUnit :: Bool) :: Obj lab where
   FuseRight _t a _u 'True = a
   FuseRight t ('Atom a) u 'False = AtomsFromN (FuseN t a u)
-  FuseRight t a u 'False = FuseNorm t (Norm ('Tensor a ('Atom u)))
+  FuseRight t a u 'False = FuseNorm t (Norm ((a :⊗: ('Atom u))))
 
 type family FuseTensorPair (t :: Type) (a :: Obj lab) (b :: Obj lab) :: Obj lab where
   FuseTensorPair t ('Atom u) b =
     FuseLeft t u b (LabelEq u (UnitLab t))
   FuseTensorPair t a ('Atom u) =
     FuseRight t a u (LabelEq u (UnitLab t))
-  FuseTensorPair t a b = FuseNorm t (Norm ('Tensor a b))
+  FuseTensorPair t a b = FuseNorm t (Norm ((a :⊗: b)))
 
 -- | Fuse a tensor tree using @FuseN@ \/ unitors, then re-@Norm@.
 type family FuseTensor (t :: Type) (a :: Obj lab) :: Obj lab where
   FuseTensor _t ('Atom s) = 'Atom s
-  FuseTensor t ('Sum a b) = FlattenSum (FuseTensor t a) (FuseTensor t b)
-  FuseTensor t ('Tensor a b) =
+  FuseTensor t ((a :⊕: b)) = FlattenSum (FuseTensor t a) (FuseTensor t b)
+  FuseTensor t ((a :⊗: b)) =
     FuseTensorPair t (FuseTensor t a) (FuseTensor t b)
 
 type family FuseNorm (t :: Type) (a :: Obj lab) :: Obj lab where
   FuseNorm _t ('Atom s) = 'Atom s
-  FuseNorm t ('Tensor a b) = FuseTensor t ('Tensor a b)
-  FuseNorm t ('Sum a b) = FlattenSum (FuseNorm t a) (FuseNorm t b)
+  FuseNorm t ((a :⊗: b)) = FuseTensor t ((a :⊗: b))
+  FuseNorm t ((a :⊕: b)) = FlattenSum (FuseNorm t a) (FuseNorm t b)
 
 --------------------------------------------------------------------------------
 -- Stabilize (Irr order)
@@ -148,10 +148,10 @@ type family AppendObj (xs :: [Obj lab]) (ys :: [Obj lab]) :: [Obj lab] where
 
 type family CollectSimples (t :: Type) (a :: Obj lab) :: [Obj lab] where
   CollectSimples _t ('Atom s) = '[ 'Atom s]
-  CollectSimples t ('Sum a b) =
+  CollectSimples t ((a :⊕: b)) =
     AppendObj (CollectSimples t a) (CollectSimples t b)
-  CollectSimples t ('Tensor a b) =
-    CollectSimples t (FuseTensor t ('Tensor a b))
+  CollectSimples t ((a :⊗: b)) =
+    CollectSimples t (FuseTensor t ((a :⊗: b)))
 
 type family FilterLab (s :: lab) (xs :: [Obj lab]) :: [Obj lab] where
   FilterLab _s '[] = '[]
@@ -165,7 +165,7 @@ type family SortByIrr (irr :: [lab]) (xs :: [Obj lab]) :: [Obj lab] where
 
 type family SpineFrom (xs :: [Obj lab]) :: Obj lab where
   SpineFrom '[x] = x
-  SpineFrom (x ': y ': ys) = 'Sum x (SpineFrom (y ': ys))
+  SpineFrom (x ': y ': ys) = (x :⊕: (SpineFrom (y ': ys)))
 
 type family Stabilize (t :: Type) (a :: Obj lab) :: Obj lab where
   Stabilize t a = SpineFrom (SortByIrr (Irr t) (CollectSimples t a))
@@ -218,8 +218,8 @@ type family DeltaLab (s :: lab) (r :: lab) :: Nat where
 -- | @n_s(X)@: multiplicity of simple @s@ in object @X@.
 type family Mult (t :: Type) (s :: lab) (a :: Obj lab) :: Nat where
   Mult _t s ('Atom r) = DeltaLab s r
-  Mult t s ('Sum a b) = Mult t s a + Mult t s b
-  Mult t s ('Tensor a b) = MultTensor t s a b (Irr t)
+  Mult t s ((a :⊕: b)) = Mult t s a + Mult t s b
+  Mult t s ((a :⊗: b)) = MultTensor t s a b (Irr t)
 
 type family MultTensor
   (t :: Type)

@@ -53,7 +53,7 @@ dumpNZ label tv = do
       SI {} -> False
     isCupKeep _ = False
 
-f22 :: RepV Hom22
+f22 :: RepV (FuseRep '[ 'I 2] '[ 'I 2])
 f22 =
   RCons @('From 0 '( 'I 2, 'I 2)) (konst 0.2) $
     RCons @('From 2 '( 'I 2, 'I 2)) (konst 0.3) $
@@ -61,23 +61,23 @@ f22 =
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @Hom22 @Hom22 f22 (idHomI @2)
-      outerFid = fmoveOuterHom @I2 @I2 @I2 domFid
-      cupFid = fmoveInnerHom @I2 @I2 @I2 outerFid
+  let domFid = fuseRepTerm @(FuseRep '[ 'I 2] '[ 'I 2]) @(FuseRep '[ 'I 2] '[ 'I 2]) f22 (idHomFTrees @('[ 'I 2]))
+      outerFid = fmoveOuterHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) domFid
+      cupFid = fmoveInnerHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) outerFid
       outFid =
-        unitorHom @I2 @I2
-          (cupTensorIdHom @I2 @I2 @I2 cupFid)
-      domIdf = fuseRepTerm @Hom22 @Hom22 (idHomI @2) f22
-      outerIdf = fmoveOuterHom @I2 @I2 @I2 domIdf
-      cupIdf = fmoveInnerHom @I2 @I2 @I2 outerIdf
+        unitorHom @('[ 'I 2]) @('[ 'I 2])
+          (cupTensorIdHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) cupFid)
+      domIdf = fuseRepTerm @(FuseRep '[ 'I 2] '[ 'I 2]) @(FuseRep '[ 'I 2] '[ 'I 2]) (idHomFTrees @('[ 'I 2])) f22
+      outerIdf = fmoveOuterHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) domIdf
+      cupIdf = fmoveInnerHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) outerIdf
       outIdf =
-        unitorHom @I2 @I2
-          (cupTensorIdHom @I2 @I2 @I2 cupIdf)
+        unitorHom @('[ 'I 2]) @('[ 'I 2])
+          (cupTensorIdHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) cupIdf)
   dumpNZ "outer Fid (Hom-pres)" outerFid
   dumpNZ "cupR Fid" cupFid
-  putStrLn $ "outFid = " ++ show (VS.toList (repVToExpandedFlat @Hom22 outFid))
+  putStrLn $ "outFid = " ++ show (VS.toList (repVToExpandedFlat @(FuseRep '[ 'I 2] '[ 'I 2]) outFid))
   putStrLn ""
   dumpNZ "outer Idf (Hom-pres)" outerIdf
   dumpNZ "cupR Idf" cupIdf
-  putStrLn $ "outIdf = " ++ show (VS.toList (repVToExpandedFlat @Hom22 outIdf))
-  putStrLn $ "f22    = " ++ show (VS.toList (repVToExpandedFlat @Hom22 f22))
+  putStrLn $ "outIdf = " ++ show (VS.toList (repVToExpandedFlat @(FuseRep '[ 'I 2] '[ 'I 2]) outIdf))
+  putStrLn $ "f22    = " ++ show (VS.toList (repVToExpandedFlat @(FuseRep '[ 'I 2] '[ 'I 2]) f22))

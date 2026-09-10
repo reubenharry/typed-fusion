@@ -434,24 +434,24 @@ disassociateBlocks =
 -- Named morphisms
 --------------------------------------------------------------------------------
 
-cup :: Fib ('Atom 'One) ('Tensor ('Atom 'Tau) ('Atom 'Tau))
+cup :: Fib ('Atom 'One) ((('Atom 'Tau) :⊗: ('Atom 'Tau)))
 cup =
   Fib $
     HomCons
       (fromList [phi] :: M 1 1)
       (HomCons (konst 0 :: M 1 0) HomNil)
 
-cap :: Fib ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Atom 'One)
+cap :: Fib ((('Atom 'Tau) :⊗: ('Atom 'Tau))) ('Atom 'One)
 cap =
   Fib $
     HomCons
       (fromList [1] :: M 1 1)
       (HomCons (konst 0 :: M 0 1) HomNil)
 
-fuse :: Fib ('Tensor ('Atom 'Tau) ('Atom 'Tau)) ('Sum ('Atom 'One) ('Atom 'Tau))
+fuse :: Fib ((('Atom 'Tau) :⊗: ('Atom 'Tau))) ((('Atom 'One) :⊕: ('Atom 'Tau)))
 fuse = Fib idHom
 
-split :: Fib ('Sum ('Atom 'One) ('Atom 'Tau)) ('Tensor ('Atom 'Tau) ('Atom 'Tau))
+split :: Fib ((('Atom 'One) :⊕: ('Atom 'Tau))) ((('Atom 'Tau) :⊗: ('Atom 'Tau)))
 split = Fib idHom
 
 eqFib :: (KnownMult a, KnownMult b, FibHom a b) => Fib a b -> Fib a b -> Bool
@@ -488,48 +488,48 @@ instance Category Fib where
     -> Fib a c
   (.) (Fib g) (Fib f) = Fib (composeHom g f)
 
-instance PFunctor Tensor Fib Fib where
+instance PFunctor (:⊗:) Fib Fib where
   first
     :: forall a b c
      . ( Object Fib a
        , Object Fib b
        , Object Fib c
-       , Object Fib (Tensor a c)
-       , Object Fib (Tensor b c)
+       , Object Fib (a :⊗: c)
+       , Object Fib (b :⊗: c)
        )
     => Fib a b
-    -> Fib (Tensor a c) (Tensor b c)
+    -> Fib (a :⊗: c) (b :⊗: c)
   first f = bimap f (id :: Fib c c)
 
-instance QFunctor Tensor Fib Fib where
+instance QFunctor (:⊗:) Fib Fib where
   second
     :: forall a b c
      . ( Object Fib a
        , Object Fib b
        , Object Fib c
-       , Object Fib (Tensor c a)
-       , Object Fib (Tensor c b)
+       , Object Fib (c :⊗: a)
+       , Object Fib (c :⊗: b)
        )
     => Fib a b
-    -> Fib (Tensor c a) (Tensor c b)
+    -> Fib (c :⊗: a) (c :⊗: b)
   second g = bimap (id :: Fib c c) g
 
-instance Bifunctor Tensor Fib Fib Fib where
+instance Bifunctor (:⊗:) Fib Fib Fib where
   bimap
     :: forall a b c d
      . ( Object Fib a
        , Object Fib b
        , Object Fib c
        , Object Fib d
-       , Object Fib (Tensor a c)
-       , Object Fib (Tensor b d)
+       , Object Fib (a :⊗: c)
+       , Object Fib (b :⊗: d)
        , PackHom (Mults FibTh a) (Mults FibTh b)
        , PackHom (Mults FibTh c) (Mults FibTh d)
-       , PackHom (Mults FibTh (Tensor a c)) (Mults FibTh (Tensor b d))
+       , PackHom (Mults FibTh (a :⊗: c)) (Mults FibTh (b :⊗: d))
        )
     => Fib a b
     -> Fib c d
-    -> Fib (Tensor a c) (Tensor b d)
+    -> Fib (a :⊗: c) (b :⊗: d)
   bimap (Fib f) (Fib g) =
     Fib $
       packHom $
@@ -542,21 +542,21 @@ instance Bifunctor Tensor Fib Fib Fib where
           (unpackHom f)
           (unpackHom g)
 
-instance Associative Fib Tensor where
+instance Associative Fib (:⊗:) where
   associate
     :: forall a b c
      . ( Object Fib a
        , Object Fib b
        , Object Fib c
-       , Object Fib (Tensor a b)
-       , Object Fib (Tensor b c)
-       , Object Fib (Tensor (Tensor a b) c)
-       , Object Fib (Tensor a (Tensor b c))
+       , Object Fib (a :⊗: b)
+       , Object Fib (b :⊗: c)
+       , Object Fib ((a :⊗: b) :⊗: c)
+       , Object Fib (a :⊗: (b :⊗: c))
        , PackHom
-           (Mults FibTh (Tensor (Tensor a b) c))
-           (Mults FibTh (Tensor a (Tensor b c)))
+           (Mults FibTh ((a :⊗: b) :⊗: c))
+           (Mults FibTh (a :⊗: (b :⊗: c)))
        )
-    => Fib (Tensor (Tensor a b) c) (Tensor a (Tensor b c))
+    => Fib ((a :⊗: b) :⊗: c) (a :⊗: (b :⊗: c))
   associate =
     Fib $
       packHom $
@@ -571,15 +571,15 @@ instance Associative Fib Tensor where
      . ( Object Fib a
        , Object Fib b
        , Object Fib c
-       , Object Fib (Tensor a b)
-       , Object Fib (Tensor b c)
-       , Object Fib (Tensor (Tensor a b) c)
-       , Object Fib (Tensor a (Tensor b c))
+       , Object Fib (a :⊗: b)
+       , Object Fib (b :⊗: c)
+       , Object Fib ((a :⊗: b) :⊗: c)
+       , Object Fib (a :⊗: (b :⊗: c))
        , PackHom
-           (Mults FibTh (Tensor a (Tensor b c)))
-           (Mults FibTh (Tensor (Tensor a b) c))
+           (Mults FibTh (a :⊗: (b :⊗: c)))
+           (Mults FibTh ((a :⊗: b) :⊗: c))
        )
-    => Fib (Tensor a (Tensor b c)) (Tensor (Tensor a b) c)
+    => Fib (a :⊗: (b :⊗: c)) ((a :⊗: b) :⊗: c)
   disassociate =
     Fib $
       packHom $
@@ -589,31 +589,31 @@ instance Associative Fib Tensor where
           [natI @(MultOne b), natI @(MultTau b)]
           [natI @(MultOne c), natI @(MultTau c)]
 
-instance Monoidal Fib Tensor where
-  type Id Fib Tensor = 'Atom 'One
+instance Monoidal Fib (:⊗:) where
+  type Id Fib (:⊗:) = 'Atom 'One
 
-  idl :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor ('Atom 'One) a)) => Fib (Tensor ('Atom 'One) a) a
+  idl :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib ('Atom 'One :⊗: a)) => Fib ('Atom 'One :⊗: a) a
   idl = Fib idHom
 
-  idr :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor a ('Atom 'One))) => Fib (Tensor a ('Atom 'One)) a
+  idr :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (a :⊗: 'Atom 'One)) => Fib (a :⊗: 'Atom 'One) a
   idr = Fib idHom
 
-  coidl :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor ('Atom 'One) a)) => Fib a (Tensor ('Atom 'One) a)
+  coidl :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib ('Atom 'One :⊗: a)) => Fib a ('Atom 'One :⊗: a)
   coidl = Fib idHom
 
-  coidr :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (Tensor a ('Atom 'One))) => Fib a (Tensor a ('Atom 'One))
+  coidr :: forall a. (Object Fib a, Object Fib ('Atom 'One), Object Fib (a :⊗: 'Atom 'One)) => Fib a (a :⊗: 'Atom 'One)
   coidr = Fib idHom
 
-instance Braided Fib Tensor where
+instance Braided Fib (:⊗:) where
   braid
     :: forall a b
      . ( Object Fib a
        , Object Fib b
-       , Object Fib (Tensor a b)
-       , Object Fib (Tensor b a)
-       , PackHom (Mults FibTh (Tensor a b)) (Mults FibTh (Tensor b a))
+       , Object Fib (a :⊗: b)
+       , Object Fib (b :⊗: a)
+       , PackHom (Mults FibTh (a :⊗: b)) (Mults FibTh (b :⊗: a))
        )
-    => Fib (Tensor a b) (Tensor b a)
+    => Fib (a :⊗: b) (b :⊗: a)
   braid =
     Fib $
       packHom $

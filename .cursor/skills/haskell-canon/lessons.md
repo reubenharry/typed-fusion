@@ -91,6 +91,9 @@ harness:
    - ad: `grad` / `jacobian` / `diff` + suffixes `'`, `With`, `F`, `s`, `T`, `0`
    - discrimination: `group` / `groupWith`, `sort` / `sortWith`
    - Readers learn one grammar and predict the rest
+   - **Anti-pattern:** synonym wrappers (`unitLunit = lunit`) or a second module
+     restating the same unitors — call / re-export the existing name unless the
+     new binding adds a constraint or law
 
 4. **Final encodings for composable structure**
    - discrimination: `Group` / `Sort` as higher-rank newtypes; instances via

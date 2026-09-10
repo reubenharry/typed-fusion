@@ -25,14 +25,13 @@ import Control.Arrow.Constrained (arr, ($))
 import Control.Category.Constrained ((.))
 import Data.Coerce (coerce)
 import Data.Complex (Complex)
-import Data.VectorSpace (Scalar)
+import Data.VectorSpace (InnerSpace ((<.>)), Scalar)
 import Math.LinearMap.Category
   ( LinearFunction
   , LinearSpace (..)
   , LSpace
   , Tensor (..)
   , TensorSpace (..)
-  , applyDualVector
   , pattern LinearFunction
   , tensorOfMaps
   , type (+>)
@@ -80,21 +79,16 @@ rassocMap
   => ((u ⊗ v) ⊗ w) +> (u ⊗ (v ⊗ w))
 rassocMap = arr (LinearFunction (rassocTensor -+$=>))
 
-oneC1 :: C 1
-oneC1 = konst 1
-
-scalarizeC1 :: LinearFunction ℂ (C 1) ℂ
-scalarizeC1 = applyDualVector -+$> oneC1
-
+-- | Right unitor @v ⊗ C 1 → v@: @C 1 ≅ ℂ@ via the single amplitude (@konst@ inverse).
 runit
   :: forall v. (LinearSpace v, Scalar v ~ ℂ)
   => (v ⊗ C 1) +> v
-runit = arr (fromFlatTensor . (fmapTensor -+$> scalarizeC1))
+runit = arr (fromFlatTensor . (fmapTensor -+$> LinearFunction (konst 1 <.>)))
 
 runitInv
   :: forall v. (LinearSpace v, Scalar v ~ ℂ)
   => v +> (v ⊗ C 1)
-runitInv = arr (LinearFunction (\x -> x ⊗ oneC1))
+runitInv = arr (LinearFunction (\x -> x ⊗ konst 1))
 
 lunit
   :: forall v. (LinearSpace v, Scalar v ~ ℂ, TensorSpace (C 1 ⊗ v))

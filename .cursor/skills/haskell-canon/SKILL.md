@@ -35,7 +35,8 @@ Lessons from libraries we treat as style references. Full notes live in
    ([Haskell Guide](https://haskell-docs.netlify.app/))
 9. **Call sites / library first?** Grep callers before exporting; prefer
    linearmap/hmatrix constructors over buffer unpack or parallel wrappers
-   (see Anti-boilerplate in `haskell-practices.mdc`)
+   (see Anti-boilerplate in `haskell-practices.mdc`). No synonym wrappers for
+   existing morphisms (`foo = lunit`); a new name needs a new constraint/law
 
 ## Quantum mapping (short)
 

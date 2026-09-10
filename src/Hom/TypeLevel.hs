@@ -39,8 +39,7 @@ module Hom.TypeLevel
   ) where
 
 import Data.Kind (Type)
-import Fusion.Obj (Norm, Obj, ObjSpine)
-import qualified Fusion.Obj as FObj
+import Fusion.Obj (Norm, Obj (Atom, (:⊗:), (:⊕:)), ObjSpine)
 import Fusion.SU2 (SU2Th)
 import Fusion.Unbounded (Spine)
 import Symmetry.Tensor (TensorIrrepRepSU2)
@@ -59,15 +58,15 @@ type family IrrepDim (j :: Nat) :: Nat where
   IrrepDim j = j + 1
 
 --------------------------------------------------------------------------------
--- Obj spaces (true unfused: Tensor = Kronecker, Sum = pair)
+-- Obj spaces (true unfused: :⊗: = Kronecker, :⊕: = pair)
 --------------------------------------------------------------------------------
 
 -- | Interpret an @Obj@ tree as a nested space (no CG fuse).
 -- Atoms are bare irrep spaces @C (j+1)@; the monoidal unit is @C 1@.
 type family ToVObj (a :: Obj Nat) :: Type where
-  ToVObj ('FObj.Atom j) = C (IrrepDim j)
-  ToVObj ('FObj.Tensor a b) = ToVObj a ⊗ ToVObj b
-  ToVObj ('FObj.Sum a b) = (ToVObj a, ToVObj b)
+  ToVObj ('Atom j) = C (IrrepDim j)
+  ToVObj ((a :⊗: b)) = ToVObj a ⊗ ToVObj b
+  ToVObj ((a :⊕: b)) = (ToVObj a, ToVObj b)
 
 --------------------------------------------------------------------------------
 -- Skeletal objects → bare FTrees (HomFused object index)
@@ -99,14 +98,14 @@ type ObjRep (a :: Obj Nat) = SpineRep (ObjSpineSU2 a)
 -- | Interpret an @Obj@ tree as a genealogy 'FTrees'.
 --
 -- First 'Norm' (distribute @⊗@ over @⊕@, flatten sums), then:
--- @'Atom j ↦ '[ 'I j]@, @'Tensor ↦ 'FuseRep@, @'Sum ↦ 'Append@.
+-- @'Atom j ↦ '[ 'I j]@, @':⊗:' ↦ 'FuseRep@, @':⊕:' ↦ 'Append@.
 type ObjTrees (a :: Obj Nat) = ObjTreesGo (Norm a)
 
 type family ObjTreesGo (a :: Obj Nat) :: FTrees where
-  ObjTreesGo ('FObj.Atom j) = '[ 'I j]
-  ObjTreesGo ('FObj.Tensor a b) =
+  ObjTreesGo ('Atom j) = '[ 'I j]
+  ObjTreesGo ((a :⊗: b)) =
     FuseRep (ObjTreesGo a) (ObjTreesGo b)
-  ObjTreesGo ('FObj.Sum a b) =
+  ObjTreesGo ((a :⊕: b)) =
     Append (ObjTreesGo a) (ObjTreesGo b)
 
 --------------------------------------------------------------------------------

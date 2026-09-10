@@ -16,6 +16,7 @@
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{- HLINT ignore "Eta reduce" -}
 
 -- | Term-level symbolic SU(2): cups, Hom, Mac Lane compose.
 --
@@ -33,7 +34,7 @@ module Hom.Core where
 import Data.Complex (Complex ((:+)), conjugate, magnitude, realPart)
 import Data.Proxy (Proxy (..))
 import Data.Type.Equality ((:~:) (Refl))
-import Data.VectorSpace (AdditiveGroup (zeroV, (^-^)), InnerSpace ((<.>)), Scalar, VectorSpace ((*^)))
+import Data.VectorSpace (InnerSpace ((<.>)), Scalar, VectorSpace ((*^)))
 import GHC.TypeLits (KnownNat, Nat, sameNat, type (+))
 import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..))
@@ -41,8 +42,7 @@ import Categorical.Associative (Associative (..))
 import Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
 import Categorical.Braided (Braided (..))
 import Categorical.Monoidal (Monoidal (..))
-import Fusion.Obj (Obj)
-import qualified Fusion.Obj as FObj
+import Fusion.Obj (Obj (Atom, (:⊗:), (:⊕:)))
 import Hom.Expr
 import Hom.FMove
 import Hom.RepV
@@ -64,9 +64,7 @@ import Math.LinearMap.Category.Backend.HMatrix ()
 import Math.LinearMap.Category.Instances ()
 import Math.LinearMap.Category.Class (LinearSpace, asTensor, fromTensor)
 import Math.LinearMap.Coercion ((-+$=>))
-import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Numeric.LinearAlgebra.Static (C, konst)
-import qualified Data.Vector.Storable as VS
 import Categorical.Linear
   ( lunit
   , lunitInv
@@ -84,13 +82,9 @@ import Prelude hiding (id, (.), ($))
 -- Unit packaging + fused cups
 --------------------------------------------------------------------------------
 
--- | Unit amplitude as @ToVObj ('Atom 0)@ (= @C 1@).
-unitToVFromScalar :: Complex Double -> C 1
-unitToVFromScalar s = konst s
-
 -- | Read the amplitude from @C 1@ by pairing against @1@.
 unitToVScalar :: C 1 -> Complex Double
-unitToVScalar u = (konst 1 :: C 1) <.> u
+unitToVScalar = (konst 1 <.>)
 
 --------------------------------------------------------------------------------
 -- Unfused composition (compact closed on Obj / HomUnfused)
@@ -102,7 +96,7 @@ unitToVScalar u = (konst 1 :: C 1) <.> u
 --------------------------------------------------------------------------------
 
 -- | Unfused morphisms @a → b@: Dual-left packing on tree spaces
--- @Dual(ToVObj a) ⊗ ToVObj b@ (@'Tensor@ = Kronecker).
+-- @Dual(ToVObj a) ⊗ ToVObj b@ (linearmap Kronecker packing).
 newtype HomUnfused (a :: Obj Nat) (b :: Obj Nat) = HomUnfused
   { unHomUnfused :: DualVector (ToVObj a) ⊗ ToVObj b }
 
@@ -118,49 +112,16 @@ newtype HomFused (a :: Obj Nat) (b :: Obj Nat) = HomFused
 newtype HomInter (a :: Obj Nat) (b :: Obj Nat) = HomInter
   { unHomInter :: RepV (FilterTrivial (FuseRep (ObjRep a) (ObjRep b))) }
 
--- | Left unitor @C 1 ⊗ v → v@ (monoidal unit = @ToVObj (Atom 0)@).
-unitLunit
-  :: forall v
-   . ( LinearSpace v
-     , Scalar v ~ Complex Double
-     , TensorSpace (C 1 ⊗ v)
-     )
-  => (C 1 ⊗ v) +> v
-unitLunit = lunit
-
--- | Inverse of 'unitLunit': @v → C 1 ⊗ v@.
-unitLcounit
-  :: forall v
-   . ( LinearSpace v
-     , Scalar v ~ Complex Double
-     , TensorSpace (C 1 ⊗ v)
-     )
-  => v +> (C 1 ⊗ v)
-unitLcounit = lunitInv
-
--- | Right unitor @v ⊗ C 1 → v@.
-unitRunit
-  :: forall v
-   . ( LinearSpace v
-     , Scalar v ~ Complex Double
-     )
-  => (v ⊗ C 1) +> v
-unitRunit = runit
-
--- | Inverse of 'unitRunit': @v → v ⊗ C 1@.
-unitRcounit
-  :: forall v
-   . ( LinearSpace v
-     , Scalar v ~ Complex Double
-     )
-  => v +> (v ⊗ C 1)
-unitRcounit = runitInv
-
 --------------------------------------------------------------------------------
 -- True unfused Hom on Obj trees (ToVObj / Dual-left Hom)
 --------------------------------------------------------------------------------
 
 -- | Object spaces for 'HomUnfused': 'ToVObj' is a nested Kronecker / pair space.
+--
+-- Empty methods: this is a constraint bundle. The three instances induct over
+-- 'Obj' so callers can write @KnownToVObj a@ instead of repeating the
+-- 'LinearSpace' \/ 'TensorSpace' \/ scalar equalities for every tree shape.
+-- (A 'ConstraintKinds' synonym cannot carry those inductive instances.)
 class
   ( LinearSpace (ToVObj a)
   , LinearSpace (DualVector (ToVObj a))
@@ -168,8 +129,9 @@ class
   , Scalar (DualVector (ToVObj a)) ~ Complex Double
   , TensorSpace (ToVObj a)
   , TensorSpace (DualVector (ToVObj a))
-  , TensorSpace ((ToVObj a ⊗ DualVector (ToVObj a)))
-  , TensorSpace (ToVObj ('FObj.Atom 0))
+  , TensorSpace (ToVObj a ⊗ DualVector (ToVObj a))
+  , TensorSpace (DualVector (ToVObj a) ⊗ ToVObj a)
+  , TensorSpace (ToVObj ('Atom 0))
   ) =>
   KnownToVObj (a :: Obj Nat)
 
@@ -177,39 +139,32 @@ instance
   ( KnownNat j
   , KnownNat (IrrepDim j)
   ) =>
-  KnownToVObj ('FObj.Atom j)
+  KnownToVObj ('Atom j)
 
-instance (KnownToVObj a, KnownToVObj b) => KnownToVObj ('FObj.Tensor a b)
+instance (KnownToVObj a, KnownToVObj b) => KnownToVObj (a :⊗: b)
 
-instance (KnownToVObj a, KnownToVObj b) => KnownToVObj ('FObj.Sum a b)
+instance (KnownToVObj a, KnownToVObj b) => KnownToVObj (a :⊕: b)
 
--- | Unfused evaluation @ε : a ⊗ a* → 𝟙@ on tree spaces.
+-- | Unfused evaluation @ε : a ⊗ a* → 𝟙@ (right dual).
 cupUnfusedObj
   :: forall a
    . KnownToVObj a
   => (ToVObj a ⊗ DualVector (ToVObj a))
-  -> ToVObj ('FObj.Atom 0)
+  -> ToVObj ('Atom 0)
 cupUnfusedObj t =
-  unitToVFromScalar
+  konst
     ( getLinearFunction
         trace
         (fromTensor -+$=> (swapMap $ t))
     )
 
--- | Unfused coevaluation @η : 𝟙 → a ⊗ a*@.
+-- | Unfused coevaluation @η : 𝟙 → a* ⊗ a@ (right dual; Hom packing).
 capUnfusedObj
   :: forall a
    . KnownToVObj a
-  => ToVObj ('FObj.Atom 0)
-  -> (ToVObj a ⊗ DualVector (ToVObj a))
-capUnfusedObj u = unitToVScalar u *^ idTensor @(ToVObj a)
-
--- | Identity Hom element on an Obj tree.
-idMorObj
-  :: forall a
-   . KnownToVObj a
-  => (DualVector (ToVObj a) ⊗ ToVObj a)
-idMorObj = swapMap $ capUnfusedObj @a (unitToVFromScalar 1)
+  => ToVObj ('Atom 0)
+  -> (DualVector (ToVObj a) ⊗ ToVObj a)
+capUnfusedObj u = unitToVScalar u *^ (swapMap $ idTensor @(ToVObj a))
 
 assocComposeObj
   :: forall a b c
@@ -235,7 +190,7 @@ cupTensorIdComposeObj
      , KnownToVObj c
      )
   => DualVector (ToVObj a) ⊗ ((ToVObj b ⊗ DualVector (ToVObj b)) ⊗ ToVObj c)
-  -> DualVector (ToVObj a) ⊗ (ToVObj ('FObj.Atom 0) ⊗ ToVObj c)
+  -> DualVector (ToVObj a) ⊗ (ToVObj ('Atom 0) ⊗ ToVObj c)
 cupTensorIdComposeObj t =
   (id ⊗^ (arr (LinearFunction (cupUnfusedObj @b)) ⊗^ id)) $ t
 
@@ -244,10 +199,10 @@ unitorComposeObj
    . ( KnownToVObj a
      , KnownToVObj c
      )
-  => DualVector (ToVObj a) ⊗ (ToVObj ('FObj.Atom 0) ⊗ ToVObj c)
+  => DualVector (ToVObj a) ⊗ (ToVObj ('Atom 0) ⊗ ToVObj c)
   -> (DualVector (ToVObj a) ⊗ ToVObj c)
 unitorComposeObj t =
-  (id ⊗^ unitLunit @(ToVObj c)) $ t
+  (id ⊗^ lunit @(ToVObj c)) $ t
 
 -- | Unfused Hom composition: apply Mac Lane ladder once to @f ⊗ g@.
 -- @λ ∘ (ε⊗id) ∘ α@.
@@ -265,7 +220,7 @@ composeMorObj
   -> (DualVector (ToVObj b) ⊗ ToVObj c)
   -> (DualVector (ToVObj a) ⊗ ToVObj c)
 composeMorObj f g =
-  ( (id ⊗^ unitLunit @(ToVObj c))
+  ( (id ⊗^ lunit @(ToVObj c))
       . (id ⊗^ (arr (LinearFunction (cupUnfusedObj @b)) ⊗^ id))
       . (id ⊗^ lassocMap @(ToVObj b) @(DualVector (ToVObj b)) @(ToVObj c))
       . rassocMap
@@ -283,7 +238,7 @@ instance Category HomUnfused where
   type Object HomUnfused a = KnownToVObj a
 
   id :: forall a. Object HomUnfused a => HomUnfused a a
-  id = HomUnfused (idMorObj @a)
+  id = HomUnfused (capUnfusedObj @a (konst 1))
 
   (.)
     :: forall a b c
@@ -294,71 +249,71 @@ instance Category HomUnfused where
   HomUnfused g . HomUnfused f =
     HomUnfused (composeMorObj @a @b @c f g)
 
-instance PFunctor FObj.Tensor HomUnfused HomUnfused where
+instance PFunctor (:⊗:) HomUnfused HomUnfused where
   first
     :: forall a b c
      . ( Object HomUnfused a
        , Object HomUnfused b
        , Object HomUnfused c
-       , Object HomUnfused (FObj.Tensor a c)
-       , Object HomUnfused (FObj.Tensor b c)
+       , Object HomUnfused (a :⊗: c)
+       , Object HomUnfused (b :⊗: c)
        )
     => HomUnfused a b
-    -> HomUnfused (FObj.Tensor a c) (FObj.Tensor b c)
+    -> HomUnfused (a :⊗: c) (b :⊗: c)
   first (HomUnfused f) =
-    let m :: ToVObj (FObj.Tensor a c) +> ToVObj (FObj.Tensor b c)
+    let m :: ToVObj (a :⊗: c) +> ToVObj (b :⊗: c)
         m = (fromTensor -+$=> f) ⊗^ id
      in HomUnfused (asTensor -+$=> m)
 
-instance QFunctor FObj.Tensor HomUnfused HomUnfused where
+instance QFunctor (:⊗:) HomUnfused HomUnfused where
   second
     :: forall a b c
      . ( Object HomUnfused a
        , Object HomUnfused b
        , Object HomUnfused c
-       , Object HomUnfused (FObj.Tensor c a)
-       , Object HomUnfused (FObj.Tensor c b)
+       , Object HomUnfused (c :⊗: a)
+       , Object HomUnfused (c :⊗: b)
        )
     => HomUnfused a b
-    -> HomUnfused (FObj.Tensor c a) (FObj.Tensor c b)
+    -> HomUnfused (c :⊗: a) (c :⊗: b)
   second (HomUnfused g) =
-    let m :: ToVObj (FObj.Tensor c a) +> ToVObj (FObj.Tensor c b)
+    let m :: ToVObj (c :⊗: a) +> ToVObj (c :⊗: b)
         m = id ⊗^ (fromTensor -+$=> g)
      in HomUnfused (asTensor -+$=> m)
 
 -- | @bimap f g@ is the Kronecker product of the underlying linear maps,
 -- packed Dual-left: @(unpack f) ⊗^ (unpack g)@.
-instance Bifunctor FObj.Tensor HomUnfused HomUnfused HomUnfused where
+instance Bifunctor (:⊗:) HomUnfused HomUnfused HomUnfused where
   bimap
     :: forall a b c d
      . ( Object HomUnfused a
        , Object HomUnfused b
        , Object HomUnfused c
        , Object HomUnfused d
-       , Object HomUnfused (FObj.Tensor a c)
-       , Object HomUnfused (FObj.Tensor b d)
+       , Object HomUnfused (a :⊗: c)
+       , Object HomUnfused (b :⊗: d)
        )
     => HomUnfused a b
     -> HomUnfused c d
-    -> HomUnfused (FObj.Tensor a c) (FObj.Tensor b d)
+    -> HomUnfused (a :⊗: c) (b :⊗: d)
   bimap (HomUnfused f) (HomUnfused g) =
-    let m :: ToVObj (FObj.Tensor a c) +> ToVObj (FObj.Tensor b d)
+    let m :: ToVObj (a :⊗: c) +> ToVObj (b :⊗: d)
         m = (fromTensor -+$=> f) ⊗^ (fromTensor -+$=> g)
      in HomUnfused (asTensor -+$=> m)
 
 -- | Object associator is linearmap @α@ (Kronecker reassociation), packed as Hom.
-instance Associative HomUnfused FObj.Tensor where
+instance Associative HomUnfused (:⊗:) where
   associate
     :: forall a b c
      . ( Object HomUnfused a
        , Object HomUnfused b
        , Object HomUnfused c
-       , Object HomUnfused (FObj.Tensor a b)
-       , Object HomUnfused (FObj.Tensor b c)
-       , Object HomUnfused (FObj.Tensor (FObj.Tensor a b) c)
-       , Object HomUnfused (FObj.Tensor a (FObj.Tensor b c))
+       , Object HomUnfused (a :⊗: b)
+       , Object HomUnfused (b :⊗: c)
+       , Object HomUnfused ((a :⊗: b) :⊗: c)
+       , Object HomUnfused (a :⊗: (b :⊗: c))
        )
-    => HomUnfused (FObj.Tensor (FObj.Tensor a b) c) (FObj.Tensor a (FObj.Tensor b c))
+    => HomUnfused ((a :⊗: b) :⊗: c) (a :⊗: (b :⊗: c))
   associate =
     HomUnfused
       ( asTensor -+$=>
@@ -370,112 +325,74 @@ instance Associative HomUnfused FObj.Tensor where
      . ( Object HomUnfused a
        , Object HomUnfused b
        , Object HomUnfused c
-       , Object HomUnfused (FObj.Tensor a b)
-       , Object HomUnfused (FObj.Tensor b c)
-       , Object HomUnfused (FObj.Tensor (FObj.Tensor a b) c)
-       , Object HomUnfused (FObj.Tensor a (FObj.Tensor b c))
+       , Object HomUnfused (a :⊗: b)
+       , Object HomUnfused (b :⊗: c)
+       , Object HomUnfused ((a :⊗: b) :⊗: c)
+       , Object HomUnfused (a :⊗: (b :⊗: c))
        )
-    => HomUnfused (FObj.Tensor a (FObj.Tensor b c)) (FObj.Tensor (FObj.Tensor a b) c)
+    => HomUnfused (a :⊗: (b :⊗: c)) ((a :⊗: b) :⊗: c)
   disassociate =
     HomUnfused
       ( asTensor -+$=>
           (lassocMap @(ToVObj a) @(ToVObj b) @(ToVObj c))
       )
 
-instance Monoidal HomUnfused FObj.Tensor where
-  type Id HomUnfused FObj.Tensor = 'FObj.Atom 0
+instance Monoidal HomUnfused (:⊗:) where
+  type Id HomUnfused (:⊗:) = 'Atom 0
 
   idl
     :: forall a
      . ( Object HomUnfused a
-       , Object HomUnfused ('FObj.Atom 0)
-       , Object HomUnfused (FObj.Tensor ('FObj.Atom 0) a)
+       , Object HomUnfused ('Atom 0)
+       , Object HomUnfused ('Atom 0 :⊗: a)
        )
-    => HomUnfused (FObj.Tensor ('FObj.Atom 0) a) a
+    => HomUnfused ('Atom 0 :⊗: a) a
   idl =
-    HomUnfused (asTensor -+$=> (unitLunit @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (lunit @(ToVObj a)))
 
   idr
     :: forall a
      . ( Object HomUnfused a
-       , Object HomUnfused ('FObj.Atom 0)
-       , Object HomUnfused (FObj.Tensor a ('FObj.Atom 0))
+       , Object HomUnfused ('Atom 0)
+       , Object HomUnfused (a :⊗: 'Atom 0)
        )
-    => HomUnfused (FObj.Tensor a ('FObj.Atom 0)) a
+    => HomUnfused (a :⊗: 'Atom 0) a
   idr =
-    HomUnfused (asTensor -+$=> (unitRunit @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (runit @(ToVObj a)))
 
   coidl
     :: forall a
      . ( Object HomUnfused a
-       , Object HomUnfused ('FObj.Atom 0)
-       , Object HomUnfused (FObj.Tensor ('FObj.Atom 0) a)
+       , Object HomUnfused ('Atom 0)
+       , Object HomUnfused ('Atom 0 :⊗: a)
        )
-    => HomUnfused a (FObj.Tensor ('FObj.Atom 0) a)
+    => HomUnfused a ('Atom 0 :⊗: a)
   coidl =
-    HomUnfused (asTensor -+$=> (unitLcounit @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (lunitInv @(ToVObj a)))
 
   coidr
     :: forall a
      . ( Object HomUnfused a
-       , Object HomUnfused ('FObj.Atom 0)
-       , Object HomUnfused (FObj.Tensor a ('FObj.Atom 0))
+       , Object HomUnfused ('Atom 0)
+       , Object HomUnfused (a :⊗: 'Atom 0)
        )
-    => HomUnfused a (FObj.Tensor a ('FObj.Atom 0))
+    => HomUnfused a (a :⊗: 'Atom 0)
   coidr =
-    HomUnfused (asTensor -+$=> (unitRcounit @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (runitInv @(ToVObj a)))
 
-instance Braided HomUnfused FObj.Tensor where
+instance Braided HomUnfused (:⊗:) where
   braid
     :: forall a b
      . ( Object HomUnfused a
        , Object HomUnfused b
-       , Object HomUnfused (FObj.Tensor a b)
-       , Object HomUnfused (FObj.Tensor b a)
+       , Object HomUnfused (a :⊗: b)
+       , Object HomUnfused (b :⊗: a)
        )
-    => HomUnfused (FObj.Tensor a b) (FObj.Tensor b a)
+    => HomUnfused (a :⊗: b) (b :⊗: a)
   braid =
-    let m :: ToVObj (FObj.Tensor a b) +> ToVObj (FObj.Tensor b a)
+    let m :: ToVObj (a :⊗: b) +> ToVObj (b :⊗: a)
         m = swapMap @(ToVObj a) @(ToVObj b)
      in HomUnfused (asTensor -+$=> m)
-
--- | Object constraint for fused Hom: 'Obj' with a known identity on 'ObjRep'.
-class KnownHomFused (a :: Obj Nat) where
-  idHomFusedVal :: RepV (FuseRep (ObjRep a) (ObjRep a))
-
--- | Identity endomorphism on a leaf: singlet (@root = 0@) channel = 1, else 0.
---
--- Interim singlet walk (paired with 'cup'). True fused η once channel-native F
--- lands.
-idHomI
-  :: forall j
-   . ( KnownNat j
-     , KnownFTrees (FuseRep '[ 'I j] '[ 'I j])
-     )
-  => RepV (FuseRep '[ 'I j] '[ 'I j])
-idHomI = go (fTreesSing @(FuseRep '[ 'I j] '[ 'I j]))
-  where
-    go :: forall ts. SFTrees ts -> RepV ts
-    go SFTreesNil = RNil
-    go (SFTreesCons (t :: SFTree u) rest) =
-      case t of
-        SFrom @d _l _r ->
-          case sameNat (Proxy @d) (Proxy @0) of
-            Just Refl -> RCons @u (konst 1) (go rest)
-            Nothing -> RCons @u zeroV (go rest)
-        SI {} ->
-          error "idHomI: expected Hom From channels"
-
--- | Simple atom: identity via 'idHomI' (@ObjSpineSU2 ('Atom j) ~ '[ '(j,1)]@).
-instance
-  ( KnownNat j
-  , KnownFTrees (FuseRep '[ 'I j] '[ 'I j])
-  , ObjSpineSU2 ('FObj.Atom j) ~ '[ '(j, 1)]
-  , ObjRep ('FObj.Atom j) ~ '[ 'I j]
-  ) =>
-  KnownHomFused ('FObj.Atom j)
-  where
-  idHomFusedVal = idHomI @j
 
 -- Category \/ monoidal structure: HomUnfused (complete). HomFused Category lives
 -- with the tree compose ladder (see 'composeHomFused').
@@ -688,30 +605,6 @@ composeHomTrees f g =
 -- HomFused: RepV-backed fused Hom
 --------------------------------------------------------------------------------
 
--- | SU(2) dual iso on spin-½: @ε⁻¹ = [[0,-1],[1,0]]@ (maps Euclidean Dual≅V
--- name of id to the CG singlet convention used by fused Hom).
-su2DualIsoHalfInv :: C 2 +> C 2
-su2DualIsoHalfInv =
-  arr . LinearFunction $ \v ->
-    let [a, b] = VS.toList (toArray v)
-     in unsafeFromArray (VS.fromList [-b, a])
-
--- | Forgetful map @HomFused ⇒ HomUnfused@ on spin-½ atoms.
---
--- CG-unfuse channels, apply the FS dual iso on the left (dual) leg, scale by
--- @√dim = √2@ so fused id densifies to Euclidean id. Preserves compose on the
--- intertwiner (singlet) sector — see 'checkForgetHomInterCompose111'. Full
--- End/@HomFused@ functoriality for triplet channels is still open.
-forgetHomFusedHalf
-  :: HomFused ('FObj.Atom 1) ('FObj.Atom 1)
-  -> HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
-forgetHomFusedHalf (HomFused r) =
-  let u = unfuseTrees @('I 1) @('I 1) r
-      mid = (su2DualIsoHalfInv ⊗^ (id :: C 2 +> C 2)) $ u
-      packed = (sqrt 2 :+ 0) *^ mid
-      m = fromTensor -+$=> packed :: C 2 +> C 2
-   in HomUnfused (asTensor -+$=> m)
-
 -- | 'HomFused' compose via the five Mac Lane morphisms ('composeHomTrees')
 -- on 'ObjRep'-expanded leaf reps.
 composeHomFused
@@ -742,10 +635,13 @@ composeHomFused (HomFused g) (HomFused f) =
   HomFused (composeHomTrees @(ObjRep a) @(ObjRep b) @(ObjRep c) f g)
 
 instance Category HomFused where
-  type Object HomFused a = KnownHomFused a
+  type Object HomFused a =
+    ( KnownFTrees (ObjRep a)
+    , FuseRepIdC (ObjRep a) (ObjRep a)
+    )
 
   id :: forall a. Object HomFused a => HomFused a a
-  id = HomFused (idHomFusedVal @a)
+  id = HomFused (idHomFTrees @(ObjRep a))
 
   -- @(.)@ needs the five Mac Lane steps on @a,b,c@, which 'Object' alone does
   -- not imply (constraints are triple-indexed). Named ladder: 'composeHomFused'.
@@ -755,16 +651,17 @@ instance Category HomFused where
 -- HomInter: trivial sector of fused Hom (same Mac Lane compose)
 --------------------------------------------------------------------------------
 
--- | Identity intertwiner: trivial channels of 'idHomFusedVal'.
+-- | Identity intertwiner: trivial channels of @'idHomFTrees' (ObjRep a)@.
 idHomInterVal
   :: forall a
-   . ( KnownHomFused a
+   . ( KnownFTrees (ObjRep a)
+     , FuseRepIdC (ObjRep a) (ObjRep a)
      , KnownFTrees (FuseRep (ObjRep a) (ObjRep a))
      , FilterTrivialC (FuseRep (ObjRep a) (ObjRep a))
      )
   => RepV (FilterTrivial (FuseRep (ObjRep a) (ObjRep a)))
 idHomInterVal =
-  filterTrivialRepV @(FuseRep (ObjRep a) (ObjRep a)) (idHomFusedVal @a)
+  filterTrivialRepV @(FuseRep (ObjRep a) (ObjRep a)) (idHomFTrees @(ObjRep a))
 
 -- | 'HomInter' compose: embed → 'composeHomTrees' → filter (same as 'HomFused').
 composeHomInter
@@ -813,7 +710,8 @@ composeHomInter (HomInter g) (HomInter f) =
 
 instance Category HomInter where
   type Object HomInter a =
-    ( KnownHomFused a
+    ( KnownFTrees (ObjRep a)
+    , FuseRepIdC (ObjRep a) (ObjRep a)
     , KnownFTrees (FuseRep (ObjRep a) (ObjRep a))
     , FilterTrivialC (FuseRep (ObjRep a) (ObjRep a))
     )

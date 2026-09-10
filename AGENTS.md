@@ -58,7 +58,11 @@ should be inlined or deleted. Prefer library morphisms and constructors
 (`arr (LinearFunction …)`, `(⊗)`, `Tensor` / `Sized` `konst`/`fromList`,
 `fromLinearForm`, …) over hand-rolled dual/packaging APIs. Do not unpack to
 `toArray` / `unsafeFromArray` to define core maps or read scalars when an
-inner product or typed constructor already says it.
+inner product or typed constructor already says it. Do **not** add synonym
+wrappers for existing morphisms (`unitLunit = lunit`); call the library name,
+unless the new name adds a real constraint/law (e.g. `swap` under `Symmetric`).
+When a general helper lands, **proactively** delete specialized synonyms in the
+same edit — do not leave `idHomI = idHomFTrees @…` around until asked.
 
 ### Scheme vs algebra; systematic APIs
 

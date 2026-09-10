@@ -57,7 +57,7 @@ dumpTrees label tv = do
       SI {} -> False
     isCupKeep _ = False
 
-f22 :: RepV Hom22
+f22 :: RepV (FuseRep '[ 'I 2] '[ 'I 2])
 f22 =
   RCons @('From 0 '( 'I 2, 'I 2)) (konst 0.2) $
     RCons @('From 2 '( 'I 2, 'I 2)) (konst 0.3) $
@@ -65,16 +65,16 @@ f22 =
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @Hom22 @Hom22 f22 (idHomI @2)
-      outerFid = fmoveOuterHom @I2 @I2 @I2 domFid
-      cupFid = fmoveInnerHom @I2 @I2 @I2 outerFid
-      domIdf = fuseRepTerm @Hom22 @Hom22 (idHomI @2) f22
-      outerIdf = fmoveOuterHom @I2 @I2 @I2 domIdf
-      cupIdf = fmoveInnerHom @I2 @I2 @I2 outerIdf
-  dumpTrees @(FuseRep Hom22 Hom22) "dom Fid (f⊗id)" domFid
+  let domFid = fuseRepTerm @(FuseRep '[ 'I 2] '[ 'I 2]) @(FuseRep '[ 'I 2] '[ 'I 2]) f22 (idHomFTrees @('[ 'I 2]))
+      outerFid = fmoveOuterHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) domFid
+      cupFid = fmoveInnerHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) outerFid
+      domIdf = fuseRepTerm @(FuseRep '[ 'I 2] '[ 'I 2]) @(FuseRep '[ 'I 2] '[ 'I 2]) (idHomFTrees @('[ 'I 2])) f22
+      outerIdf = fmoveOuterHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) domIdf
+      cupIdf = fmoveInnerHom @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) outerIdf
+  dumpTrees @(FuseRep (FuseRep '[ 'I 2] '[ 'I 2]) (FuseRep '[ 'I 2] '[ 'I 2])) "dom Fid (f⊗id)" domFid
   dumpTrees "outer Fid" outerFid
   dumpTrees "cupR Fid (after id⊗F)" cupFid
   putStrLn ""
-  dumpTrees @(FuseRep Hom22 Hom22) "dom Idf (id⊗f)" domIdf
+  dumpTrees @(FuseRep (FuseRep '[ 'I 2] '[ 'I 2]) (FuseRep '[ 'I 2] '[ 'I 2])) "dom Idf (id⊗f)" domIdf
   dumpTrees "outer Idf" outerIdf
   dumpTrees "cupR Idf (after id⊗F)" cupIdf

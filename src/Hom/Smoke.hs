@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -45,11 +46,13 @@ module Hom.Smoke
   , checkFuseMapLeftId111
   ) where
 
+import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..), (.), id)
 import Data.Complex (Complex ((:+)), conjugate, magnitude, realPart)
-import Data.VectorSpace (InnerSpace ((<.>)), (^-^))
+import Data.VectorSpace (InnerSpace ((<.>)), (*^), (^-^))
 import qualified Data.Vector.Storable as VS
-import qualified Fusion.Obj as FObj
+import Categorical.Linear ((⊗^))
+import Fusion.Obj (Obj (Atom))
 import Hom.Core
 import Hom.Expr
 import Hom.FMove
@@ -57,10 +60,16 @@ import Hom.RepV
 import Hom.Singletons
 import Hom.TypeLevel
 import GHC.TypeLits (KnownNat)
-import Math.VectorSpace.DimensionAware (toArray)
-import Numeric.LinearAlgebra.Static (konst)
+import Math.LinearMap.Category
+  ( pattern LinearFunction
+  , type (+>)
+  )
+import Math.LinearMap.Category.Class (asTensor, fromTensor)
+import Math.LinearMap.Coercion ((-+$=>))
+import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
+import Numeric.LinearAlgebra.Static (C, konst)
 
-import Prelude hiding (id, (.))
+import Prelude hiding (id, (.), ($))
 
 -- | Triple-leaf F-move via 'CanFmoveTrees' (@½⊗½⊗½@).
 fmoveTrees111
@@ -237,15 +246,15 @@ checkUnitorHom11 =
 checkCupIHom :: Bool
 checkCupIHom =
   let s0 =
-        case cup @('[ 'I 0]) (idHomI @0) of
+        case cup @('[ 'I 0]) (idHomFTrees @('[ 'I 0])) of
           RCons v RNil -> konst 1 <.> v
           _ -> 0
       s1 =
-        case cup @('[ 'I 1]) (idHomI @1) of
+        case cup @('[ 'I 1]) (idHomFTrees @('[ 'I 1])) of
           RCons v RNil -> konst 1 <.> v
           _ -> 0
       s2 =
-        case cup @('[ 'I 2]) (idHomI @2) of
+        case cup @('[ 'I 2]) (idHomFTrees @('[ 'I 2])) of
           RCons v RNil -> konst 1 <.> v
           _ -> 0
    in magnitude (s0 - 1) < 1e-12
@@ -258,7 +267,7 @@ checkComposeHomTrees111 =
   let f =
         RCons @('From 0 '( 'I 1, 'I 1)) (konst 0.3) $
           RCons @('From 2 '( 'I 1, 'I 1)) (konst 0.7) RNil
-      idH = idHomI @1
+      idH = idHomFTrees @('[ 'I 1])
       idid = composeHomTrees @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) idH idH
       fid = composeHomTrees @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) f idH
       idf = composeHomTrees @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) idH f
@@ -270,7 +279,7 @@ checkComposeHomTrees111 =
 checkComposeHomTrees000 :: Bool
 checkComposeHomTrees000 =
   let f = RCons @('From 0 '( 'I 0, 'I 0)) (konst 0.4) RNil
-      idH = idHomI @0
+      idH = idHomFTrees @('[ 'I 0])
    in approxHomTrees @(FuseRep '[ 'I 0] '[ 'I 0])
         (composeHomTrees @('[ 'I 0]) @('[ 'I 0]) @('[ 'I 0]) idH idH)
         idH
@@ -288,7 +297,7 @@ checkComposeHomTrees222 =
         RCons @('From 0 '( 'I 2, 'I 2)) (konst 0.2) $
           RCons @('From 2 '( 'I 2, 'I 2)) (konst 0.3) $
             RCons @('From 4 '( 'I 2, 'I 2)) (konst 0.5) RNil
-      idH = idHomI @2
+      idH = idHomFTrees @('[ 'I 2])
       idid = composeHomTrees @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) idH idH
       fid = composeHomTrees @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) f idH
       idf = composeHomTrees @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) idH f
@@ -304,7 +313,7 @@ checkComposeHomTrees333 =
           RCons @('From 2 '( 'I 3, 'I 3)) (konst 0.2) $
             RCons @('From 4 '( 'I 3, 'I 3)) (konst 0.3) $
               RCons @('From 6 '( 'I 3, 'I 3)) (konst 0.4) RNil
-      idH = idHomI @3
+      idH = idHomFTrees @('[ 'I 3])
       idid = composeHomTrees @('[ 'I 3]) @('[ 'I 3]) @('[ 'I 3]) idH idH
       fid = composeHomTrees @('[ 'I 3]) @('[ 'I 3]) @('[ 'I 3]) f idH
       idf = composeHomTrees @('[ 'I 3]) @('[ 'I 3]) @('[ 'I 3]) idH f
@@ -319,8 +328,8 @@ checkComposeHomTrees121 =
       f =
         RCons @('From 1 '( 'I 1, 'I 2)) (konst 0.3) $
           RCons @('From 3 '( 'I 1, 'I 2)) (konst 0.7) RNil
-      id1 = idHomI @1
-      id2 = idHomI @2
+      id1 = idHomFTrees @('[ 'I 1])
+      id2 = idHomFTrees @('[ 'I 2])
       -- f ∘ id₁  and  id₂ ∘ f
       idf = composeHomTrees @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 2]) id1 f
       fid = composeHomTrees @('[ 'I 1]) @('[ 'I 2]) @('[ 'I 2]) f id2
@@ -353,65 +362,65 @@ checkFmoveHomLeft111 =
 -- | 'HomFused' packaging unit laws on spin-1 via 'composeHomFused'.
 checkHomFusedCategory222 :: Bool
 checkHomFusedCategory222 =
-  let f :: HomFused ('FObj.Atom 2) ('FObj.Atom 2)
+  let f :: HomFused ('Atom 2) ('Atom 2)
       f =
         HomFused $
           RCons @('From 0 '( 'I 2, 'I 2)) (konst 0.2) $
             RCons @('From 2 '( 'I 2, 'I 2)) (konst 0.3) $
               RCons @('From 4 '( 'I 2, 'I 2)) (konst 0.5) RNil
-      idT = HomFused (idHomFusedVal @('FObj.Atom 2))
+      idT = HomFused (idHomFTrees @('[ 'I 2]))
       HomFused idid =
-        composeHomFused @('FObj.Atom 2) @('FObj.Atom 2) @('FObj.Atom 2) idT idT
+        composeHomFused @('Atom 2) @('Atom 2) @('Atom 2) idT idT
       HomFused fid =
-        composeHomFused @('FObj.Atom 2) @('FObj.Atom 2) @('FObj.Atom 2) idT f
+        composeHomFused @('Atom 2) @('Atom 2) @('Atom 2) idT f
       HomFused idf =
-        composeHomFused @('FObj.Atom 2) @('FObj.Atom 2) @('FObj.Atom 2) f idT
-   in approxHomTrees @(FuseRep '[ 'I 2] '[ 'I 2]) idid (idHomI @2)
+        composeHomFused @('Atom 2) @('Atom 2) @('Atom 2) f idT
+   in approxHomTrees @(FuseRep '[ 'I 2] '[ 'I 2]) idid (idHomFTrees @('[ 'I 2]))
         && approxHomTrees @(FuseRep '[ 'I 2] '[ 'I 2]) fid (unHomFused f)
         && approxHomTrees @(FuseRep '[ 'I 2] '[ 'I 2]) idf (unHomFused f)
 
--- | 'HomFused' unit laws on @tj = 3@ via polymorphic 'KnownHomFused' / 'idHomI'.
+-- | 'HomFused' unit laws on @tj = 3@ via 'idHomFTrees'.
 checkHomFusedCategory333 :: Bool
 checkHomFusedCategory333 =
-  let f :: HomFused ('FObj.Atom 3) ('FObj.Atom 3)
+  let f :: HomFused ('Atom 3) ('Atom 3)
       f =
         HomFused $
           RCons @('From 0 '( 'I 3, 'I 3)) (konst 0.1) $
             RCons @('From 2 '( 'I 3, 'I 3)) (konst 0.2) $
               RCons @('From 4 '( 'I 3, 'I 3)) (konst 0.3) $
                 RCons @('From 6 '( 'I 3, 'I 3)) (konst 0.4) RNil
-      idT = HomFused (idHomFusedVal @('FObj.Atom 3))
+      idT = HomFused (idHomFTrees @('[ 'I 3]))
       HomFused idid =
-        composeHomFused @('FObj.Atom 3) @('FObj.Atom 3) @('FObj.Atom 3) idT idT
+        composeHomFused @('Atom 3) @('Atom 3) @('Atom 3) idT idT
       HomFused fid =
-        composeHomFused @('FObj.Atom 3) @('FObj.Atom 3) @('FObj.Atom 3) idT f
+        composeHomFused @('Atom 3) @('Atom 3) @('Atom 3) idT f
       HomFused idf =
-        composeHomFused @('FObj.Atom 3) @('FObj.Atom 3) @('FObj.Atom 3) f idT
-   in approxHomTrees @(FuseRep '[ 'I 3] '[ 'I 3]) idid (idHomFusedVal @('FObj.Atom 3))
+        composeHomFused @('Atom 3) @('Atom 3) @('Atom 3) f idT
+   in approxHomTrees @(FuseRep '[ 'I 3] '[ 'I 3]) idid (idHomFTrees @('[ 'I 3]))
         && approxHomTrees @(FuseRep '[ 'I 3] '[ 'I 3]) fid (unHomFused f)
         && approxHomTrees @(FuseRep '[ 'I 3] '[ 'I 3]) idf (unHomFused f)
 
 -- | 'HomInter' unit laws on spin-½ via embed → 'composeHomTrees' → filter.
 checkHomInterCategory111 :: Bool
 checkHomInterCategory111 =
-  let f :: HomInter ('FObj.Atom 1) ('FObj.Atom 1)
+  let f :: HomInter ('Atom 1) ('Atom 1)
       f =
         HomInter $
           scaleRepV
             @(FilterTrivial (FuseRep '[ 'I 1] '[ 'I 1]))
             (0.3 :+ 0)
-            (idHomInterVal @('FObj.Atom 1))
-      idT = HomInter (idHomInterVal @('FObj.Atom 1))
+            (idHomInterVal @('Atom 1))
+      idT = HomInter (idHomInterVal @('Atom 1))
       HomInter idid =
-        composeHomInter @('FObj.Atom 1) @('FObj.Atom 1) @('FObj.Atom 1) idT idT
+        composeHomInter @('Atom 1) @('Atom 1) @('Atom 1) idT idT
       HomInter fid =
-        composeHomInter @('FObj.Atom 1) @('FObj.Atom 1) @('FObj.Atom 1) idT f
+        composeHomInter @('Atom 1) @('Atom 1) @('Atom 1) idT f
       HomInter idf =
-        composeHomInter @('FObj.Atom 1) @('FObj.Atom 1) @('FObj.Atom 1) f idT
+        composeHomInter @('Atom 1) @('Atom 1) @('Atom 1) f idT
    in approxHomTrees
         @(FilterTrivial (FuseRep '[ 'I 1] '[ 'I 1]))
         idid
-        (idHomInterVal @('FObj.Atom 1))
+        (idHomInterVal @('Atom 1))
         && approxHomTrees
           @(FilterTrivial (FuseRep '[ 'I 1] '[ 'I 1]))
           fid
@@ -421,11 +430,28 @@ checkHomInterCategory111 =
           idf
           (unHomInter f)
 
+-- | Forgetful densify @HomFused ⇒ HomUnfused@ on spin-½ (smoke-only adapter).
+-- CG-unfuse, FS dual iso on the left leg, scale by @√2@.
+forgetHomFusedHalf
+  :: HomFused ('Atom 1) ('Atom 1)
+  -> HomUnfused ('Atom 1) ('Atom 1)
+forgetHomFusedHalf (HomFused r) =
+  let u = unfuseTrees @('I 1) @('I 1) r
+      dualIso :: C 2 +> C 2
+      dualIso =
+        arr . LinearFunction $ \v ->
+          let [a, b] = VS.toList (toArray v)
+           in unsafeFromArray (VS.fromList [-b, a])
+      mid = (dualIso ⊗^ (id :: C 2 +> C 2)) $ u
+      packed = (sqrt 2 :+ 0) *^ mid
+      m = fromTensor -+$=> packed :: C 2 +> C 2
+   in HomUnfused (asTensor -+$=> m)
+
 -- | Forgetful densify of fused id matches unfused id on spin-½.
 checkForgetHomFusedId111 :: Bool
 checkForgetHomFusedId111 =
-  let fusedId = id :: HomFused ('FObj.Atom 1) ('FObj.Atom 1)
-      unfusedId = id :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
+  let fusedId = id :: HomFused ('Atom 1) ('Atom 1)
+      unfusedId = id :: HomUnfused ('Atom 1) ('Atom 1)
       forgotten = forgetHomFusedHalf fusedId
    in approxHomUnfused forgotten unfusedId
 
@@ -433,37 +459,37 @@ checkForgetHomFusedId111 =
 -- @forget(g ∘_Inter f) = forget(g) ∘_Unfused forget(f)@ for scaled ids.
 checkForgetHomInterCompose111 :: Bool
 checkForgetHomInterCompose111 =
-  let f :: HomInter ('FObj.Atom 1) ('FObj.Atom 1)
+  let f :: HomInter ('Atom 1) ('Atom 1)
       f =
         HomInter $
           scaleRepV
             @(FilterTrivial (FuseRep '[ 'I 1] '[ 'I 1]))
             (0.4 :+ 0)
-            (idHomInterVal @('FObj.Atom 1))
-      g :: HomInter ('FObj.Atom 1) ('FObj.Atom 1)
+            (idHomInterVal @('Atom 1))
+      g :: HomInter ('Atom 1) ('Atom 1)
       g =
         HomInter $
           scaleRepV
             @(FilterTrivial (FuseRep '[ 'I 1] '[ 'I 1]))
             ((-0.5) :+ 0)
-            (idHomInterVal @('FObj.Atom 1))
+            (idHomInterVal @('Atom 1))
       -- Embed intertwiners to HomFused, densify, compare compose both ways.
       emb (HomInter t) =
         HomFused (embedTrivialRepV @(FuseRep '[ 'I 1] '[ 'I 1]) t)
       lhs =
         forgetHomFusedHalf
           (composeHomFused
-             @('FObj.Atom 1)
-             @('FObj.Atom 1)
-             @('FObj.Atom 1)
+             @('Atom 1)
+             @('Atom 1)
+             @('Atom 1)
              (emb g)
              (emb f))
       rhs = forgetHomFusedHalf (emb g) . forgetHomFusedHalf (emb f)
    in approxHomUnfused lhs rhs
 
 approxHomUnfused
-  :: HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
-  -> HomUnfused ('FObj.Atom 1) ('FObj.Atom 1)
+  :: HomUnfused ('Atom 1) ('Atom 1)
+  -> HomUnfused ('Atom 1) ('Atom 1)
   -> Bool
 approxHomUnfused (HomUnfused u) (HomUnfused v) =
   let du = toArray u
@@ -479,7 +505,7 @@ checkI2FmoveSmoke =
         approxHomTrees @( FuseRep (FuseRep '[ 'I 2] '[ 'I 2]) '[ 'I 2] ) assocL $
           fmoveInvTrees @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2])
             (fmoveTrees @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) assocL)
-      idH = idHomI @2
+      idH = idHomFTrees @('[ 'I 2])
       dom =
         fuseRepTerm
           @(FuseRep '[ 'I 2] '[ 'I 2])
@@ -501,8 +527,8 @@ checkFmoveOuter111 =
         fuseRepTerm
           @(FuseRep '[ 'I 1] '[ 'I 1])
           @(FuseRep '[ 'I 1] '[ 'I 1])
-          (idHomI @1)
-          (idHomI @1)
+          (idHomFTrees @('[ 'I 1]))
+          (idHomFTrees @('[ 'I 1]))
       mid = fmoveOuterHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) dom
       back = fmoveInvOuterHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) mid
    in approxHomTrees
@@ -518,8 +544,8 @@ checkFuseMapLeftId111 =
           fuseRepTerm
             @(FuseRep '[ 'I 1] '[ 'I 1])
             @(FuseRep '[ 'I 1] '[ 'I 1])
-            (idHomI @1)
-            (idHomI @1)
+            (idHomFTrees @('[ 'I 1]))
+            (idHomFTrees @('[ 'I 1]))
       mid' =
         fuseMapLeft
           @('[ 'I 1])

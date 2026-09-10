@@ -28,6 +28,9 @@ module Hom.RepV
   , FuseRepTermC
   , FuseRepOneTermC
   , fuseRepTerm
+  , FuseRepIdC
+  , FuseRepOneIdC
+  , idHomFTrees
   , scaleRepV
   , approxRepV
   , FilterTrivialC (..)
@@ -36,6 +39,8 @@ module Hom.RepV
 import Control.Arrow.Constrained (($))
 import Data.Complex (Complex, magnitude)
 import Data.Kind (Constraint)
+import Data.Proxy (Proxy (..))
+import Data.Type.Equality ((:~:) (Refl))
 import Data.VectorSpace
   ( AdditiveGroup (zeroV, (^+^))
   , Scalar
@@ -46,10 +51,10 @@ import Symmetry.Tensor (TensorIrrepRepSU2)
 import Hom.Expr
 import Hom.Singletons
 import Hom.TypeLevel
-import GHC.TypeLits (CmpNat, KnownNat, Nat)
+import GHC.TypeLits (CmpNat, KnownNat, Nat, sameNat)
 import Math.LinearMap.Category (TensorSpace, type (⊗), (⊗))
 import Math.VectorSpace.DimensionAware (toArray)
-import Numeric.LinearAlgebra.Static (C)
+import Numeric.LinearAlgebra.Static (C, konst)
 import Symmetry.CG.SU2 (fuseCGChannel, unfuseCGChannel)
 import Symmetry.Utils (Append)
 
@@ -202,6 +207,91 @@ type family FuseRepOneTermC (t1 :: FTree) (qs :: FTrees) :: Constraint where
     , FuseTreesGo t1 t2 (TensorIrrepRepSU2 (Root t1) (Root t2))
     , FuseRepOneTermC t1 rest
     )
+
+-- | Constraints to build the identity on @'FuseRep' ls rs@ (position-diagonal).
+type family FuseRepIdC (ls :: FTrees) (rs :: FTrees) :: Constraint where
+  FuseRepIdC '[] _ = ()
+  FuseRepIdC (t1 ': rest) rs =
+    ( FuseRepOneIdC t1 rs
+    , FuseRepIdC rest rs
+    )
+
+type family FuseRepOneIdC (t1 :: FTree) (qs :: FTrees) :: Constraint where
+  FuseRepOneIdC _ '[] = ()
+  FuseRepOneIdC t1 (t2 ': rest) =
+    ( KnownFTrees (FuseTrees t1 t2)
+    , FuseRepOneIdC t1 rest
+    )
+
+-- | Hom channels for one leaf pair: singlet (@root = 0@) = 1, else 0.
+homChannelsDiag
+  :: forall t1 t2
+   . KnownFTrees (FuseTrees t1 t2)
+  => RepV (FuseTrees t1 t2)
+homChannelsDiag = go (fTreesSing @(FuseTrees t1 t2))
+  where
+    go :: forall ts. SFTrees ts -> RepV ts
+    go SFTreesNil = RNil
+    go (SFTreesCons (t :: SFTree u) rest) =
+      case t of
+        SFrom @d _l _r ->
+          case sameNat (Proxy @d) (Proxy @0) of
+            Just Refl -> RCons @u (konst 1) (go rest)
+            Nothing -> RCons @u zeroV (go rest)
+        SI {} ->
+          error "homChannelsDiag: expected Hom From channels"
+
+-- | Zero Hom channels for an off-diagonal leaf pair.
+homChannelsZero
+  :: forall t1 t2
+   . KnownFTrees (FuseTrees t1 t2)
+  => RepV (FuseTrees t1 t2)
+homChannelsZero = go (fTreesSing @(FuseTrees t1 t2))
+  where
+    go :: forall ts. SFTrees ts -> RepV ts
+    go SFTreesNil = RNil
+    go (SFTreesCons t rest) =
+      case t of
+        SI {} -> RCons zeroV (go rest)
+        SFrom {} -> RCons zeroV (go rest)
+
+-- | Identity on @'FuseRep' rs rs@: diagonal leaf-pair singlets = 1, zero
+-- on cross blocks (cartesian 'FuseRep' layout).
+idHomFTrees
+  :: forall rs
+   . ( KnownFTrees rs
+     , FuseRepIdC rs rs
+     )
+  => RepV (FuseRep rs rs)
+idHomFTrees = goLeft (fTreesSing @rs) 0
+  where
+    goLeft
+      :: forall ls
+       . FuseRepIdC ls rs
+      => SFTrees ls
+      -> Int
+      -> RepV (FuseRep ls rs)
+    goLeft SFTreesNil _ = RNil
+    goLeft (SFTreesCons (_ :: SFTree t1) rest) i =
+      appendRepV
+        (goOne @t1 (fTreesSing @rs) i 0)
+        (goLeft rest (i + 1))
+
+    goOne
+      :: forall t1 qs
+       . FuseRepOneIdC t1 qs
+      => SFTrees qs
+      -> Int
+      -> Int
+      -> RepV (FuseRepOne t1 qs)
+    goOne SFTreesNil _ _ = RNil
+    goOne (SFTreesCons (_ :: SFTree t2) rest) i j =
+      appendRepV
+        ( if i == j
+            then homChannelsDiag @t1 @t2
+            else homChannelsZero @t1 @t2
+        )
+        (goOne @t1 rest i (j + 1))
 
 -- | Cartesian fuse of two 'RepV' spines (matches 'FuseRep').
 fuseRepTerm

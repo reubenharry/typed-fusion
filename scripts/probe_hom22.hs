@@ -17,8 +17,8 @@ main = do
         RCons @('From 0 '( 'I 2, 'I 2)) (konst 0.2) $
           RCons @('From 2 '( 'I 2, 'I 2)) (konst 0.3) $
             RCons @('From 4 '( 'I 2, 'I 2)) (konst 0.5) RNil
-      outFid = composeHomTrees @I2 @I2 @I2 f (idHomI @2)
-      outIdf = composeHomTrees @I2 @I2 @I2 (idHomI @2) f
-  putStrLn $ "f        = " ++ show (flat @Hom22 f)
-  putStrLn $ "outFid   = " ++ show (flat @Hom22 outFid)
-  putStrLn $ "outIdf   = " ++ show (flat @Hom22 outIdf)
+      outFid = composeHomTrees @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) f (idHomFTrees @('[ 'I 2]))
+      outIdf = composeHomTrees @('[ 'I 2]) @('[ 'I 2]) @('[ 'I 2]) (idHomFTrees @('[ 'I 2])) f
+  putStrLn $ "f        = " ++ show (flat @(FuseRep '[ 'I 2] '[ 'I 2]) f)
+  putStrLn $ "outFid   = " ++ show (flat @(FuseRep '[ 'I 2] '[ 'I 2]) outFid)
+  putStrLn $ "outIdf   = " ++ show (flat @(FuseRep '[ 'I 2] '[ 'I 2]) outIdf)

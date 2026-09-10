@@ -58,21 +58,21 @@ dumpTrees label tv = do
       SI {} -> False
     isCupKeep _ = False
 
-f11 :: RepV Hom11
+f11 :: RepV (FuseRep '[ 'I 1] '[ 'I 1])
 f11 =
   RCons @('From 0 '( 'I 1, 'I 1)) (konst 0.3) $
     RCons @('From 2 '( 'I 1, 'I 1)) (konst 0.7) RNil
 
 main :: IO ()
 main = do
-  let domFid = fuseRepTerm @Hom11 @Hom11 f11 (idHomI @1)
-      outerFid = fmoveOuterHom @I1 @I1 @I1 domFid
-      cupFid = fmoveInnerHom @I1 @I1 @I1 outerFid
+  let domFid = fuseRepTerm @(FuseRep '[ 'I 1] '[ 'I 1]) @(FuseRep '[ 'I 1] '[ 'I 1]) f11 (idHomFTrees @('[ 'I 1]))
+      outerFid = fmoveOuterHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) domFid
+      cupFid = fmoveInnerHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) outerFid
       outFid =
-        unitorHom @I1 @I1
-          (cupTensorIdHom @I1 @I1 @I1 cupFid)
-  dumpTrees @(FuseRep Hom11 Hom11) "Hom11 dom Fid" domFid
+        unitorHom @('[ 'I 1]) @('[ 'I 1])
+          (cupTensorIdHom @('[ 'I 1]) @('[ 'I 1]) @('[ 'I 1]) cupFid)
+  dumpTrees @(FuseRep (FuseRep '[ 'I 1] '[ 'I 1]) (FuseRep '[ 'I 1] '[ 'I 1])) "Hom11 dom Fid" domFid
   dumpTrees "Hom11 outer Fid" outerFid
   dumpTrees "Hom11 cupR Fid" cupFid
-  putStrLn $ "outFid flat = " ++ show (VS.toList (repVToExpandedFlat @Hom11 outFid))
-  putStrLn $ "f11 flat    = " ++ show (VS.toList (repVToExpandedFlat @Hom11 f11))
+  putStrLn $ "outFid flat = " ++ show (VS.toList (repVToExpandedFlat @(FuseRep '[ 'I 1] '[ 'I 1]) outFid))
+  putStrLn $ "f11 flat    = " ++ show (VS.toList (repVToExpandedFlat @(FuseRep '[ 'I 1] '[ 'I 1]) f11))
