@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Hom.Examples (symbolicExamplesOk)
+import Examples.Symbolic (symbolicExamplesOk)
 import System.Exit (exitFailure)
 
 main :: IO ()

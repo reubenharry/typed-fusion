@@ -199,7 +199,7 @@ checkFmoveTrees112 tv =
     tv
     (fmoveInvTrees112 (fmoveTrees112 tv))
 
--- | Round-trip only: works for any atom-leaf triple.
+-- | Round-trip only: works for any irrep-leaf triple.
 checkFmoveTreesLeaves
   :: forall ja jb jc
    . ( KnownNat ja
@@ -497,7 +497,7 @@ approxHomUnfused (HomUnfused u) (HomUnfused v) =
    in VS.length du == VS.length dv
         && VS.and (VS.zipWith (\x y -> magnitude (x - y) < 1e-9) du dv)
 
--- | Spin-1 leaf smoke: atom F + outer Hom F round-trips.
+-- | Spin-1 leaf smoke: irrep F + outer Hom F round-trips.
 checkI2FmoveSmoke :: Bool
 checkI2FmoveSmoke =
   let assocL = fillFTreeVScaled @( FuseFTrees (FuseFTrees '[ 'IrrepTree 2] '[ 'IrrepTree 2]) '[ 'IrrepTree 2] )

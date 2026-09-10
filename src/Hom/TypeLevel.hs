@@ -36,6 +36,10 @@ module Hom.TypeLevel
   , FilterTrivial
   , Unit
   , UnitorCodomain
+    -- * Obj space views (unfused / fused / trivial sector)
+  , Unfused
+  , Fused
+  , Sym
   ) where
 
 import Data.Kind (Type)
@@ -62,11 +66,20 @@ type family IrrepDim (j :: Nat) :: Nat where
 --------------------------------------------------------------------------------
 
 -- | Interpret an @Obj@ tree as a nested space (no CG fuse).
--- Atoms are bare irrep spaces @C (j+1)@; the monoidal unit is @C 1@.
+-- Irreps are bare spaces @C (j+1)@; the monoidal unit is @C 1@.
 type family ToVObj (a :: Obj Nat) :: Type where
   ToVObj ('Irrep j) = C (IrrepDim j)
   ToVObj ((a :⊗: b)) = ToVObj a ⊗ ToVObj b
   ToVObj ((a :⊕: b)) = (ToVObj a, ToVObj b)
+
+-- | Object-space views of an @Obj@ (vector spaces — not Hom morphisms).
+--
+-- * 'Unfused' — Kronecker / pair packing ('ToVObj'); payload space for 'HomUnfused'.
+-- * 'Fused' — genealogy spaces via 'ObjTrees' (association-preserving fuse trees).
+-- * 'Sym' — trivial total-charge sector ('FilterTrivial' ∘ 'ObjTrees'); invariants.
+type Unfused (a :: Obj Nat) = ToVObj a
+type Fused (a :: Obj Nat) = ToVFTrees (ObjTrees a)
+type Sym (a :: Obj Nat) = ToVFTrees (FilterTrivial (ObjTrees a))
 
 --------------------------------------------------------------------------------
 -- Skeletal objects → bare FTrees (HomFused object index)

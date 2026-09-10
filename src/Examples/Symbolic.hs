@@ -11,7 +11,7 @@
 -- Unit laws: 'composeHomTreesSelfTest'.
 -- Fused cup/cap: genealogy 'cup' / 'idHomFTrees'.
 -- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
-module Hom.Examples where
+module Examples.Symbolic where
 
 import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..), id)
@@ -22,7 +22,7 @@ import Data.VectorSpace (InnerSpace ((<.>)), (*^), (^-^))
 import Categorical.Associative (Associative (..))
 import Categorical.Bifunctor (Bifunctor (..))
 import Fusion.Obj (Obj (Irrep, (:⊗:), (:⊕:)), DualObj)
-import Fusion.SU2 (SU2Th, SpinKind (..), Spin, type (/))
+import Fusion.SU2 (SU2Th, Spin, type (/))
 import Hom
 import GHC.TypeLits (Nat)
 import Math.LinearMap.Category
@@ -42,56 +42,41 @@ import qualified Data.Vector.Storable as VS
 import Prelude hiding (id, (.), ($))
 import Categorical.Linear (runit, swapMap)
 import Hom.Vec (vec)
-import Data.IndexedListLiterals (Only(..))
 
-exampleFTreeV :: FTreeV '[ Irrep (Spin (1 / 2)), Irrep (Spin (3 / 2))]
-exampleFTreeV = makeFTrees (vec (1,2), vec (3,4,5,6))
+-- exampleFTreeV :: FTreeV '[ 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (3 / 2))]
+example1 :: Unfused ('Irrep (Spin (1 / 2)) :⊕: 'Irrep (Spin (3 / 2)))
+example1 = (vec (1,2), vec (3,4,5,6))
 
-exampleUnfused :: ToVObj (Irrep (Spin (1 / 2)) :⊗: Irrep (Spin (1 / 2)))
-exampleUnfused = konst 1 ⊗ konst 1
+example2 :: Unfused ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2)))
+example2 = vec (1,2) ⊗ vec (3,4) ^+^ vec (5,6) ⊗ vec (7,8)
 
-example :: FTreeV (FuseFTrees '[ 'IrrepTree (Spin (1 / 2))] '[ 'IrrepTree (Spin (1 / 2))])
-example = undefined
+example3 :: Fused ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2)))
+example3 = (konst 1, vec (4,5,6))
+
+example4 :: Sym ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2)))
+example4 = konst 2
+
+example5 :: Unfused (Dual ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2))) :⊗: 'Irrep (Spin (2 / 2)))
+example5 =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
+
+example6 :: Fused (Dual ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2))) :⊗: 'Irrep (Spin (2 / 2)))
+example6 = (vec (1,2,3), (konst 1, (vec ( 2,3,4), vec (5,6,7,8,9))))
+
+example7 :: Sym (Dual ('Irrep (Spin (1 / 2)) :⊗: 'Irrep (Spin (1 / 2))) :⊗: 'Irrep (Spin (2 / 2)))
+example7 = konst 1
 
 
--- type Irr' (s :: SpinKind) = 'IrrepTree (Spin s)
--- type Irr (s :: SpinKind) = 'Irrep (Spin s)
-
--- type TW = (('Irrep (Spin (1 / 2))) :⊗: ('Irrep (Spin (1 / 2))))
--- type (:**:) (a :: SpinKind) (b :: SpinKind) = FTreeV (FuseFTrees (ObjFTrees (Irr a)) (ObjFTrees (Irr b)))
-
-type Unfused obj =  ToVObj obj
-type Fused obj = ToVFTrees (ObjTrees obj)
-type Sym obj = ToVFTrees (FilterTrivial (ObjTrees obj))
-
--- Leaf: FTree
--- Node: a `From` (b,c) 
 
 type Dual (a :: Obj Nat) = DualObj SU2Th a
 
 
-foo :: Unfused (Dual (Irr (1/2) :⊗: Irr (1/2)) :⊗: Irr (2/2) )
-foo =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
 
-bar :: Fused ( Dual ( Irr (1/2) :⊗: Irr (1/2)) :⊗: Irr (2/2))
-bar = (vec (1,2,3), (konst 1, (vec ( 2,3,4), vec (5,6,7,8,9))))
 
-baz :: Sym ( Dual ( Irr (1/2) :⊗: Irr (1/2)) :⊗: Irr (2/2))
-baz = konst 1
+fuseExample :: ToVFTrees '[  
+    0 `From` '( 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (1 / 2))), 
+    2 `From` '( 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (1 / 2)))]
+fuseExample = fTreeVToV $ fuseTrees @('IrrepTree (Spin (1 / 2))) @('IrrepTree (Spin (1 / 2))) example2
 
-fuseExample
-  :: ToVObj ((('Irrep (Spin (1 / 2))) :⊗: ('Irrep (Spin (1 / 2)))))
-  -> FTreeV '[ 'From 0 '( 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (1 / 2))), 'From 2 '( 'IrrepTree (Spin (1 / 2)), 'IrrepTree (Spin (1 / 2)))]
-fuseExample = fuseTrees @('IrrepTree (Spin (1 / 2))) @('IrrepTree (Spin (1 / 2)))
-
--- | Genealogy @(½⊗½)⊗1@: fuse @exampleUnfused@ then a spin-1 leaf.
-fuseExample2
-  :: ToVFTrees (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
-fuseExample2 =
-  fTreeVToV @(FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2]) $
-    fuseFTreesTerm
-      (fuseExample exampleUnfused)
-      (FCons @('IrrepTree 2) (konst 1) FNil)
 
 -- | Trivial (total-charge-0) sector of 'fuseExample2'.
 fuseExample3
@@ -107,7 +92,7 @@ fuseExample3 =
     $ filterTrivialFTreeV
         @(FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
         ( fuseFTreesTerm
-            (fuseExample exampleUnfused)
+            (fuseExample example2)
             (FCons @('IrrepTree 2) (konst 1) FNil)
         )
 
@@ -375,7 +360,7 @@ type family AssertEqObj (a :: Obj Nat) (b :: Obj Nat) :: Bool where
   AssertEqObj a a = 'True
 
 -- | Irrep → singleton spine.
-type SmokeObjSpineAtom =
+type SmokeObjSpineIrrep =
   AssertEqSpine (ObjSpineSU2 ('Irrep 1)) '[ '(1, 1)]
 
 -- | @½ ⊗ ½@ FuseNorm → singlet ⊕ triplet multiplicities.
@@ -390,7 +375,7 @@ type SmokeObjSpineSum =
     (ObjSpineSU2 ((('Irrep 2) :⊕: ('Irrep 0))))
     '[ '(0, 1), '(2, 1)]
 
--- | Duplicate atoms add multiplicities.
+-- | Duplicate irreps add multiplicities.
 type SmokeObjSpineMult =
   AssertEqSpine
     (ObjSpineSU2 ((('Irrep 1) :⊕: ('Irrep 1))))
@@ -410,8 +395,8 @@ type SmokeFuseTrees =
      , 'From 2 '( 'IrrepTree 1, 'IrrepTree 1)
      ]
 
--- | 'ObjTrees' on an atom is a singleton leaf.
-type SmokeObjTreesAtom =
+-- | 'ObjTrees' on an irrep is a singleton leaf.
+type SmokeObjTreesIrrep =
   AssertEqFTrees (ObjTrees ('Irrep 1)) '[ 'IrrepTree 1]
 
 -- | 'ObjTrees' of @½ ⊗ ½@ matches 'FuseTrees' / 'FuseFTrees' on leaves.
@@ -445,7 +430,7 @@ type SmokeObjTreesAssocL =
     (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 1])
 
 -- | SU(2) simples are self-dual.
-type SmokeDualObjAtom =
+type SmokeDualObjIrrep =
   AssertEqObj (DualObj SU2Th ('Irrep 1)) ('Irrep 1)
 
 -- | Dual reverses tensor order (labels unchanged for SU(2)).
@@ -546,8 +531,8 @@ type SmokeAfterCup111 =
      ]
 
 -- | Flat layout equals reduced HMatrix packing for @½⊗½⊗½@ (both associations).
-smokeObjSpineAtom :: Proxy SmokeObjSpineAtom
-smokeObjSpineAtom = Proxy
+smokeObjSpineIrrep :: Proxy SmokeObjSpineIrrep
+smokeObjSpineIrrep = Proxy
 
 smokeObjSpineHalfHalf :: Proxy SmokeObjSpineHalfHalf
 smokeObjSpineHalfHalf = Proxy
@@ -564,8 +549,8 @@ smokeHomFused = Proxy
 smokeFuseTrees :: Proxy SmokeFuseTrees
 smokeFuseTrees = Proxy
 
-smokeObjTreesAtom :: Proxy SmokeObjTreesAtom
-smokeObjTreesAtom = Proxy
+smokeObjTreesIrrep :: Proxy SmokeObjTreesIrrep
+smokeObjTreesIrrep = Proxy
 
 smokeObjTreesHalfHalf :: Proxy SmokeObjTreesHalfHalf
 smokeObjTreesHalfHalf = Proxy
@@ -579,8 +564,8 @@ smokeObjTreesDist = Proxy
 smokeObjTreesAssocL :: Proxy SmokeObjTreesAssocL
 smokeObjTreesAssocL = Proxy
 
-smokeDualObjAtom :: Proxy SmokeDualObjAtom
-smokeDualObjAtom = Proxy
+smokeDualObjIrrep :: Proxy SmokeDualObjIrrep
+smokeDualObjIrrep = Proxy
 
 smokeDualObjTensor :: Proxy SmokeDualObjTensor
 smokeDualObjTensor = Proxy

@@ -91,7 +91,7 @@ type family ReplicateObj (n :: Nat) (a :: Obj lab) :: Obj lab where
   ReplicateObj 1 a = a
   ReplicateObj n a = (a :⊕: (ReplicateObj (n - 1) a))
 
--- | Expand @FuseN@ entries to a right-nested sum of atoms (duplicates = multiplicity).
+-- | Expand @FuseN@ entries to a right-nested sum of irreps (duplicates = multiplicity).
 type family IrrepsFromN (ns :: [(lab, Nat)]) :: Obj lab where
   IrrepsFromN '[ '(s, n)] = ReplicateObj n ('Irrep s)
   IrrepsFromN ('(s, n) ': rest) =
@@ -177,7 +177,7 @@ type family Fuse (t :: Type) (a :: Obj lab) :: Obj lab where
 -- Obj → Spine (unbounded Nat labels; no Irr walk)
 --------------------------------------------------------------------------------
 
--- | Semisimplicity map for @Obj Nat@: FuseNorm, collect atoms, coalesce into a
+-- | Semisimplicity map for @Obj Nat@: FuseNorm, collect irreps, coalesce into a
 -- sorted finite-support 'Spine' (@(2j, multiplicity)@). Safe for SU(2) \/ U(1)
 -- where @Stabilize@ cannot walk a complete @Irr@.
 type family ObjSpine (t :: Type) (a :: Obj Nat) :: Spine Nat where

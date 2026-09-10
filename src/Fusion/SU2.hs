@@ -13,7 +13,7 @@
 -- Spin fractions have kind 'SpinKind' (@1/2@, @3/2@, …); reduce with 'Spin' to a
 -- @2j@ label (@Spin (1/2) = 1@, @Spin (1/1) = 2@).
 -- @fSymbol@ is the screenshot amplitude @[F^{abc}_d]_{ef}@ (Racah \/ CG),
--- matching 'Symmetry.CG.FSymbol' Schur blocks for atom triples.
+-- matching 'Symmetry.CG.FSymbol' Schur blocks for irrep triples.
 module Fusion.SU2
   ( SU2Th
   , SpinKind (..)
@@ -28,10 +28,10 @@ module Fusion.SU2
   , canFuseTJ
   , leftSectors
   , rightSectors
-  , denseFAtoms
-  , fmoveAtomsFlat
-  , packAtomsFlat
-  , unpackAtomsFlat
+  , denseFIrreps
+  , fmoveIrrepsFlat
+  , packIrrepsFlat
+  , unpackIrrepsFlat
   ) where
 
 import Control.Monad.ST (runST)
@@ -85,7 +85,7 @@ su2RPhase tj1 tj2 tj
   | otherwise = -1
 
 --------------------------------------------------------------------------------
--- Term-level F-symbols (atom triples), CG-consistent with Symmetry.CG.FSymbol
+-- Term-level F-symbols (irrep triples), CG-consistent with Symmetry.CG.FSymbol
 --------------------------------------------------------------------------------
 
 canFuseTJ :: Int -> Int -> Int -> Bool
@@ -108,10 +108,10 @@ allowedF a b c d =
   , canFuseTJ a f d
   ]
 
--- | CG fuse of two atom irreps (@2j@ labels): product flat → fused flat
+-- | CG fuse of two irreps (@2j@ labels): product flat → fused flat
 -- (channels in 'fusionChannels' order, each of dim @tj+1@).
-applyCGAtoms :: Int -> Int -> VS.Vector (Complex Double) -> VS.Vector (Complex Double)
-applyCGAtoms j1 j2 vin =
+applyCGIrreps :: Int -> Int -> VS.Vector (Complex Double) -> VS.Vector (Complex Double)
+applyCGIrreps j1 j2 vin =
   let mat = cgMatrixTwoIrreps j1 j2
       nRows = length mat
       nCols = (j1 + 1) * (j2 + 1)
@@ -121,13 +121,13 @@ applyCGAtoms j1 j2 vin =
           | col <- [0 .. nCols - 1]
           ]
 
--- | Fuse coalesced left spine (unit-mult channels) with atom @c@.
-fuseChannelsAtom
+-- | Fuse coalesced left spine (unit-mult channels) with irrep @c@.
+fuseChannelsIrrep
   :: [Int]
   -> Int
   -> VS.Vector (Complex Double)
   -> VS.Vector (Complex Double)
-fuseChannelsAtom leftChans c vin =
+fuseChannelsIrrep leftChans c vin =
   let dimC = c + 1
       leftOffs =
         scanl (+) 0 [tj + 1 | tj <- leftChans]
@@ -186,9 +186,9 @@ fuseChannelsAtom leftChans c vin =
       foldM f z' xs
 
 -- | @((a⊗b)⊗c)@ product → left-fused coalesced flat.
-fuseLeftAtoms
+fuseLeftIrreps
   :: Int -> Int -> Int -> VS.Vector (Complex Double) -> VS.Vector (Complex Double)
-fuseLeftAtoms a b c vin =
+fuseLeftIrreps a b c vin =
   let da = a + 1
       db = b + 1
       dc = c + 1
@@ -201,7 +201,7 @@ fuseLeftAtoms a b c vin =
               let fiber =
                     VS.generate dimAB $ \iAB ->
                       vin VS.! (iAB * dc + iC)
-                  fused = applyCGAtoms a b fiber
+                  fused = applyCGIrreps a b fiber
               mapM_
                 ( \iAB' ->
                     MVS.write m (iAB' * dc + iC) (fused VS.! iAB')
@@ -210,12 +210,12 @@ fuseLeftAtoms a b c vin =
           )
           [0 .. dc - 1]
         VS.freeze m
-   in fuseChannelsAtom (fusionChannels a b) c mid
+   in fuseChannelsIrrep (fusionChannels a b) c mid
 
 -- | @(a⊗(b⊗c))@ product → right-fused coalesced flat.
-fuseRightAtoms
+fuseRightIrreps
   :: Int -> Int -> Int -> VS.Vector (Complex Double) -> VS.Vector (Complex Double)
-fuseRightAtoms a b c vin =
+fuseRightIrreps a b c vin =
   let da = a + 1
       db = b + 1
       dc = c + 1
@@ -228,7 +228,7 @@ fuseRightAtoms a b c vin =
               let fiber =
                     VS.generate dimBC $ \iBC ->
                       vin VS.! (iA * dimBC + iBC)
-                  fused = applyCGAtoms b c fiber
+                  fused = applyCGIrreps b c fiber
               mapM_
                 ( \iBC' ->
                     MVS.write m (iA * dimBCf + iBC') (fused VS.! iBC')
@@ -237,15 +237,15 @@ fuseRightAtoms a b c vin =
           )
           [0 .. da - 1]
         VS.freeze m
-   in fuseAtomChannels a (fusionChannels b c) mid
+   in fuseIrrepChannels a (fusionChannels b c) mid
 
--- | Fuse atom @a@ with coalesced right spine.
-fuseAtomChannels
+-- | Fuse irrep @a@ with coalesced right spine.
+fuseIrrepChannels
   :: Int
   -> [Int]
   -> VS.Vector (Complex Double)
   -> VS.Vector (Complex Double)
-fuseAtomChannels a rightChans vin =
+fuseIrrepChannels a rightChans vin =
   let da = a + 1
       rightOffs = scanl (+) 0 [tj + 1 | tj <- rightChans]
       dimR = last rightOffs
@@ -315,28 +315,28 @@ matFromMap _nRows nCols f =
   where
     e i = VS.generate nCols $ \j -> if i == j then 1 else 0
 
--- | Dense left→right F for atom triple (same construction as 'denseFMove').
-denseFAtoms :: Int -> Int -> Int -> LA.Matrix (Complex Double)
-denseFAtoms a b c =
+-- | Dense left→right F for irrep triple (same construction as 'denseFMove').
+denseFIrreps :: Int -> Int -> Int -> LA.Matrix (Complex Double)
+denseFIrreps a b c =
   let dimP = (a + 1) * (b + 1) * (c + 1)
       zeroP = VS.replicate dimP 0
-      nL = VS.length (fuseLeftAtoms a b c zeroP)
-      nR = VS.length (fuseRightAtoms a b c zeroP)
-      mL = matFromMap nL dimP (fuseLeftAtoms a b c)
-      mR = matFromMap nR dimP (fuseRightAtoms a b c)
+      nL = VS.length (fuseLeftIrreps a b c zeroP)
+      nR = VS.length (fuseRightIrreps a b c zeroP)
+      mL = matFromMap nL dimP (fuseLeftIrreps a b c)
+      mR = matFromMap nR dimP (fuseRightIrreps a b c)
    in mR LA.<> LA.tr mL
 
 -- | Apply dense F (or @Fᵀ ≈ F⁻¹@) on left\/right sector flats from
 -- 'leftSectors' \/ 'rightSectors'. Label-driven — no per-triple typed flats.
-fmoveAtomsFlat
+fmoveIrrepsFlat
   :: Bool
   -> Int
   -> Int
   -> Int
   -> VS.Vector (Complex Double)
   -> VS.Vector (Complex Double)
-fmoveAtomsFlat inv a b c vin =
-  let mat = denseFAtoms a b c
+fmoveIrrepsFlat inv a b c vin =
+  let mat = denseFIrreps a b c
       v = VS.convert vin :: LA.Vector (Complex Double)
       v' =
         if inv
@@ -374,12 +374,12 @@ rightSectors a b c =
    in zip3 sortedJs [multByJ Map.! j | j <- sortedJs] offs
 
 -- | Pack @(d, mid, irrep)@ channels into a left\/right sector flat.
-packAtomsFlat
+packIrrepsFlat
   :: [(Int, Int, Int)]
   -> (Int -> [Int])
   -> [(Int, Int, VS.Vector (Complex Double))]
   -> VS.Vector (Complex Double)
-packAtomsFlat secs midsOf chans =
+packIrrepsFlat secs midsOf chans =
   let total =
         case secs of
           [] -> 0
@@ -413,13 +413,13 @@ packAtomsFlat secs midsOf chans =
           secs
         pure vout
 
--- | Inverse of 'packAtomsFlat'.
-unpackAtomsFlat
+-- | Inverse of 'packIrrepsFlat'.
+unpackIrrepsFlat
   :: [(Int, Int, Int)]
   -> (Int -> [Int])
   -> VS.Vector (Complex Double)
   -> [(Int, Int, VS.Vector (Complex Double))]
-unpackAtomsFlat secs midsOf buf =
+unpackIrrepsFlat secs midsOf buf =
   [ (d, mid, VS.slice (off + ei * dim) dim buf)
   | (d, _mult, off) <- secs
   , let dim = d + 1
@@ -432,7 +432,7 @@ unpackAtomsFlat secs midsOf buf =
 fMultEntry
   :: Int -> Int -> Int -> Int -> Int -> Int -> Complex Double
 fMultEntry a b c d e f =
-  let mat = denseFAtoms a b c
+  let mat = denseFIrreps a b c
       es = allowedE a b c d
       fs = allowedF a b c d
       eIdx = fromMaybe (-1) (elemIndex e es)

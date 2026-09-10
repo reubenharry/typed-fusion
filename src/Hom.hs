@@ -11,7 +11,7 @@
 -- 'Hom.TypeLevel' (families),
 -- 'Hom.Singletons' / 'FTreeV' / 'FMove' / 'Core' (term-level),
 -- 'Hom.Smoke' (concrete spines + checks).
--- Examples: 'Hom.Examples'.
+-- Examples: 'Examples.Symbolic'.
 -- Spines are spelled compositionally ('FuseFTrees', ''IrrepTree', ''Irrep') — no alias layer.
 module Hom
   ( module Hom.Expr

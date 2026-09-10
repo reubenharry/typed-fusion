@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 import Hom.Core
-import Hom.Examples
+import Examples.Symbolic
 
 main :: IO ()
 main = do

@@ -40,7 +40,7 @@ library
         Hom.Core
         Hom.Smoke
         Hom.Reference
-        Hom.Examples
+        Examples.Symbolic
         Hom.Vec
         -- SU(2) CG / type-level helpers
         Symmetry.Utils

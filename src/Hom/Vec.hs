@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Tiny helpers used by 'Hom.Examples'.
+-- | Tiny helpers used by 'Examples.Symbolic'.
 module Hom.Vec (vec) where
 
 import Data.IndexedListLiterals (IndexedListLiterals)

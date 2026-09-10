@@ -1,6 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 module Main where
-import Hom.Examples
+import Examples.Symbolic
 
 main :: IO ()
 main = mapM_ (\(n,b) -> putStrLn (n ++ ": " ++ show b))

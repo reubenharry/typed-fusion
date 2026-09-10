@@ -37,11 +37,11 @@ import qualified Data.Vector.Storable as VS
 import Fusion.SU2
   ( allowedE
   , allowedF
-  , fmoveAtomsFlat
+  , fmoveIrrepsFlat
   , leftSectors
-  , packAtomsFlat
+  , packIrrepsFlat
   , rightSectors
-  , unpackAtomsFlat
+  , unpackIrrepsFlat
   )
 import Hom.Expr
 import Hom.FTreeV
@@ -194,13 +194,13 @@ fmoveTrees tv =
                     , rc' == rc
                     ]
                   buf =
-                    packAtomsFlat
+                    packIrrepsFlat
                       (leftSectors ra rb rc)
                       (\d -> allowedE ra rb rc d)
                       chH
-                  buf' = fmoveAtomsFlat False ra rb rc buf
+                  buf' = fmoveIrrepsFlat False ra rb rc buf
                   unpacked =
-                    unpackAtomsFlat
+                    unpackIrrepsFlat
                       (rightSectors ra rb rc)
                       (\d -> allowedF ra rb rc d)
                       buf'
@@ -234,13 +234,13 @@ fmoveInvTrees tv =
                     , rc' == rc
                     ]
                   buf =
-                    packAtomsFlat
+                    packIrrepsFlat
                       (rightSectors ra rb rc)
                       (\d -> allowedF ra rb rc d)
                       chH
-                  buf' = fmoveAtomsFlat True ra rb rc buf
+                  buf' = fmoveIrrepsFlat True ra rb rc buf
                   unpacked =
-                    unpackAtomsFlat
+                    unpackIrrepsFlat
                       (leftSectors ra rb rc)
                       (\d -> allowedE ra rb rc d)
                       buf'
