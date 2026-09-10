@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
@@ -14,6 +15,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
 -- | Term-level singletons for genealogy-preserving 'FTree' / 'FTrees' trees.
+-- SU(2) phase: labels are 'Nat'.
 module Hom.Singletons
   ( SFTree (..)
   , KnownFTree (..)
@@ -25,10 +27,10 @@ module Hom.Singletons
 import Data.Proxy (Proxy (..))
 import Hom.Expr
 import Hom.TypeLevel (IrrepDim)
-import GHC.TypeLits (KnownNat, natVal)
+import GHC.TypeLits (KnownNat, Nat, natVal)
 
--- | Singleton for a genealogy-preserving 'FTree' tree.
-data SFTree (t :: FTree) where
+-- | Singleton for a genealogy-preserving 'FTree' tree (@lab ~ Nat@ / SU(2)).
+data SFTree (t :: FTree Nat) where
   SIrrepTree
     :: forall j
      . ( KnownNat j
@@ -45,7 +47,7 @@ data SFTree (t :: FTree) where
     -> SFTree ('From j '(l, r))
 
 -- | Materialize 'SFTree' for a statically known tree.
-class KnownFTree (t :: FTree) where
+class KnownFTree (t :: FTree Nat) where
   fTreeSing :: SFTree t
 
 instance
@@ -67,7 +69,7 @@ instance
   fTreeSing = SFrom @j (fTreeSing @l) (fTreeSing @r)
 
 -- | Singleton spine for 'FTrees'.
-data SFTrees (ts :: FTrees) where
+data SFTrees (ts :: FTrees Nat) where
   SFTreesNil :: SFTrees '[]
   SFTreesCons
     :: forall t rest
@@ -76,7 +78,7 @@ data SFTrees (ts :: FTrees) where
     -> SFTrees (t ': rest)
 
 -- | Materialize 'SFTrees' for a statically known tree list.
-class KnownFTrees (ts :: FTrees) where
+class KnownFTrees (ts :: FTrees Nat) where
   fTreesSing :: SFTrees ts
 
 instance KnownFTrees '[] where

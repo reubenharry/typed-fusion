@@ -65,7 +65,7 @@ import Symmetry.Utils (Append)
 import Prelude hiding (($))
 
 -- | Spine of root vectors, indexed by type-level 'FTrees'.
-data FTreeV (ts :: FTrees) where
+data FTreeV (ts :: FTrees Nat) where
   FNil :: FTreeV '[]
   FCons
     :: forall t rest
@@ -104,7 +104,7 @@ appendFTreeV (FCons v rest) r2 =
   FCons v (appendFTreeV rest r2)
 
 -- | Walk CG channels for a pair of trees → 'FTreeV' of @'From@ outcomes.
-class FuseTreesGo (t1 :: FTree) (t2 :: FTree) (cg :: [(Nat, Nat)]) where
+class FuseTreesGo (t1 :: FTree Nat) (t2 :: FTree Nat) (cg :: [(Nat, Nat)]) where
   fuseTreesGo
     :: C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2))
     -> FTreeV (FromCG t1 t2 cg)
@@ -141,7 +141,7 @@ fuseTrees =
   fuseTreesGo @t1 @t2 @(TensorIrrepRepSU2 (Root t1) (Root t2))
 
 -- | Inverse of 'fuseTrees' on the CG image: sum channel embeddings.
-class UnfuseTreesGo (t1 :: FTree) (t2 :: FTree) (cg :: [(Nat, Nat)]) where
+class UnfuseTreesGo (t1 :: FTree Nat) (t2 :: FTree Nat) (cg :: [(Nat, Nat)]) where
   unfuseTreesGo
     :: FTreeV (FromCG t1 t2 cg)
     -> C (IrrepDim (Root t1)) ⊗ C (IrrepDim (Root t2))
@@ -188,7 +188,7 @@ unfuseTrees =
   unfuseTreesGo @t1 @t2 @(TensorIrrepRepSU2 (Root t1) (Root t2))
 
 -- | Constraints for walking 'FuseFTrees' at the term level.
-type family FuseFTreesTermC (rs :: FTrees) (qs :: FTrees) :: Constraint where
+type family FuseFTreesTermC (rs :: FTrees Nat) (qs :: FTrees Nat) :: Constraint where
   FuseFTreesTermC '[] _ = ()
   FuseFTreesTermC (t1 ': rest) qs =
     ( FuseFTreesOneTermC t1 qs
@@ -197,14 +197,14 @@ type family FuseFTreesTermC (rs :: FTrees) (qs :: FTrees) :: Constraint where
 
 -- | Forward bundle: Hom spine @FuseFTrees a b@ is known and fusible.
 -- (Does not imply Mac Lane intermediates such as @FuseFTrees b (FuseFTrees b c)@.)
-type KnownHomTrees (a :: FTrees) (b :: FTrees) =
+type KnownHomTrees (a :: FTrees Nat) (b :: FTrees Nat) =
   ( KnownFTrees a
   , KnownFTrees b
   , KnownFTrees (FuseFTrees a b)
   , FuseFTreesTermC a b
   )
 
-type family FuseFTreesOneTermC (t1 :: FTree) (qs :: FTrees) :: Constraint where
+type family FuseFTreesOneTermC (t1 :: FTree Nat) (qs :: FTrees Nat) :: Constraint where
   FuseFTreesOneTermC _ '[] = ()
   FuseFTreesOneTermC t1 (t2 ': rest) =
     ( KnownFTree t1
@@ -222,14 +222,14 @@ type family FuseFTreesOneTermC (t1 :: FTree) (qs :: FTrees) :: Constraint where
     )
 
 -- | Constraints to build the identity on @'FuseFTrees' ls rs@ (position-diagonal).
-type family FuseFTreesIdC (ls :: FTrees) (rs :: FTrees) :: Constraint where
+type family FuseFTreesIdC (ls :: FTrees Nat) (rs :: FTrees Nat) :: Constraint where
   FuseFTreesIdC '[] _ = ()
   FuseFTreesIdC (t1 ': rest) rs =
     ( FuseFTreesOneIdC t1 rs
     , FuseFTreesIdC rest rs
     )
 
-type family FuseFTreesOneIdC (t1 :: FTree) (qs :: FTrees) :: Constraint where
+type family FuseFTreesOneIdC (t1 :: FTree Nat) (qs :: FTrees Nat) :: Constraint where
   FuseFTreesOneIdC _ '[] = ()
   FuseFTreesOneIdC t1 (t2 ': rest) =
     ( KnownFTrees (FuseTrees t1 t2)

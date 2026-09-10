@@ -28,12 +28,15 @@ module Fusion.Obj
   , FuseIdemMult
   , HomDim
   , ObjSpine
+  , ObjSpineZ
   ) where
 
 import Data.Kind (Constraint, Type)
 import Fusion.Theory (FiniteIrr (..), FusionTheory (..), LabelEq)
 import Fusion.Unbounded (Spine)
 import GHC.TypeLits (CmpNat, Nat, type (*), type (+), type (-))
+import Symmetry.Utils (Z)
+import Symmetry.Tensor (CmpZ)
 
 --------------------------------------------------------------------------------
 -- Trees
@@ -206,6 +209,37 @@ type family SpineInsertNatOrd
   SpineInsertNatOrd 'EQ j n _k m rest = '(j, n + m) ': rest
   SpineInsertNatOrd 'LT j n k m rest = '(j, n) ': '(k, m) ': rest
   SpineInsertNatOrd 'GT j n k m rest = '(k, m) ': SpineInsertNat j n rest
+
+--------------------------------------------------------------------------------
+-- Obj → Spine (unbounded Z charges; U(1))
+--------------------------------------------------------------------------------
+
+-- | Semisimplicity map for @Obj Z@: FuseNorm → collect → coalesced 'Spine Z'.
+type family ObjSpineZ (t :: Type) (a :: Obj Z) :: Spine Z where
+  ObjSpineZ t a = CoalesceZIrreps (CollectSimples t (FuseNorm t (Norm a)))
+
+type family CoalesceZIrreps (xs :: [Obj Z]) :: Spine Z where
+  CoalesceZIrreps '[] = '[]
+  CoalesceZIrreps ('Irrep j ': rest) =
+    SpineInsertZ j 1 (CoalesceZIrreps rest)
+
+type family SpineInsertZ (j :: Z) (n :: Nat) (sp :: Spine Z) :: Spine Z where
+  SpineInsertZ j n '[] = '[ '(j, n)]
+  SpineInsertZ j n ('(k, m) ': rest) =
+    SpineInsertZOrd (CmpZ j k) j n k m rest
+
+type family SpineInsertZOrd
+  (o :: Ordering)
+  (j :: Z)
+  (n :: Nat)
+  (k :: Z)
+  (m :: Nat)
+  (rest :: Spine Z)
+  :: Spine Z
+  where
+  SpineInsertZOrd 'EQ j n _k m rest = '(j, n + m) ': rest
+  SpineInsertZOrd 'LT j n k m rest = '(j, n) ': '(k, m) ': rest
+  SpineInsertZOrd 'GT j n k m rest = '(k, m) ': SpineInsertZ j n rest
 
 --------------------------------------------------------------------------------
 -- Multiplicities

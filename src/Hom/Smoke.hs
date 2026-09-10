@@ -10,7 +10,7 @@
 {-# LANGUAGE NoStarIsType #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
--- | Concrete leaf/Hom spines and term-level smokes for symbolic SU(2).
+-- | Concrete leaf/Hom spines and term-level smokes for symbolic Hom (SU(2) Nat engine).
 -- Spines are spelled as 'FuseFTrees' / ''IrrepTree' / ''Irrep' compositions (no alias layer).
 module Hom.Smoke
   ( fmoveTrees111, fmoveInvTrees111
@@ -53,6 +53,7 @@ import Data.VectorSpace (InnerSpace ((<.>)), (*^), (^-^))
 import qualified Data.Vector.Storable as VS
 import Categorical.Linear ((⊗^))
 import Fusion.Obj (Obj (Irrep))
+import Symmetry.Group (Group (SU2))
 import Hom.Core
 import Hom.Expr
 import Hom.FMove
@@ -362,7 +363,7 @@ checkFmoveHomLeft111 =
 -- | 'HomFused' packaging unit laws on spin-1 via 'composeHomFused'.
 checkHomFusedCategory222 :: Bool
 checkHomFusedCategory222 =
-  let f :: HomFused ('Irrep 2) ('Irrep 2)
+  let f :: HomFused SU2 ('Irrep 2) ('Irrep 2)
       f =
         HomFused $
           FCons @('From 0 '( 'IrrepTree 2, 'IrrepTree 2)) (konst 0.2) $
@@ -382,7 +383,7 @@ checkHomFusedCategory222 =
 -- | 'HomFused' unit laws on @tj = 3@ via 'idHomFTrees'.
 checkHomFusedCategory333 :: Bool
 checkHomFusedCategory333 =
-  let f :: HomFused ('Irrep 3) ('Irrep 3)
+  let f :: HomFused SU2 ('Irrep 3) ('Irrep 3)
       f =
         HomFused $
           FCons @('From 0 '( 'IrrepTree 3, 'IrrepTree 3)) (konst 0.1) $
@@ -403,7 +404,7 @@ checkHomFusedCategory333 =
 -- | 'HomInter' unit laws on spin-½ via embed → 'composeHomTrees' → filter.
 checkHomInterCategory111 :: Bool
 checkHomInterCategory111 =
-  let f :: HomInter ('Irrep 1) ('Irrep 1)
+  let f :: HomInter SU2 ('Irrep 1) ('Irrep 1)
       f =
         HomInter $
           scaleFTreeV
@@ -430,11 +431,11 @@ checkHomInterCategory111 =
           idf
           (unHomInter f)
 
--- | Forgetful densify @HomFused ⇒ HomUnfused@ on spin-½ (smoke-only adapter).
+-- | Forgetful densify @HomFused SU2 ⇒ HomUnfused@ on spin-½ (smoke-only adapter).
 -- CG-unfuse, FS dual iso on the left leg, scale by @√2@.
 forgetHomFusedHalf
-  :: HomFused ('Irrep 1) ('Irrep 1)
-  -> HomUnfused ('Irrep 1) ('Irrep 1)
+  :: HomFused SU2 ('Irrep 1) ('Irrep 1)
+  -> HomUnfused SU2 ('Irrep 1) ('Irrep 1)
 forgetHomFusedHalf (HomFused r) =
   let u = unfuseTrees @('IrrepTree 1) @('IrrepTree 1) r
       dualIso :: C 2 +> C 2
@@ -450,8 +451,8 @@ forgetHomFusedHalf (HomFused r) =
 -- | Forgetful densify of fused id matches unfused id on spin-½.
 checkForgetHomFusedId111 :: Bool
 checkForgetHomFusedId111 =
-  let fusedId = id :: HomFused ('Irrep 1) ('Irrep 1)
-      unfusedId = id :: HomUnfused ('Irrep 1) ('Irrep 1)
+  let fusedId = id :: HomFused SU2 ('Irrep 1) ('Irrep 1)
+      unfusedId = id :: HomUnfused SU2 ('Irrep 1) ('Irrep 1)
       forgotten = forgetHomFusedHalf fusedId
    in approxHomUnfused forgotten unfusedId
 
@@ -459,14 +460,14 @@ checkForgetHomFusedId111 =
 -- @forget(g ∘_Inter f) = forget(g) ∘_Unfused forget(f)@ for scaled ids.
 checkForgetHomInterCompose111 :: Bool
 checkForgetHomInterCompose111 =
-  let f :: HomInter ('Irrep 1) ('Irrep 1)
+  let f :: HomInter SU2 ('Irrep 1) ('Irrep 1)
       f =
         HomInter $
           scaleFTreeV
             @(FilterTrivial (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]))
             (0.4 :+ 0)
             (idHomInterVal @('Irrep 1))
-      g :: HomInter ('Irrep 1) ('Irrep 1)
+      g :: HomInter SU2 ('Irrep 1) ('Irrep 1)
       g =
         HomInter $
           scaleFTreeV
@@ -474,6 +475,9 @@ checkForgetHomInterCompose111 =
             ((-0.5) :+ 0)
             (idHomInterVal @('Irrep 1))
       -- Embed intertwiners to HomFused, densify, compare compose both ways.
+      emb
+        :: HomInter SU2 ('Irrep 1) ('Irrep 1)
+        -> HomFused SU2 ('Irrep 1) ('Irrep 1)
       emb (HomInter t) =
         HomFused (embedTrivialFTreeV @(FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) t)
       lhs =
@@ -488,8 +492,8 @@ checkForgetHomInterCompose111 =
    in approxHomUnfused lhs rhs
 
 approxHomUnfused
-  :: HomUnfused ('Irrep 1) ('Irrep 1)
-  -> HomUnfused ('Irrep 1) ('Irrep 1)
+  :: HomUnfused SU2 ('Irrep 1) ('Irrep 1)
+  -> HomUnfused SU2 ('Irrep 1) ('Irrep 1)
   -> Bool
 approxHomUnfused (HomUnfused u) (HomUnfused v) =
   let du = toArray u

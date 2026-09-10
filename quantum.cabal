@@ -29,8 +29,9 @@ library
         Fusion.Ops
         Fusion.Unbounded
         Fusion.SU2
+        Fusion.U1
         Fusion.Fibonacci
-        -- HomUnfused / HomFused / HomInter (SU(2) symbolic)
+        -- HomUnfused / HomFused / HomInter (group-indexed; SU(2)+U(1))
         Hom
         Hom.Expr
         Hom.TypeLevel

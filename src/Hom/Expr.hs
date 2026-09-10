@@ -1,29 +1,29 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoStarIsType #-}
 
--- | Symbolic SU(2) fusion-tree kinds.
+-- | Symbolic fusion-tree kinds (label-polymorphic).
 --
 -- Unfused Hom indexes 'Fusion.Obj.Obj' trees. Fused Hom indexes
--- the same 'Obj' trees (via 'ObjSpineSU2' / 'ObjFTrees'); morphisms are
+-- the same 'Obj' trees (via 'ObjFTrees' / 'TheoryOf'); morphisms are
 -- genealogy-preserving fusion trees ('FTree' \/ 'FTrees' / 'FuseFTrees').
+-- SU(2) uses @lab ~ Nat@ (@2j@); U(1) uses @lab ~ Z@.
 module Hom.Expr
   ( FTree (..)
   , FTrees
   ) where
 
-import GHC.TypeLits (Nat)
-
--- | Fusion tree: one inhabited SU(2) channel plus genealogy.
+-- | Fusion tree: one inhabited channel plus genealogy.
 --
--- @'IrrepTree j@ is a bare @2j@ label. @j `'From` '(l, r)@ is the CG outcome @j@
--- of coupling children @l@ and @r@ (SU(2) multiplicity-free; no channel index).
+-- @'IrrepTree j@ is a bare label. @j `'From` '(l, r)@ is the CG outcome @j@
+-- of coupling children @l@ and @r@ (multiplicity-free; no channel index).
 --
 -- Children are paired so @From@ can be infix (Haskell infix constructors are
 -- binary).
-data FTree
-  = IrrepTree Nat
-  | Nat `From` (FTree, FTree)
+data FTree lab
+  = IrrepTree lab
+  | lab `From` (FTree lab, FTree lab)
 
 -- | List of fusion trees (same-root trees stay distinct).
-type FTrees = [FTree]
+type FTrees lab = [FTree lab]

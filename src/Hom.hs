@@ -1,18 +1,18 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Symbolic SU(2): skeletal 'HomFused' objects and genealogy 'FTree' morphisms.
+-- | Symbolic Hom(@g :: Group@): 'HomUnfused' / 'HomFused' / 'HomInter'.
 --
 -- Layers: 'Fusion.Obj.Obj' → 'HomUnfused' / 'ToVObj'; skeletal
 -- 'Spine' → 'HomFused' / 'HomInter' with 'FTreeV' / 'FuseFTrees' morphisms /
 -- 'composeHomTrees' (HomInter: embed → compose → filter).
+-- SU(2) owns the Nat genealogy engine; U(1) has type-level fuse + runnable HomUnfused.
 --
 -- Hierarchy: 'Hom.Expr' (kinds),
 -- 'Hom.TypeLevel' (families),
 -- 'Hom.Singletons' / 'FTreeV' / 'FMove' / 'Core' (term-level),
--- 'Hom.Smoke' (concrete spines + checks).
+-- 'Hom.Smoke' (concrete SU(2) spines + checks).
 -- Examples: 'Examples.Symbolic'.
--- Spines are spelled compositionally ('FuseFTrees', ''IrrepTree', ''Irrep') — no alias layer.
 module Hom
   ( module Hom.Expr
   , module Hom.TypeLevel

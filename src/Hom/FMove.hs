@@ -47,7 +47,7 @@ import Hom.Expr
 import Hom.FTreeV
 import Hom.Singletons
 import Hom.TypeLevel
-import GHC.TypeLits (KnownNat, natVal)
+import GHC.TypeLits (KnownNat, Nat, natVal)
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
 import Symmetry.CG.SU2
   ( fuseMapLeftFlatSectors
@@ -271,7 +271,7 @@ fmoveInvOuterHom
 fmoveInvOuterHom = fmoveInvTrees @a @b @(FuseFTrees b c)
 
 -- | Nested unfused @a ⊗ q@ before CG (layout for Fuse-right naturality).
-data TensorTrees (a :: FTrees) (q :: FTrees) where
+data TensorTrees (a :: FTrees Nat) (q :: FTrees Nat) where
   TensorTrees :: FTreeV a -> FTreeV q -> TensorTrees a q
 
 fuseTensorTrees

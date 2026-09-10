@@ -22,6 +22,7 @@ module Symmetry.Tensor
   , TensorIrrepRepSU2
   , Coalesce
   , InsertSector
+  , CmpZ
   ) where
 
 import GHC.TypeLits (Nat, CmpNat, type (+), type (-))

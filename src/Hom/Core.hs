@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
@@ -18,7 +19,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {- HLINT ignore "Eta reduce" -}
 
--- | Term-level symbolic SU(2): cups, Hom, Mac Lane compose.
+-- | Term-level symbolic Hom(g): cups, Hom, Mac Lane compose (SU(2) first).
 --
 -- Singletons: 'Hom.Singletons'.
 -- 'FTreeV' / fuse: 'Hom.FTreeV'.
@@ -26,23 +27,28 @@
 -- Concrete spines + smokes: 'Hom.Smoke'.
 --
 -- Layers: 'Obj' → 'HomUnfused' (Kronecker); 'Obj' → 'HomFused' via
--- 'ObjSpineSU2' / 'ObjFTrees' with genealogy 'FTreeV' / 'FuseFTrees' morphisms;
+-- 'ObjFTrees' / 'DualObj' with genealogy 'FTreeV' / 'FuseFTrees' morphisms;
 -- 'HomInter' = trivial sector of fused Hom (same compose via embed/filter).
 -- Cups: genealogy 'cup' / 'capUnfusedObj'.
 module Hom.Core where
 
+import Data.Kind (Type)
 import Data.Complex (Complex ((:+)), conjugate, magnitude, realPart)
 import Data.Proxy (Proxy (..))
 import Data.Type.Equality ((:~:) (Refl))
 import Data.VectorSpace (InnerSpace ((<.>)), Scalar, VectorSpace ((*^)))
-import GHC.TypeLits (KnownNat, Nat, sameNat, type (+))
+import GHC.TypeLits (KnownNat, sameNat)
 import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..))
 import Categorical.Associative (Associative (..))
 import Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
 import Categorical.Braided (Braided (..))
 import Categorical.Monoidal (Monoidal (..))
-import Fusion.Obj (Obj (Irrep, (:⊗:), (:⊕:)))
+import Fusion.Obj (DualObj, Obj (Irrep, (:⊗:), (:⊕:)))
+import Fusion.SU2 (SU2Th)
+import Fusion.U1 (U1Th)
+import Symmetry.Group (Group (..), Irreps)
+import Symmetry.Utils (Z (Zero))
 import Hom.Expr
 import Hom.FMove
 import Hom.FTreeV
@@ -52,7 +58,6 @@ import Math.LinearMap.Asserted (getLinearFunction)
 import Math.LinearMap.Category
   ( DualVector
   , TensorSpace
-  , (-+$>)
   , idTensor
   , pattern LinearFunction
   , trace
@@ -91,66 +96,115 @@ unitToVScalar = (konst 1 <.>)
 --
 --   compose f g = unitor ∘ (cup ⊗ id) ∘ assoc ∘ (f ⊗ g)
 --
--- Hom elements are Dual-left @Dual(ToVObj a) ⊗ ToVObj b@. Unitors below are
+-- Hom elements are Dual-left @Dual(ToVObj SU2 a) ⊗ ToVObj SU2 b@. Unitors below are
 -- shared with the Monoidal instance; Obj cups use 'ToVObj'.
 --------------------------------------------------------------------------------
 
 -- | Unfused morphisms @a → b@: Dual-left packing on tree spaces
--- @Dual(ToVObj a) ⊗ ToVObj b@ (linearmap Kronecker packing).
-newtype HomUnfused (a :: Obj Nat) (b :: Obj Nat) = HomUnfused
-  { unHomUnfused :: DualVector (ToVObj a) ⊗ ToVObj b }
+-- @Dual(ToVObj g a) ⊗ ToVObj g b@ (linearmap Kronecker packing).
+newtype HomUnfused (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g)) = HomUnfused
+  { unHomUnfused :: DualVector (ToVObj g a) ⊗ ToVObj g b }
 
--- | Fused morphisms @a → b@: 'Obj' trees, payload is genealogy 'FTreeV' of
--- 'FuseFTrees (ObjFTrees a) (ObjFTrees b)' after 'ObjSpineSU2' (SU(2) dual≅primal;
--- left child plays dual). Compose via 'composeHomTrees' on those leaf reps.
-newtype HomFused (a :: Obj Nat) (b :: Obj Nat) = HomFused
-  { unHomFused :: FTreeV (FuseFTrees (ObjFTrees a) (ObjFTrees b)) }
+-- | Fused morphisms @a → b@: genealogy 'FTreeV' of
+-- @FuseFTrees (ObjFTrees g (DualObj (TheoryOf g) a)) (ObjFTrees g b)@.
+-- SU(2): 'DualLab' is id on labels (tensor dual still reverses factors).
+newtype HomFused (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g)) = HomFused
+  { unHomFused :: HomFusedRep g a b }
 
--- | Intertwiners @a → b@: trivial total-charge sector of fused Hom
--- (@'FilterTrivial' of 'FuseFTrees (ObjFTrees a) (ObjFTrees b)'@). Compose reuses
--- 'composeHomTrees' via 'embedTrivialFTreeV' \/ 'filterTrivialFTreeV'.
-newtype HomInter (a :: Obj Nat) (b :: Obj Nat) = HomInter
-  { unHomInter :: FTreeV (FilterTrivial (FuseFTrees (ObjFTrees a) (ObjFTrees b))) }
+-- | Intertwiners @a → b@: trivial sector of fused Hom.
+newtype HomInter (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g)) = HomInter
+  { unHomInter :: HomInterRep g a b }
+
+-- | Payload of 'HomFused' (closed per group).
+type family HomFusedRep (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g)) :: Type where
+  HomFusedRep SU2 a b =
+    FTreeV
+      ( FuseFTrees
+          (ObjFTrees SU2 (DualObj SU2Th a))
+          (ObjFTrees SU2 b)
+      )
+  -- U(1) fused payload: type-level only in this phase (term 'FTreeV' is Nat-indexed).
+  HomFusedRep U1 a b =
+    ToVFTreesU1
+      ( FuseFTreesU1
+          (ObjFTrees U1 (DualObj U1Th a))
+          (ObjFTrees U1 b)
+      )
+
+type family HomInterRep (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g)) :: Type where
+  HomInterRep SU2 a b =
+    FTreeV
+      ( FilterTrivial
+          ( FuseFTrees
+              (ObjFTrees SU2 (DualObj SU2Th a))
+              (ObjFTrees SU2 b)
+          )
+      )
+  HomInterRep U1 a b =
+    ToVFTreesU1
+      ( FilterTrivialU1
+          ( FuseFTreesU1
+              (ObjFTrees U1 (DualObj U1Th a))
+              (ObjFTrees U1 b)
+          )
+      )
+
+-- | Dual-left leaf spine for fused Hom domain (@DualObj a@ after skeletal fuse).
+type DualObjFTrees (g :: Group) (a :: Obj (Irreps g)) =
+  ObjFTrees g (DualObj (TheoryOf g) a)
 
 --------------------------------------------------------------------------------
--- True unfused Hom on Obj trees (ToVObj / Dual-left Hom)
+-- True unfused Hom on Obj trees (ToVObj SU2 / Dual-left Hom)
 --------------------------------------------------------------------------------
 
 -- | Object spaces for 'HomUnfused': 'ToVObj' is a nested Kronecker / pair space.
 --
 -- Empty methods: this is a constraint bundle. The three instances induct over
--- 'Obj' so callers can write @KnownToVObj a@ instead of repeating the
+-- 'Obj' so callers can write @KnownToVObj SU2 a@ instead of repeating the
 -- 'LinearSpace' \/ 'TensorSpace' \/ scalar equalities for every tree shape.
 -- (A 'ConstraintKinds' synonym cannot carry those inductive instances.)
 class
-  ( LinearSpace (ToVObj a)
-  , LinearSpace (DualVector (ToVObj a))
-  , Scalar (ToVObj a) ~ Complex Double
-  , Scalar (DualVector (ToVObj a)) ~ Complex Double
-  , TensorSpace (ToVObj a)
-  , TensorSpace (DualVector (ToVObj a))
-  , TensorSpace (ToVObj a ⊗ DualVector (ToVObj a))
-  , TensorSpace (DualVector (ToVObj a) ⊗ ToVObj a)
-  , TensorSpace (ToVObj ('Irrep 0))
+  ( LinearSpace (ToVObj g a)
+  , LinearSpace (DualVector (ToVObj g a))
+  , Scalar (ToVObj g a) ~ Complex Double
+  , Scalar (DualVector (ToVObj g a)) ~ Complex Double
+  , TensorSpace (ToVObj g a)
+  , TensorSpace (DualVector (ToVObj g a))
+  , TensorSpace (ToVObj g a ⊗ DualVector (ToVObj g a))
+  , TensorSpace (DualVector (ToVObj g a) ⊗ ToVObj g a)
+  , TensorSpace (ToVObj g ('Irrep (UnitLabG g)))
   ) =>
-  KnownToVObj (a :: Obj Nat)
+  KnownToVObj (g :: Group) (a :: Obj (Irreps g))
+
+-- | Monoidal unit label for the group.
+type family UnitLabG (g :: Group) :: Irreps g where
+  UnitLabG SU2 = 0
+  UnitLabG U1 = 'Zero
 
 instance
   ( KnownNat j
   , KnownNat (IrrepDim j)
   ) =>
-  KnownToVObj ('Irrep j)
+  KnownToVObj SU2 ('Irrep j)
 
-instance (KnownToVObj a, KnownToVObj b) => KnownToVObj (a :⊗: b)
+instance (KnownToVObj SU2 a, KnownToVObj SU2 b) => KnownToVObj SU2 (a :⊗: b)
 
-instance (KnownToVObj a, KnownToVObj b) => KnownToVObj (a :⊕: b)
+instance (KnownToVObj SU2 a, KnownToVObj SU2 b) => KnownToVObj SU2 (a :⊕: b)
+
+instance KnownToVObj U1 ('Irrep j)
+
+instance (KnownToVObj U1 a, KnownToVObj U1 b) => KnownToVObj U1 (a :⊗: b)
+
+instance (KnownToVObj U1 a, KnownToVObj U1 b) => KnownToVObj U1 (a :⊕: b)
 
 -- | Unfused evaluation @ε : a ⊗ a* → 𝟙@ (right dual).
 cupUnfusedObj
-  :: forall a
-   . KnownToVObj a
-  => (ToVObj a ⊗ DualVector (ToVObj a))
-  -> ToVObj ('Irrep 0)
+  :: forall g a
+   . ( KnownToVObj g a
+     , ToVObj g ('Irrep (UnitLabG g)) ~ C 1
+     )
+  => (ToVObj g a ⊗ DualVector (ToVObj g a))
+  -> ToVObj g ('Irrep (UnitLabG g))
 cupUnfusedObj t =
   konst
     ( getLinearFunction
@@ -160,239 +214,245 @@ cupUnfusedObj t =
 
 -- | Unfused coevaluation @η : 𝟙 → a* ⊗ a@ (right dual; Hom packing).
 capUnfusedObj
-  :: forall a
-   . KnownToVObj a
-  => ToVObj ('Irrep 0)
-  -> (DualVector (ToVObj a) ⊗ ToVObj a)
-capUnfusedObj u = unitToVScalar u *^ (swapMap $ idTensor @(ToVObj a))
-
-assocComposeObj
-  :: forall a b c
-   . ( KnownToVObj a
-     , KnownToVObj b
-     , KnownToVObj c
+  :: forall g a
+   . ( KnownToVObj g a
+     , ToVObj g ('Irrep (UnitLabG g)) ~ C 1
      )
-  => (DualVector (ToVObj a) ⊗ ToVObj b) ⊗ (DualVector (ToVObj b) ⊗ ToVObj c)
-  -> DualVector (ToVObj a) ⊗ ((ToVObj b ⊗ DualVector (ToVObj b)) ⊗ ToVObj c)
-assocComposeObj t =
-  ( (id ⊗^ lassocMap @(ToVObj b) @(DualVector (ToVObj b)) @(ToVObj c))
-      . rassocMap
-          @(DualVector (ToVObj a))
-          @(ToVObj b)
-          @(DualVector (ToVObj b) ⊗ ToVObj c)
-  )
-    $ t
-
-cupTensorIdComposeObj
-  :: forall a b c
-   . ( KnownToVObj a
-     , KnownToVObj b
-     , KnownToVObj c
-     )
-  => DualVector (ToVObj a) ⊗ ((ToVObj b ⊗ DualVector (ToVObj b)) ⊗ ToVObj c)
-  -> DualVector (ToVObj a) ⊗ (ToVObj ('Irrep 0) ⊗ ToVObj c)
-cupTensorIdComposeObj t =
-  (id ⊗^ (arr (LinearFunction (cupUnfusedObj @b)) ⊗^ id)) $ t
-
-unitorComposeObj
-  :: forall a c
-   . ( KnownToVObj a
-     , KnownToVObj c
-     )
-  => DualVector (ToVObj a) ⊗ (ToVObj ('Irrep 0) ⊗ ToVObj c)
-  -> (DualVector (ToVObj a) ⊗ ToVObj c)
-unitorComposeObj t =
-  (id ⊗^ lunit @(ToVObj c)) $ t
+  => ToVObj g ('Irrep (UnitLabG g))
+  -> (DualVector (ToVObj g a) ⊗ ToVObj g a)
+capUnfusedObj u = unitToVScalar u *^ (swapMap $ idTensor @(ToVObj g a))
 
 -- | Unfused Hom composition: apply Mac Lane ladder once to @f ⊗ g@.
 -- @λ ∘ (ε⊗id) ∘ α@.
 composeMorObj
-  :: forall a b c
-   . ( KnownToVObj a
-     , KnownToVObj b
-     , KnownToVObj c
-     , TensorSpace ((DualVector (ToVObj a) ⊗ ToVObj b))
-     , TensorSpace ((DualVector (ToVObj b) ⊗ ToVObj c))
-     , Scalar ((DualVector (ToVObj a) ⊗ ToVObj b)) ~ Complex Double
-     , Scalar ((DualVector (ToVObj b) ⊗ ToVObj c)) ~ Complex Double
+  :: forall g a b c
+   . ( KnownToVObj g a
+     , KnownToVObj g b
+     , KnownToVObj g c
+     , ToVObj g ('Irrep (UnitLabG g)) ~ C 1
+     , TensorSpace ((DualVector (ToVObj g a) ⊗ ToVObj g b))
+     , TensorSpace ((DualVector (ToVObj g b) ⊗ ToVObj g c))
+     , Scalar ((DualVector (ToVObj g a) ⊗ ToVObj g b)) ~ Complex Double
+     , Scalar ((DualVector (ToVObj g b) ⊗ ToVObj g c)) ~ Complex Double
      )
-  => (DualVector (ToVObj a) ⊗ ToVObj b)
-  -> (DualVector (ToVObj b) ⊗ ToVObj c)
-  -> (DualVector (ToVObj a) ⊗ ToVObj c)
+  => (DualVector (ToVObj g a) ⊗ ToVObj g b)
+  -> (DualVector (ToVObj g b) ⊗ ToVObj g c)
+  -> (DualVector (ToVObj g a) ⊗ ToVObj g c)
 composeMorObj f g =
-  ( (id ⊗^ lunit @(ToVObj c))
-      . (id ⊗^ (arr (LinearFunction (cupUnfusedObj @b)) ⊗^ id))
-      . (id ⊗^ lassocMap @(ToVObj b) @(DualVector (ToVObj b)) @(ToVObj c))
+  ( (id ⊗^ lunit @(ToVObj g c))
+      . (id ⊗^ (arr (LinearFunction (cupUnfusedObj @g @b)) ⊗^ id))
+      . (id ⊗^ lassocMap @(ToVObj g b) @(DualVector (ToVObj g b)) @(ToVObj g c))
       . rassocMap
-          @(DualVector (ToVObj a))
-          @(ToVObj b)
-          @(DualVector (ToVObj b) ⊗ ToVObj c)
+          @(DualVector (ToVObj g a))
+          @(ToVObj g b)
+          @(DualVector (ToVObj g b) ⊗ ToVObj g c)
   )
     $ (f ⊗ g)
 
+-- | SU(2) specializations used by Examples smokes (assoc / cup⊗id / unitor steps).
+cupTensorIdComposeObj
+  :: forall a b c
+   . ( KnownToVObj SU2 a
+     , KnownToVObj SU2 b
+     , KnownToVObj SU2 c
+     )
+  => DualVector (ToVObj SU2 a) ⊗ ((ToVObj SU2 b ⊗ DualVector (ToVObj SU2 b)) ⊗ ToVObj SU2 c)
+  -> DualVector (ToVObj SU2 a) ⊗ (ToVObj SU2 ('Irrep 0) ⊗ ToVObj SU2 c)
+cupTensorIdComposeObj t =
+  (id ⊗^ (arr (LinearFunction (cupUnfusedObj @SU2 @b)) ⊗^ id)) $ t
+
+unitorComposeObj
+  :: forall a c
+   . ( KnownToVObj SU2 a
+     , KnownToVObj SU2 c
+     )
+  => DualVector (ToVObj SU2 a) ⊗ (ToVObj SU2 ('Irrep 0) ⊗ ToVObj SU2 c)
+  -> (DualVector (ToVObj SU2 a) ⊗ ToVObj SU2 c)
+unitorComposeObj t =
+  (id ⊗^ lunit @(ToVObj SU2 c)) $ t
+
 --------------------------------------------------------------------------------
--- Category \/ monoidal structure: HomUnfused (complete)
+-- Category \/ monoidal structure: HomUnfused SU2 (complete)
 --------------------------------------------------------------------------------
 
-instance Category HomUnfused where
-  type Object HomUnfused a = KnownToVObj a
+instance Category (HomUnfused SU2) where
+  type Object (HomUnfused SU2) a = KnownToVObj SU2 a
 
-  id :: forall a. Object HomUnfused a => HomUnfused a a
-  id = HomUnfused (capUnfusedObj @a (konst 1))
+  id :: forall a. Object (HomUnfused SU2) a => HomUnfused SU2 a a
+  id = HomUnfused (capUnfusedObj @SU2 @a (konst 1))
 
   (.)
     :: forall a b c
-     . (Object HomUnfused a, Object HomUnfused b, Object HomUnfused c)
-    => HomUnfused b c
-    -> HomUnfused a b
-    -> HomUnfused a c
+     . (Object (HomUnfused SU2) a, Object (HomUnfused SU2) b, Object (HomUnfused SU2) c)
+    => HomUnfused SU2 b c
+    -> HomUnfused SU2 a b
+    -> HomUnfused SU2 a c
   HomUnfused g . HomUnfused f =
-    HomUnfused (composeMorObj @a @b @c f g)
+    HomUnfused (composeMorObj @SU2 @a @b @c f g)
 
-instance PFunctor (:⊗:) HomUnfused HomUnfused where
+instance PFunctor (:⊗:) (HomUnfused SU2) (HomUnfused SU2) where
   first
     :: forall a b c
-     . ( Object HomUnfused a
-       , Object HomUnfused b
-       , Object HomUnfused c
-       , Object HomUnfused (a :⊗: c)
-       , Object HomUnfused (b :⊗: c)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) b
+       , Object (HomUnfused SU2) c
+       , Object (HomUnfused SU2) (a :⊗: c)
+       , Object (HomUnfused SU2) (b :⊗: c)
        )
-    => HomUnfused a b
-    -> HomUnfused (a :⊗: c) (b :⊗: c)
+    => HomUnfused SU2 a b
+    -> HomUnfused SU2 (a :⊗: c) (b :⊗: c)
   first (HomUnfused f) =
-    let m :: ToVObj (a :⊗: c) +> ToVObj (b :⊗: c)
+    let m :: ToVObj SU2 (a :⊗: c) +> ToVObj SU2 (b :⊗: c)
         m = (fromTensor -+$=> f) ⊗^ id
      in HomUnfused (asTensor -+$=> m)
 
-instance QFunctor (:⊗:) HomUnfused HomUnfused where
+instance QFunctor (:⊗:) (HomUnfused SU2) (HomUnfused SU2) where
   second
     :: forall a b c
-     . ( Object HomUnfused a
-       , Object HomUnfused b
-       , Object HomUnfused c
-       , Object HomUnfused (c :⊗: a)
-       , Object HomUnfused (c :⊗: b)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) b
+       , Object (HomUnfused SU2) c
+       , Object (HomUnfused SU2) (c :⊗: a)
+       , Object (HomUnfused SU2) (c :⊗: b)
        )
-    => HomUnfused a b
-    -> HomUnfused (c :⊗: a) (c :⊗: b)
+    => HomUnfused SU2 a b
+    -> HomUnfused SU2 (c :⊗: a) (c :⊗: b)
   second (HomUnfused g) =
-    let m :: ToVObj (c :⊗: a) +> ToVObj (c :⊗: b)
+    let m :: ToVObj SU2 (c :⊗: a) +> ToVObj SU2 (c :⊗: b)
         m = id ⊗^ (fromTensor -+$=> g)
      in HomUnfused (asTensor -+$=> m)
 
 -- | @bimap f g@ is the Kronecker product of the underlying linear maps,
 -- packed Dual-left: @(unpack f) ⊗^ (unpack g)@.
-instance Bifunctor (:⊗:) HomUnfused HomUnfused HomUnfused where
+instance Bifunctor (:⊗:) (HomUnfused SU2) (HomUnfused SU2) (HomUnfused SU2) where
   bimap
     :: forall a b c d
-     . ( Object HomUnfused a
-       , Object HomUnfused b
-       , Object HomUnfused c
-       , Object HomUnfused d
-       , Object HomUnfused (a :⊗: c)
-       , Object HomUnfused (b :⊗: d)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) b
+       , Object (HomUnfused SU2) c
+       , Object (HomUnfused SU2) d
+       , Object (HomUnfused SU2) (a :⊗: c)
+       , Object (HomUnfused SU2) (b :⊗: d)
        )
-    => HomUnfused a b
-    -> HomUnfused c d
-    -> HomUnfused (a :⊗: c) (b :⊗: d)
+    => HomUnfused SU2 a b
+    -> HomUnfused SU2 c d
+    -> HomUnfused SU2 (a :⊗: c) (b :⊗: d)
   bimap (HomUnfused f) (HomUnfused g) =
-    let m :: ToVObj (a :⊗: c) +> ToVObj (b :⊗: d)
+    let m :: ToVObj SU2 (a :⊗: c) +> ToVObj SU2 (b :⊗: d)
         m = (fromTensor -+$=> f) ⊗^ (fromTensor -+$=> g)
      in HomUnfused (asTensor -+$=> m)
 
 -- | Object associator is linearmap @α@ (Kronecker reassociation), packed as Hom.
-instance Associative HomUnfused (:⊗:) where
+instance Associative (HomUnfused SU2) (:⊗:) where
   associate
     :: forall a b c
-     . ( Object HomUnfused a
-       , Object HomUnfused b
-       , Object HomUnfused c
-       , Object HomUnfused (a :⊗: b)
-       , Object HomUnfused (b :⊗: c)
-       , Object HomUnfused ((a :⊗: b) :⊗: c)
-       , Object HomUnfused (a :⊗: (b :⊗: c))
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) b
+       , Object (HomUnfused SU2) c
+       , Object (HomUnfused SU2) (a :⊗: b)
+       , Object (HomUnfused SU2) (b :⊗: c)
+       , Object (HomUnfused SU2) ((a :⊗: b) :⊗: c)
+       , Object (HomUnfused SU2) (a :⊗: (b :⊗: c))
        )
-    => HomUnfused ((a :⊗: b) :⊗: c) (a :⊗: (b :⊗: c))
+    => HomUnfused SU2 ((a :⊗: b) :⊗: c) (a :⊗: (b :⊗: c))
   associate =
     HomUnfused
       ( asTensor -+$=>
-          (rassocMap @(ToVObj a) @(ToVObj b) @(ToVObj c))
+          (rassocMap @(ToVObj SU2 a) @(ToVObj SU2 b) @(ToVObj SU2 c))
       )
 
   disassociate
     :: forall a b c
-     . ( Object HomUnfused a
-       , Object HomUnfused b
-       , Object HomUnfused c
-       , Object HomUnfused (a :⊗: b)
-       , Object HomUnfused (b :⊗: c)
-       , Object HomUnfused ((a :⊗: b) :⊗: c)
-       , Object HomUnfused (a :⊗: (b :⊗: c))
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) b
+       , Object (HomUnfused SU2) c
+       , Object (HomUnfused SU2) (a :⊗: b)
+       , Object (HomUnfused SU2) (b :⊗: c)
+       , Object (HomUnfused SU2) ((a :⊗: b) :⊗: c)
+       , Object (HomUnfused SU2) (a :⊗: (b :⊗: c))
        )
-    => HomUnfused (a :⊗: (b :⊗: c)) ((a :⊗: b) :⊗: c)
+    => HomUnfused SU2 (a :⊗: (b :⊗: c)) ((a :⊗: b) :⊗: c)
   disassociate =
     HomUnfused
       ( asTensor -+$=>
-          (lassocMap @(ToVObj a) @(ToVObj b) @(ToVObj c))
+          (lassocMap @(ToVObj SU2 a) @(ToVObj SU2 b) @(ToVObj SU2 c))
       )
 
-instance Monoidal HomUnfused (:⊗:) where
-  type Id HomUnfused (:⊗:) = 'Irrep 0
+instance Monoidal (HomUnfused SU2) (:⊗:) where
+  type Id (HomUnfused SU2) (:⊗:) = 'Irrep 0
 
   idl
     :: forall a
-     . ( Object HomUnfused a
-       , Object HomUnfused ('Irrep 0)
-       , Object HomUnfused ('Irrep 0 :⊗: a)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) ('Irrep 0)
+       , Object (HomUnfused SU2) ('Irrep 0 :⊗: a)
        )
-    => HomUnfused ('Irrep 0 :⊗: a) a
+    => HomUnfused SU2 ('Irrep 0 :⊗: a) a
   idl =
-    HomUnfused (asTensor -+$=> (lunit @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (lunit @(ToVObj SU2 a)))
 
   idr
     :: forall a
-     . ( Object HomUnfused a
-       , Object HomUnfused ('Irrep 0)
-       , Object HomUnfused (a :⊗: 'Irrep 0)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) ('Irrep 0)
+       , Object (HomUnfused SU2) (a :⊗: 'Irrep 0)
        )
-    => HomUnfused (a :⊗: 'Irrep 0) a
+    => HomUnfused SU2 (a :⊗: 'Irrep 0) a
   idr =
-    HomUnfused (asTensor -+$=> (runit @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (runit @(ToVObj SU2 a)))
 
   coidl
     :: forall a
-     . ( Object HomUnfused a
-       , Object HomUnfused ('Irrep 0)
-       , Object HomUnfused ('Irrep 0 :⊗: a)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) ('Irrep 0)
+       , Object (HomUnfused SU2) ('Irrep 0 :⊗: a)
        )
-    => HomUnfused a ('Irrep 0 :⊗: a)
+    => HomUnfused SU2 a ('Irrep 0 :⊗: a)
   coidl =
-    HomUnfused (asTensor -+$=> (lunitInv @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (lunitInv @(ToVObj SU2 a)))
 
   coidr
     :: forall a
-     . ( Object HomUnfused a
-       , Object HomUnfused ('Irrep 0)
-       , Object HomUnfused (a :⊗: 'Irrep 0)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) ('Irrep 0)
+       , Object (HomUnfused SU2) (a :⊗: 'Irrep 0)
        )
-    => HomUnfused a (a :⊗: 'Irrep 0)
+    => HomUnfused SU2 a (a :⊗: 'Irrep 0)
   coidr =
-    HomUnfused (asTensor -+$=> (runitInv @(ToVObj a)))
+    HomUnfused (asTensor -+$=> (runitInv @(ToVObj SU2 a)))
 
-instance Braided HomUnfused (:⊗:) where
+instance Braided (HomUnfused SU2) (:⊗:) where
   braid
     :: forall a b
-     . ( Object HomUnfused a
-       , Object HomUnfused b
-       , Object HomUnfused (a :⊗: b)
-       , Object HomUnfused (b :⊗: a)
+     . ( Object (HomUnfused SU2) a
+       , Object (HomUnfused SU2) b
+       , Object (HomUnfused SU2) (a :⊗: b)
+       , Object (HomUnfused SU2) (b :⊗: a)
        )
-    => HomUnfused (a :⊗: b) (b :⊗: a)
+    => HomUnfused SU2 (a :⊗: b) (b :⊗: a)
   braid =
-    let m :: ToVObj (a :⊗: b) +> ToVObj (b :⊗: a)
-        m = swapMap @(ToVObj a) @(ToVObj b)
+    let m :: ToVObj SU2 (a :⊗: b) +> ToVObj SU2 (b :⊗: a)
+        m = swapMap @(ToVObj SU2 a) @(ToVObj SU2 b)
      in HomUnfused (asTensor -+$=> m)
+
+--------------------------------------------------------------------------------
+-- HomUnfused U1 (Category + monoidal; carriers are C 1)
+--------------------------------------------------------------------------------
+
+instance Category (HomUnfused U1) where
+  type Object (HomUnfused U1) a = KnownToVObj U1 a
+
+  id :: forall a. Object (HomUnfused U1) a => HomUnfused U1 a a
+  id = HomUnfused (capUnfusedObj @U1 @a (konst 1))
+
+  (.)
+    :: forall a b c
+     . (Object (HomUnfused U1) a, Object (HomUnfused U1) b, Object (HomUnfused U1) c)
+    => HomUnfused U1 b c
+    -> HomUnfused U1 a b
+    -> HomUnfused U1 a c
+  HomUnfused g . HomUnfused f =
+    HomUnfused (composeMorObj @U1 @a @b @c f g)
 
 -- Category \/ monoidal structure: HomUnfused (complete). HomFused Category lives
 -- with the tree compose ladder (see 'composeHomFused').
@@ -599,35 +659,44 @@ composeHomTrees f g =
 -- on 'ObjFTrees'-expanded leaf reps.
 composeHomFused
   :: forall a b c
-   . ( KnownHomTrees (ObjFTrees a) (ObjFTrees b)
-     , KnownHomTrees (ObjFTrees b) (ObjFTrees c)
-     , KnownHomTrees (ObjFTrees a) (ObjFTrees c)
+   . ( DualObjFTrees SU2 b ~ ObjFTrees SU2 b
+     , KnownHomTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 b)
+     , KnownHomTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c)
+     , KnownHomTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 c)
      , KnownHomTrees
-         (FuseFTrees (ObjFTrees a) (ObjFTrees b))
-         (FuseFTrees (ObjFTrees b) (ObjFTrees c))
-     , KnownFTrees (FuseFTrees (ObjFTrees b) (ObjFTrees b))
-     , KnownFTrees (FuseFTrees (ObjFTrees b) (FuseFTrees (ObjFTrees b) (ObjFTrees c)))
-     , KnownFTrees (FuseFTrees (FuseFTrees (ObjFTrees b) (ObjFTrees b)) (ObjFTrees c))
-     , KnownFTrees (FuseFTrees Unit (ObjFTrees c))
-     , KnownFTrees (FuseFTrees (ObjFTrees a) (FuseFTrees (ObjFTrees b) (FuseFTrees (ObjFTrees b) (ObjFTrees c))))
-     , KnownFTrees (FuseFTrees (ObjFTrees a) (FuseFTrees (FuseFTrees (ObjFTrees b) (ObjFTrees b)) (ObjFTrees c)))
-     , KnownFTrees (FuseFTrees (ObjFTrees a) (FuseFTrees Unit (ObjFTrees c)))
-     , UnitorCodomain (FuseFTrees Unit (ObjFTrees c)) ~ ObjFTrees c
+         (FuseFTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 b))
+         (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c))
+     , KnownFTrees (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 b))
+     , KnownFTrees (FuseFTrees (ObjFTrees SU2 b) (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c)))
+     , KnownFTrees (FuseFTrees (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 b)) (ObjFTrees SU2 c))
+     , KnownFTrees (FuseFTrees Unit (ObjFTrees SU2 c))
+     , KnownFTrees (FuseFTrees (DualObjFTrees SU2 a) (FuseFTrees (ObjFTrees SU2 b) (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c))))
+     , KnownFTrees (FuseFTrees (DualObjFTrees SU2 a) (FuseFTrees (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 b)) (ObjFTrees SU2 c)))
+     , KnownFTrees (FuseFTrees (DualObjFTrees SU2 a) (FuseFTrees Unit (ObjFTrees SU2 c)))
+     , UnitorCodomain (FuseFTrees Unit (ObjFTrees SU2 c)) ~ ObjFTrees SU2 c
      )
-  => HomFused b c
-  -> HomFused a b
-  -> HomFused a c
+  => HomFused SU2 b c
+  -> HomFused SU2 a b
+  -> HomFused SU2 a c
 composeHomFused (HomFused g) (HomFused f) =
-  HomFused (composeHomTrees @(ObjFTrees a) @(ObjFTrees b) @(ObjFTrees c) f g)
-
-instance Category HomFused where
-  type Object HomFused a =
-    ( KnownFTrees (ObjFTrees a)
-    , FuseFTreesIdC (ObjFTrees a) (ObjFTrees a)
+  HomFused
+    ( composeHomTrees
+        @(DualObjFTrees SU2 a)
+        @(ObjFTrees SU2 b)
+        @(ObjFTrees SU2 c)
+        f
+        g
     )
 
-  id :: forall a. Object HomFused a => HomFused a a
-  id = HomFused (idHomFTrees @(ObjFTrees a))
+instance Category (HomFused SU2) where
+  type Object (HomFused SU2) a =
+    ( DualObjFTrees SU2 a ~ ObjFTrees SU2 a
+    , KnownFTrees (ObjFTrees SU2 a)
+    , FuseFTreesIdC (ObjFTrees SU2 a) (ObjFTrees SU2 a)
+    )
+
+  id :: forall a. Object (HomFused SU2) a => HomFused SU2 a a
+  id = HomFused (idHomFTrees @(ObjFTrees SU2 a))
 
   -- @(.)@ needs the five Mac Lane steps on @a,b,c@, which 'Object' alone does
   -- not imply (constraints are triple-indexed). Named ladder: 'composeHomFused'.
@@ -637,61 +706,64 @@ instance Category HomFused where
 -- HomInter: trivial sector of fused Hom (same Mac Lane compose)
 --------------------------------------------------------------------------------
 
--- | Identity intertwiner: trivial channels of @'idHomFTrees' (ObjFTrees a)@.
+-- | Identity intertwiner: trivial channels of @'idHomFTrees' (ObjFTrees SU2 a)@.
 idHomInterVal
   :: forall a
-   . ( KnownFTrees (ObjFTrees a)
-     , FuseFTreesIdC (ObjFTrees a) (ObjFTrees a)
-     , KnownFTrees (FuseFTrees (ObjFTrees a) (ObjFTrees a))
+   . ( DualObjFTrees SU2 a ~ ObjFTrees SU2 a
+     , KnownFTrees (ObjFTrees SU2 a)
+     , FuseFTreesIdC (ObjFTrees SU2 a) (ObjFTrees SU2 a)
+     , KnownFTrees (FuseFTrees (ObjFTrees SU2 a) (ObjFTrees SU2 a))
      )
-  => FTreeV (FilterTrivial (FuseFTrees (ObjFTrees a) (ObjFTrees a)))
+  => FTreeV (FilterTrivial (FuseFTrees (ObjFTrees SU2 a) (ObjFTrees SU2 a)))
 idHomInterVal =
-  filterTrivialFTreeV @(FuseFTrees (ObjFTrees a) (ObjFTrees a)) (idHomFTrees @(ObjFTrees a))
+  filterTrivialFTreeV @(FuseFTrees (ObjFTrees SU2 a) (ObjFTrees SU2 a)) (idHomFTrees @(ObjFTrees SU2 a))
 
 -- | 'HomInter' compose: embed → 'composeHomTrees' → filter (same as 'HomFused').
 composeHomInter
   :: forall a b c
-   . ( KnownHomTrees (ObjFTrees a) (ObjFTrees b)
-     , KnownHomTrees (ObjFTrees b) (ObjFTrees c)
-     , KnownHomTrees (ObjFTrees a) (ObjFTrees c)
+   . ( DualObjFTrees SU2 b ~ ObjFTrees SU2 b
+     , KnownHomTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 b)
+     , KnownHomTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c)
+     , KnownHomTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 c)
      , KnownHomTrees
-         (FuseFTrees (ObjFTrees a) (ObjFTrees b))
-         (FuseFTrees (ObjFTrees b) (ObjFTrees c))
-     , KnownFTrees (FuseFTrees (ObjFTrees b) (ObjFTrees b))
-     , KnownFTrees (FuseFTrees (ObjFTrees b) (FuseFTrees (ObjFTrees b) (ObjFTrees c)))
-     , KnownFTrees (FuseFTrees (FuseFTrees (ObjFTrees b) (ObjFTrees b)) (ObjFTrees c))
-     , KnownFTrees (FuseFTrees Unit (ObjFTrees c))
+         (FuseFTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 b))
+         (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c))
+     , KnownFTrees (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 b))
+     , KnownFTrees (FuseFTrees (ObjFTrees SU2 b) (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c)))
+     , KnownFTrees (FuseFTrees (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 b)) (ObjFTrees SU2 c))
+     , KnownFTrees (FuseFTrees Unit (ObjFTrees SU2 c))
      , KnownFTrees
          ( FuseFTrees
-             (ObjFTrees a)
-             (FuseFTrees (ObjFTrees b) (FuseFTrees (ObjFTrees b) (ObjFTrees c)))
+             (DualObjFTrees SU2 a)
+             (FuseFTrees (ObjFTrees SU2 b) (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c)))
          )
      , KnownFTrees
          ( FuseFTrees
-             (ObjFTrees a)
-             (FuseFTrees (FuseFTrees (ObjFTrees b) (ObjFTrees b)) (ObjFTrees c))
+             (DualObjFTrees SU2 a)
+             (FuseFTrees (FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 b)) (ObjFTrees SU2 c))
          )
-     , KnownFTrees (FuseFTrees (ObjFTrees a) (FuseFTrees Unit (ObjFTrees c)))
-     , UnitorCodomain (FuseFTrees Unit (ObjFTrees c)) ~ ObjFTrees c
+     , KnownFTrees (FuseFTrees (DualObjFTrees SU2 a) (FuseFTrees Unit (ObjFTrees SU2 c)))
+     , UnitorCodomain (FuseFTrees Unit (ObjFTrees SU2 c)) ~ ObjFTrees SU2 c
      )
-  => HomInter b c
-  -> HomInter a b
-  -> HomInter a c
+  => HomInter SU2 b c
+  -> HomInter SU2 a b
+  -> HomInter SU2 a c
 composeHomInter (HomInter g) (HomInter f) =
   HomInter $
-    filterTrivialFTreeV @(FuseFTrees (ObjFTrees a) (ObjFTrees c)) $
-      composeHomTrees @(ObjFTrees a) @(ObjFTrees b) @(ObjFTrees c)
-        (embedTrivialFTreeV @(FuseFTrees (ObjFTrees a) (ObjFTrees b)) f)
-        (embedTrivialFTreeV @(FuseFTrees (ObjFTrees b) (ObjFTrees c)) g)
+    filterTrivialFTreeV @(FuseFTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 c)) $
+      composeHomTrees @(DualObjFTrees SU2 a) @(ObjFTrees SU2 b) @(ObjFTrees SU2 c)
+        (embedTrivialFTreeV @(FuseFTrees (DualObjFTrees SU2 a) (ObjFTrees SU2 b)) f)
+        (embedTrivialFTreeV @(FuseFTrees (ObjFTrees SU2 b) (ObjFTrees SU2 c)) g)
 
-instance Category HomInter where
-  type Object HomInter a =
-    ( KnownFTrees (ObjFTrees a)
-    , FuseFTreesIdC (ObjFTrees a) (ObjFTrees a)
-    , KnownFTrees (FuseFTrees (ObjFTrees a) (ObjFTrees a))
+instance Category (HomInter SU2) where
+  type Object (HomInter SU2) a =
+    ( DualObjFTrees SU2 a ~ ObjFTrees SU2 a
+    , KnownFTrees (ObjFTrees SU2 a)
+    , FuseFTreesIdC (ObjFTrees SU2 a) (ObjFTrees SU2 a)
+    , KnownFTrees (FuseFTrees (ObjFTrees SU2 a) (ObjFTrees SU2 a))
     )
 
-  id :: forall a. Object HomInter a => HomInter a a
+  id :: forall a. Object (HomInter SU2) a => HomInter SU2 a a
   id = HomInter (idHomInterVal @a)
 
   -- Same as 'HomFused': use 'composeHomInter' (needs Mac Lane constraints).
