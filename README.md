@@ -113,15 +113,15 @@ which directly corresponds to the five morphisms:
 $$
 \begin{aligned}
 f \otimes g
-  &\colon (a^*\otimes b)\otimes(b^*\otimes c) \\
+  &\colon (a^{\ast}\otimes b)\otimes(b^{\ast}\otimes c) \\
   &\xrightarrow{F}
-    a^*\otimes\bigl(b\otimes(b^*\otimes c)\bigr) \\
+    a^{\ast}\otimes\bigl(b\otimes(b^{\ast}\otimes c)\bigr) \\
   &\xrightarrow{\mathrm{id}\otimes F}
-    a^*\otimes\bigl((b\otimes b^*)\otimes c\bigr) \\
+    a^{\ast}\otimes\bigl((b\otimes b^{\ast})\otimes c\bigr) \\
   &\xrightarrow{\mathrm{id}\otimes(\varepsilon\otimes\mathrm{id})}
-    a^*\otimes(\mathbf{1}\otimes c) \\
+    a^{\ast}\otimes(\mathbf{1}\otimes c) \\
   &\xrightarrow{\mathrm{id}\otimes\lambda}
-    a^*\otimes c\,.
+    a^{\ast}\otimes c\,.
 \end{aligned}
 $$
 
