@@ -105,19 +105,20 @@ fuseExample = fTreeVToV $ fuseTrees @('IrrepTree (Spin (1/2))) @('IrrepTree (Spi
 
 
 -- | Endomorphism on leaf-½ Hom (singlet / triplet channels).
-f, g :: HomFused SU2 ('Irrep (Spin (1/2))) ('Irrep (Spin (1/2)))
-f = HomFused (makeFTrees (konst 0.3, vec (1, 2, 3)))
-g = HomFused (makeFTrees (konst 0.5, vec (1, 2, 3)))
+-- f, g :: HomFused SU2 ('Irrep (Spin (1/2))) ('Irrep (Spin (1/2)))
+f,g :: FTreeV (ObjTrees SU2 (Dual Half :⊗: Half))
+f =  makeFTrees (konst 0.3, vec (1, 2, 3))
+g =  makeFTrees (konst 0.5, vec (1, 2, 3))
 
 type Half = 'Irrep (Spin (1/2))
 type HalfTree = 'IrrepTree (Spin (1/2))
 
 -- | @g ∘ f@ spelled as the five Mac Lane morphisms in 'composeHomTrees'.
-composeFGSteps :: HomFused SU2 ('Irrep (Spin (1/2))) ('Irrep (Spin (1/2)))
-composeFGSteps =
-  let 
+composeFGSteps :: FTreeV (ObjTrees SU2 (Dual Half :⊗: Half))
+composeFGSteps = step5
+  where 
       step1 :: FTreeV (ObjTrees SU2 ((Half :⊗: Half) :⊗: (Half :⊗: Half)))
-      step1 =  fuseFTreesTerm (unHomFused f)  (unHomFused g)
+      step1 =  fuseFTreesTerm f  g
       step2 :: FTreeV (ObjTrees SU2 (Half :⊗: (Half :⊗: (Half :⊗: Half))))
       step2 = fmoveOuterHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step1
       step3 :: FTreeV (ObjTrees SU2 (Half :⊗: (Half :⊗: Half :⊗: Half)))
@@ -126,7 +127,6 @@ composeFGSteps =
       step4 = cupTensorIdHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step3
       step5 :: FTreeV (ObjTrees SU2 (Half :⊗: Half))
       step5 = unitorHom @'[ HalfTree] @'[ HalfTree] step4
-   in HomFused step5
 
 
 
