@@ -34,7 +34,7 @@ The real point of this library is to write symmetry-respecting linear maps (inte
 naiveTensorProduct = vec (1,2) ⊗ vec (3,4) ^+^ vec (5,6) ⊗ vec (7,8) -->
 
 ```haskell
-ex1 :: Unfused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
+ex1 :: Unfused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (1/1)))
 ex1 =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
 ```
 
