@@ -34,8 +34,8 @@ The real point of this library is to write symmetry-respecting linear maps (inte
 naiveTensorProduct = vec (1,2) ⊗ vec (3,4) ^+^ vec (5,6) ⊗ vec (7,8) -->
 
 ```haskell
-naiveTensorProduct :: Unfused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
-naiveTensorProduct =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
+ex1 :: Unfused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
+ex1 =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
 ```
 
 `Unfused SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))` is what you'd typically write as `\(frac{1}{2} \otimes \frac{1}{2})^*\otimes 1`, i.e. the tensor product of two spin-1/2 representations, or $\mathbb{C}^2 \otimes \mathbb{C}^2 \otimes \mathbb{C}^3$. The second line is a vector in that space; as you'd expect, the lengths of the arrays are checked at compile time.
@@ -46,8 +46,8 @@ naiveTensorProduct =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2)
 fusedExample = (konst 1, vec (4,5,6)) -->
 
 ```haskell
-fusedTensorProduct :: Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
-fusedTensorProduct = (vec (1,2,3), (konst 1, (vec ( 2,3,4), vec (5,6,7,8,9))))
+ex2 :: Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
+ex2 = (vec (1,2,3), (konst 1, (vec ( 2,3,4), vec (5,6,7,8,9))))
 ```
 
 Here, the type `Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))` is the space $(1 \oplus 0 \oplus 1 \oplus 3/2)$, or concretely $\mathbb{C}^3 \otimes \mathbb{C}^1\otimes \mathbb{C}^3 \otimes \mathbb{C}^5$. Haskell computes this for you *at the type level*, so if you tried to change the number of elements in `vec (2,3,4)` for example, it would instantly complain.
@@ -55,8 +55,8 @@ Here, the type `Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) 
 And finally:
 
 ```haskell
-symmetricExample :: Sym SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
-symmetricExample = konst 1
+ex3 :: Sym SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (2 / 2)))
+ex3 = konst 1
 ```
 
 Here, we keep only the trivial sectors, of which there is just one in this case.
