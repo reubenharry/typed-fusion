@@ -13,7 +13,7 @@
 
 -- | F-moves and FuseFTrees naturality on genealogy spines.
 --
--- Production 'fuseMapRight'/'fuseMapLeft' use expanded spine-order flats
+-- Production 'idRight'/'idLeft' use expanded spine-order flats
 -- (no coalesced 'ForgetRep'). Irrep F-moves still route through Fusion.SU2
 -- collect/scatter flats as an oracle — typed per-channel @C (d+1)@ F is a
 -- follow-on (Phase 4).
@@ -26,8 +26,8 @@ module Hom.FMove
   , fmoveInvTreesHomLeft
   , TensorTrees (..)
   , fuseTensorTrees
-  , fuseMapRight
-  , fuseMapLeft
+  , idRight
+  , idLeft
   , fTreeVToExpandedFlat
   , expandedFlatToFTreeV
   ) where
@@ -341,7 +341,7 @@ fmoveInvTreesHomLeft =
 -- Production path packs/unpacks /expanded/ spine-order root flats (one slot per
 -- tree) — never coalesced 'ForgetRep' sectors — then applies the CG naturality
 -- helpers. Same-root genealogies stay distinct, matching 'Expr' / 'FuseFTrees'.
-fuseMapRight
+idRight
   :: forall a q q'
    . ( KnownFTrees a
      , KnownFTrees q
@@ -352,7 +352,7 @@ fuseMapRight
   => (FTreeV q -> FTreeV q')
   -> FTreeV (FuseFTrees a q)
   -> FTreeV (FuseFTrees a q')
-fuseMapRight f tv =
+idRight f tv =
   let secsA = repExpandedSectors (fTreesSing @_ @a)
       secsQ = repExpandedSectors (fTreesSing @_ @q)
       secsQ' = repExpandedSectors (fTreesSing @_ @q')
@@ -362,7 +362,7 @@ fuseMapRight f tv =
    in expandedFlatToFTreeV @(FuseFTrees a q') vout
 
 -- | Naturality of @Fuse(–, b)@: @refuse ∘ (f ⊗ id) ∘ unfuse@.
-fuseMapLeft
+idLeft
   :: forall a a' b
    . ( KnownFTrees a
      , KnownFTrees a'
@@ -373,7 +373,7 @@ fuseMapLeft
   => (FTreeV a -> FTreeV a')
   -> FTreeV (FuseFTrees a b)
   -> FTreeV (FuseFTrees a' b)
-fuseMapLeft f tv =
+idLeft f tv =
   let secsA = repExpandedSectors (fTreesSing @_ @a)
       secsA' = repExpandedSectors (fTreesSing @_ @a')
       secsB = repExpandedSectors (fTreesSing @_ @b)

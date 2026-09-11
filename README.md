@@ -82,7 +82,6 @@ sampleFusedHalfHalfAction = do
 This prints:
 
 ```bash
-ghci> sampleFusedHalfHalfAction
 g: α=-0.5677+4.65e-2i β=0.5754-0.5869i
 v:  [j=0: [0.3048+0.7993i], j=2: [-0.6498-4.42e-2i, -0.338+0.5466i, -6.33e-2+0.409i]]
 g·v:[j=0: [0.3048+0.7993i], j=2: [-6.84e-2-0.3461i, -0.333-0.7278i, -0.4246-0.2513i]]
@@ -90,22 +89,28 @@ g·v:[j=0: [0.3048+0.7993i], j=2: [-6.84e-2-0.3461i, -0.333-0.7278i, -0.4246-0.2
 
 ## Fusion trees
 
-In order to do f-moves properly, the types need to keep track of fusion trees. This took work, and isn't quite complete yet. But you can write, for example:
+In order to do f-moves properly, the types need to keep track of fusion trees. This took work, and isn't quite complete yet. But most of the operations you'd expect to do in a braided monoidal category are there. For instance: 
 
 ```haskell
 composeFGSteps :: FTreeV (ObjTrees SU2 (Dual Half :⊗: Half))
 composeFGSteps = step5
-  where 
+  where
       step1 :: FTreeV (ObjTrees SU2 ((Half :⊗: Half) :⊗: (Half :⊗: Half)))
-      step1 =  fuseFTreesTerm f  g
+      step1 = fuseFTreesTerm f g
       step2 :: FTreeV (ObjTrees SU2 (Half :⊗: (Half :⊗: (Half :⊗: Half))))
-      step2 = fmoveOuterHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step1
+      step2 = fmoveOuterHom @'[HalfTree] @'[HalfTree] @'[HalfTree] step1
       step3 :: FTreeV (ObjTrees SU2 (Half :⊗: (Half :⊗: Half :⊗: Half)))
-      step3 = fmoveInnerHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step2
+      step3 =
+        idRight @'[HalfTree]
+          (fmoveInvTrees @'[HalfTree] @'[HalfTree] @'[HalfTree])
+          step2
       step4 :: FTreeV (ObjTrees SU2 (Half :⊗: ('Irrep 0 :⊗: Half)))
-      step4 = cupTensorIdHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step3
+      step4 =
+        idRight @'[HalfTree]
+          (idLeft @_ @_ @'[HalfTree] (cup @'[HalfTree]))
+          step3
       step5 :: FTreeV (ObjTrees SU2 (Half :⊗: Half))
-      step5 = unitorHom @'[ HalfTree] @'[ HalfTree] step4
+      step5 = idRight @'[HalfTree] (unitor @'[HalfTree]) step4
 ```
 
 which directly corresponds to the five morphisms:
@@ -139,16 +144,20 @@ A more extreme version would be to use Lean, where the types are in principle po
 
 This is a really nice programming language theory problem: fusion categories have quite rich structure, and being able to reflect them in the type system is an appealing challenge (with plenty more to do beyond this library).
 
-## How this works
+# What is and isn't implemented
+
+Currently things work for $U(1)$ and $SU(2)$, but not for other groups yet. I also want to generalize the interface to fusion categories that aren't categories of representations, like the Fibonacci fusion category, or the Ising fusion category. This is underway.
+
+# How this works
 
 Getting this to work requires quite a bit of type-level programming, including singletons. From a user perspective, this is all under the hood.
 
-## AI usage
+# AI usage
 
 Type-level programming is a bit of an art in Haskell, since it pushes the limits of the type system, often with experimental features. Since I don't particularly care *how* the fancy dependent types are implemented with singletons and so on, this is where I delegated the most to AI.
 
 But I have pretty strong opinions on how the types should look (and how good Haskell should look too), so this project is "human-led", as it were.
 
-## Using the library
+# Using the library
 
 This is still a work in progress. It compiles and works, but if you're interested in using it, you should probably contact me for help.

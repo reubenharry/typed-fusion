@@ -10,5 +10,5 @@ main = mapM_ (\(n,b) -> putStrLn (n ++ ": " ++ show b))
   , ("homUnfusedU1LeftUnitOk", homUnfusedU1LeftUnitOk)
   , ("composeHomTreesSelfTest", composeHomTreesSelfTest)
   , ("fmoveTreesSelfTest", fmoveTreesSelfTest)
-  , ("fuseMapRightFinvSelfTest", fuseMapRightFinvSelfTest)
+  , ("idRightFinvSelfTest", idRightFinvSelfTest)
   ]

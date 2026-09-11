@@ -23,7 +23,7 @@
 --
 -- Singletons: 'Hom.Singletons'.
 -- 'FTreeV' / fuse: 'Hom.FTreeV'.
--- F-moves / fuseMap: 'Hom.FMove'.
+-- F-moves / idLeft / idRight: 'Hom.FMove'.
 -- Concrete spines + smokes: 'Hom.Smoke'.
 --
 -- Layers: 'Obj' → 'HomUnfused' (Kronecker); 'Obj' → 'HomFused' via
@@ -141,7 +141,7 @@ type family HomInterRep (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g))
       )
   HomInterRep U1 a b =
     FTreeV
-      ( FilterTrivialU1
+      ( FilterTrivial
           ( FuseFTreesU1
               (ObjFTrees U1 (DualObj U1Th a))
               (ObjFTrees U1 b)
@@ -468,7 +468,7 @@ instance Category (HomUnfused U1) where
 
 -- | Step 1: @f ⊗ g@ is 'fuseFTreesTerm' (inlined at 'composeHomTrees').
 -- Step 2: outer F — @(a*⊗b) ⊗ (b*⊗c) → a* ⊗ (b ⊗ (b*⊗c))@ via 'fmoveOuterHom'.
--- ('fmoveInnerHom' is the subsequent @id ⊗ F@ via 'fuseMapRight' 'fmoveInvTrees'.)
+-- ('fmoveInnerHom' is the subsequent @id ⊗ F@ via 'idRight' 'fmoveInvTrees'.)
 
 -- | Step 3: @id ⊗ F@ — @a* ⊗ (b ⊗ (b*⊗c)) → a* ⊗ ((b ⊗ b*) ⊗ c)@.
 --
@@ -484,38 +484,11 @@ fmoveInnerHom
   => FTreeV (FuseFTrees a (FuseFTrees b (FuseFTrees b c)))
   -> FTreeV (FuseFTrees a (FuseFTrees (FuseFTrees b b) c))
 fmoveInnerHom =
-  fuseMapRight
+  idRight
     @a
     @(FuseFTrees b (FuseFTrees b c))
     @(FuseFTrees (FuseFTrees b b) c)
     (fmoveInvTrees @b @b @c)
-
--- | Step 4: @id ⊗ (cup ⊗ id)@ — Unit remains in the type.
-cupTensorIdHom
-  :: forall a b c
-   . ( KnownFTrees a
-     , KnownFTrees b
-     , KnownFTrees c
-     , KnownFTrees (FuseFTrees b b)
-     , KnownFTrees (FuseFTrees (FuseFTrees b b) c)
-     , KnownFTrees (FuseFTrees Unit c)
-     , KnownFTrees (FuseFTrees a (FuseFTrees (FuseFTrees b b) c))
-     , KnownFTrees (FuseFTrees a (FuseFTrees Unit c))
-     , KnownFTrees (FuseFTrees b b)
-     )
-  => FTreeV (FuseFTrees a (FuseFTrees (FuseFTrees b b) c))
-  -> FTreeV (FuseFTrees a (FuseFTrees Unit c))
-cupTensorIdHom =
-  fuseMapRight
-    @a
-    @(FuseFTrees (FuseFTrees b b) c)
-    @(FuseFTrees Unit c)
-    ( fuseMapLeft
-        @(FuseFTrees b b)
-        @Unit
-        @c
-        (cup @b)
-    )
 
 -- | Evaluation @ε : b ⊗ b* → 𝟙@ on genealogy Hom (@FuseFTrees b b@, dual≅primal).
 --
@@ -572,7 +545,7 @@ unitorHom
   => FTreeV (FuseFTrees a (FuseFTrees Unit c))
   -> FTreeV (FuseFTrees a c)
 unitorHom =
-  fuseMapRight @a @(FuseFTrees Unit c) @c (unitor @c)
+  idRight @a @(FuseFTrees Unit c) @c (unitor @c)
 
 -- | Left unitor on fusion trees: @Unit ⊗ c → c@ (drop @'IrrepTree 0@ left child).
 --
@@ -642,7 +615,8 @@ composeHomTrees
   -> FTreeV (FuseFTrees a c)
 composeHomTrees f g =
   unitorHom @a @c
-    ( cupTensorIdHom @a @b @c
+    ( idRight @a @(FuseFTrees (FuseFTrees b b) c) @(FuseFTrees Unit c)
+        (idLeft @(FuseFTrees b b) @Unit @c (cup @b))
         ( fmoveInnerHom @a @b @c
             ( fmoveOuterHom @a @b @c
                 (fuseFTreesTerm @(FuseFTrees a b) @(FuseFTrees b c) f g)

@@ -32,7 +32,8 @@ module Fusion.Obj
   ) where
 
 import Data.Kind (Constraint, Type)
-import Fusion.Theory (FiniteIrr (..), FusionTheory (..), LabelEq)
+import Data.Type.Equality (type (==))
+import Fusion.Theory (FiniteIrr (..), FusionTheory (..))
 import Fusion.Unbounded (Spine)
 import GHC.TypeLits (CmpNat, Nat, type (*), type (+), type (-))
 import Symmetry.Utils (Z)
@@ -124,9 +125,9 @@ type family FuseRight
 
 type family FuseTensorPair (t :: Type) (a :: Obj lab) (b :: Obj lab) :: Obj lab where
   FuseTensorPair t ('Irrep u) b =
-    FuseLeft t u b (LabelEq u (UnitLab t))
+    FuseLeft t u b (u == UnitLab t)
   FuseTensorPair t a ('Irrep u) =
-    FuseRight t a u (LabelEq u (UnitLab t))
+    FuseRight t a u (u == UnitLab t)
   FuseTensorPair t a b = FuseNorm t (Norm ((a :⊗: b)))
 
 -- | Fuse a tensor tree using @FuseN@ \/ unitors, then re-@Norm@.

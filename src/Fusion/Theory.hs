@@ -16,7 +16,6 @@
 module Fusion.Theory
   ( FusionTheory (..)
   , FiniteIrr (..)
-  , LabelEq
   ) where
 
 import Data.Kind (Type)
@@ -35,8 +34,3 @@ class FusionTheory (code :: Type) (t :: Type) | t -> code where
 class FusionTheory code t => FiniteIrr (code :: Type) (t :: Type) | t -> code where
   type Irr t :: [code]
   irrVals :: Proxy t -> [code]
-
--- | Closed label equality (for unitors \/ multiplicity deltas).
-type family LabelEq (a :: k) (b :: k) :: Bool where
-  LabelEq a a = 'True
-  LabelEq _ _ = 'False

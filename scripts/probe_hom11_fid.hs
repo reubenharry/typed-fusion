@@ -70,7 +70,10 @@ main = do
       cupFid = fmoveInnerHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) outerFid
       outFid =
         unitorHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1])
-          (cupTensorIdHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) cupFid)
+          ( idRight
+              (idLeft @_ @_ @('[ 'IrrepTree 1]) (cup @('[ 'IrrepTree 1])))
+              cupFid
+          )
   dumpTrees @(FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1])) "Hom11 dom Fid" domFid
   dumpTrees "Hom11 outer Fid" outerFid
   dumpTrees "Hom11 cupR Fid" cupFid

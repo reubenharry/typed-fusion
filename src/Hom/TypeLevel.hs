@@ -41,7 +41,6 @@ module Hom.TypeLevel
   -- * U(1) genealogy (Z labels)
   , FuseTreesU1
   , FuseFTreesU1
-  , FilterTrivialU1
   , UnitU1
   , ToVTreeU1
   , ToVFTreesU1
@@ -90,11 +89,11 @@ type family TheoryOf (g :: Group) :: Type where
 -- Per-group equations: matching on @Obj (Irreps g)@ is illegal when @Irreps@ is a family.
 type family ToVObj (g :: Group) (a :: Obj (Irreps g)) :: Type where
   ToVObj SU2 ('Irrep j) = C (IrrepDim j)
-  ToVObj SU2 ((a :⊗: b)) = ToVObj SU2 a ⊗ ToVObj SU2 b
-  ToVObj SU2 ((a :⊕: b)) = (ToVObj SU2 a, ToVObj SU2 b)
+  ToVObj SU2 (a :⊗: b ) = ToVObj SU2 a ⊗ ToVObj SU2 b
+  ToVObj SU2 (a :⊕: b ) = (ToVObj SU2 a, ToVObj SU2 b)
   ToVObj U1 ('Irrep _) = C 1
-  ToVObj U1 ((a :⊗: b)) = ToVObj U1 a ⊗ ToVObj U1 b
-  ToVObj U1 ((a :⊕: b)) = (ToVObj U1 a, ToVObj U1 b)
+  ToVObj U1 (a :⊗: b ) = ToVObj U1 a ⊗ ToVObj U1 b
+  ToVObj U1 (a :⊕: b ) = (ToVObj U1 a, ToVObj U1 b)
 
 -- | Object-space views of an @Obj@ (vector spaces — not Hom morphisms).
 type Unfused (g :: Group) (a :: Obj (Irreps g)) = ToVObj g a
@@ -105,7 +104,7 @@ type family Fused (g :: Group) (a :: Obj (Irreps g)) :: Type where
 
 type family Sym (g :: Group) (a :: Obj (Irreps g)) :: Type where
   Sym SU2 a = ToVFTrees (FilterTrivial (ObjTrees SU2 a))
-  Sym U1 a = ToVFTrees (FilterTrivialU1 (ObjTrees U1 a))
+  Sym U1 a = ToVFTrees (FilterTrivial (ObjTrees U1 a))
 
 --------------------------------------------------------------------------------
 -- Skeletal objects → bare FTrees (HomFused object index)
@@ -148,16 +147,16 @@ type family ObjTrees (g :: Group) (a :: Obj (Irreps g)) :: FTrees (Irreps g) whe
 
 type family ObjTreesGo (a :: Obj Nat) :: FTrees Nat where
   ObjTreesGo ('Irrep j) = '[ 'IrrepTree j]
-  ObjTreesGo ((a :⊗: b)) =
+  ObjTreesGo (a :⊗: b ) =
     FuseFTrees (ObjTreesGo a) (ObjTreesGo b)
-  ObjTreesGo ((a :⊕: b)) =
+  ObjTreesGo (a :⊕: b ) =
     Append (ObjTreesGo a) (ObjTreesGo b)
 
 type family ObjTreesGoU1 (a :: Obj Z) :: FTrees Z where
   ObjTreesGoU1 ('Irrep j) = '[ 'IrrepTree j]
-  ObjTreesGoU1 ((a :⊗: b)) =
+  ObjTreesGoU1 (a :⊗: b ) =
     FuseFTreesU1 (ObjTreesGoU1 a) (ObjTreesGoU1 b)
-  ObjTreesGoU1 ((a :⊕: b)) =
+  ObjTreesGoU1 (a :⊕: b ) =
     Append (ObjTreesGoU1 a) (ObjTreesGoU1 b)
 
 --------------------------------------------------------------------------------
@@ -206,12 +205,22 @@ type family FuseFTrees (rs :: FTrees Nat) (qs :: FTrees Nat) :: FTrees Nat where
 
 type Unit = '[ 'IrrepTree 0] :: FTrees Nat
 
-type family FilterTrivial (ts :: FTrees Nat) :: FTrees Nat where
+-- | Keep unit-root trees (SU(2) @j = 0@, U(1) @q = 0@).
+--
+-- @Nat@ uses 'CmpNat' so stuck roots still reduce under term-level @cmpNat@;
+-- @Z@ matches @'Zero@ directly.
+type family FilterTrivial (ts :: FTrees lab) :: FTrees lab where
   FilterTrivial '[] = '[]
-  FilterTrivial ('IrrepTree j ': rest) =
+  FilterTrivial ('IrrepTree (j :: Nat) ': rest) =
     FilterTrivialIrrep (CmpNat j 0) j rest
-  FilterTrivial ('From j '(l, r) ': rest) =
+  FilterTrivial ('From (j :: Nat) '(l, r) ': rest) =
     FilterTrivialFrom (CmpNat j 0) j l r rest
+  FilterTrivial ('IrrepTree ('Zero :: Z) ': rest) =
+    'IrrepTree 'Zero ': FilterTrivial rest
+  FilterTrivial ('IrrepTree (_ :: Z) ': rest) = FilterTrivial rest
+  FilterTrivial ('From ('Zero :: Z) '(l, r) ': rest) =
+    'From 'Zero '(l, r) ': FilterTrivial rest
+  FilterTrivial ('From (_ :: Z) '(_, _) ': rest) = FilterTrivial rest
 
 type family FilterTrivialIrrep (o :: Ordering) (j :: Nat) (rest :: FTrees Nat) :: FTrees Nat where
   FilterTrivialIrrep 'EQ _j rest = 'IrrepTree 0 ': FilterTrivial rest
@@ -258,13 +267,3 @@ type family FuseFTreesU1 (rs :: FTrees Z) (qs :: FTrees Z) :: FTrees Z where
     Append (FuseFTreesOneU1 t1 qs) (FuseFTreesU1 rest qs)
 
 type UnitU1 = '[ 'IrrepTree 'Zero] :: FTrees Z
-
--- | Keep total-charge-0 trees (U(1) intertwiners).
-type family FilterTrivialU1 (ts :: FTrees Z) :: FTrees Z where
-  FilterTrivialU1 '[] = '[]
-  FilterTrivialU1 ('IrrepTree 'Zero ': rest) =
-    'IrrepTree 'Zero ': FilterTrivialU1 rest
-  FilterTrivialU1 ('IrrepTree _ ': rest) = FilterTrivialU1 rest
-  FilterTrivialU1 ('From 'Zero '(l, r) ': rest) =
-    'From 'Zero '(l, r) ': FilterTrivialU1 rest
-  FilterTrivialU1 ('From _ '(l, r) ': rest) = FilterTrivialU1 rest

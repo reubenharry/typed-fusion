@@ -116,17 +116,23 @@ type HalfTree = 'IrrepTree (Spin (1/2))
 -- | @g ∘ f@ spelled as the five Mac Lane morphisms in 'composeHomTrees'.
 composeFGSteps :: FTreeV (ObjTrees SU2 (Dual Half :⊗: Half))
 composeFGSteps = step5
-  where 
+  where
       step1 :: FTreeV (ObjTrees SU2 ((Half :⊗: Half) :⊗: (Half :⊗: Half)))
-      step1 =  fuseFTreesTerm f  g
+      step1 = fuseFTreesTerm f g
       step2 :: FTreeV (ObjTrees SU2 (Half :⊗: (Half :⊗: (Half :⊗: Half))))
-      step2 = fmoveOuterHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step1
+      step2 = fmoveOuterHom @'[HalfTree] @'[HalfTree] @'[HalfTree] step1
       step3 :: FTreeV (ObjTrees SU2 (Half :⊗: (Half :⊗: Half :⊗: Half)))
-      step3 = fmoveInnerHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step2
+      step3 =
+        idRight @'[HalfTree]
+          (fmoveInvTrees @'[HalfTree] @'[HalfTree] @'[HalfTree])
+          step2
       step4 :: FTreeV (ObjTrees SU2 (Half :⊗: ('Irrep 0 :⊗: Half)))
-      step4 = cupTensorIdHom @'[ HalfTree] @'[ HalfTree] @'[ HalfTree] step3
+      step4 =
+        idRight @'[HalfTree]
+          (idLeft @_ @_ @'[HalfTree] (cup @'[HalfTree]))
+          step3
       step5 :: FTreeV (ObjTrees SU2 (Half :⊗: Half))
-      step5 = unitorHom @'[ HalfTree] @'[ HalfTree] step4
+      step5 = idRight @'[HalfTree] (unitor @'[HalfTree]) step4
 
 
 
@@ -745,9 +751,9 @@ fmoveTreesSelfTestOk =
     then ()
     else error "fmoveTreesSelfTest failed: tree F round-trip"
 
--- | Pure Mid from 'TensorTrees': 'fuseMapRightFinv111' matches F-inv on the assoc factor.
-fuseMapRightFinvSelfTest :: Bool
-fuseMapRightFinvSelfTest =
+-- | Pure Mid from 'TensorTrees': 'idRightFinv111' matches F-inv on the assoc factor.
+idRightFinvSelfTest :: Bool
+idRightFinvSelfTest =
   let leaf = FCons (konst 1) FNil
       assocR =
         makeFTrees @(FuseFTrees '[ 'IrrepTree 1] (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]))
@@ -757,7 +763,7 @@ fuseMapRightFinvSelfTest =
           @('[ 'IrrepTree 1])
           @(FuseFTrees '[ 'IrrepTree 1] (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]))
           (TensorTrees leaf assocR)
-      cupGen = fuseMapRightFinv111 mid
+      cupGen = idRightFinv111 mid
       expected =
         fuseTensorTrees
           @('[ 'IrrepTree 1])
@@ -798,7 +804,7 @@ composeHomTreesSelfTest =
     && checkForgetHomInterCompose111
     && checkI2FmoveSmoke
     && checkFmoveOuter111
-    && checkFuseMapLeftId111
+    && checkIdLeftId111
     && checkUnitorI1
     && checkUnitorHom11
     && checkCupIHom
@@ -819,5 +825,4 @@ composeHomTreesI1 = composeHomTrees @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[
 composeHomTreesI1TypedOk :: Bool
 composeHomTreesI1TypedOk =
   let _ty = composeHomTreesI1
-      _cup = cupTensorIdHomI1
    in True

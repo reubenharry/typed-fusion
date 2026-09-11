@@ -28,6 +28,7 @@ module Symmetry.CG.SU2
   , fuseMapLeftFlatSectors
   , fuseTreeLeftSectors
   , fuseTreeRightSectors
+  , denseFMoveSectors
   , fmoveFlatSectors
   , fusedSectorPairs
   , sectorsFromPairs
@@ -502,16 +503,14 @@ matFromMapSecs _nRows nCols f =
   where
     e i = VS.generate nCols $ \j -> if i == j then 1 else 0
 
--- | Dense F (or @Fᵀ ≈ F⁻¹@) on left\/right coalesced flats of @r⊗q⊗s@.
+-- | Dense left→right F for sector spines @r⊗q⊗s@ (@mR ∘ mL†@).
 -- Same densification as 'Symmetry.CG.FSymbol.denseFMove', sector-list driven.
-fmoveFlatSectors
-  :: Bool
+denseFMoveSectors
+  :: [(Int, Int, Int)]
   -> [(Int, Int, Int)]
   -> [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fmoveFlatSectors inv secsR secsQ secsS vin =
+  -> LA.Matrix (Complex Double)
+denseFMoveSectors secsR secsQ secsS =
   let dr = repDimOf secsR
       dq = repDimOf secsQ
       ds = repDimOf secsS
@@ -532,12 +531,23 @@ fmoveFlatSectors inv secsR secsQ secsS vin =
       dimRight = repDimOf secsRight
       mL = matFromMapSecs dimL dimP (fuseTreeLeftSectors secsR secsQ secsS)
       mR = matFromMapSecs dimRight dimP (fuseTreeRightSectors secsR secsQ secsS)
-      mat = mR LA.<> LA.tr mL
+   in mR LA.<> LA.tr mL
+  where
+    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
+
+-- | Apply dense F (or @Fᵀ ≈ F⁻¹@) on left\/right coalesced flats of @r⊗q⊗s@.
+fmoveFlatSectors
+  :: Bool
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> [(Int, Int, Int)]
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fmoveFlatSectors inv secsR secsQ secsS vin =
+  let mat = denseFMoveSectors secsR secsQ secsS
       v = VS.convert vin :: LA.Vector (Complex Double)
       v' =
         if inv
           then LA.tr mat LA.#> v
           else mat LA.#> v
    in VS.convert v'
-  where
-    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]

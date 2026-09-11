@@ -66,13 +66,19 @@ main = do
       cupFid = fmoveInnerHom @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) outerFid
       outFid =
         unitorHom @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2])
-          (cupTensorIdHom @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) cupFid)
+          ( idRight
+              (idLeft @_ @_ @('[ 'IrrepTree 2]) (cup @('[ 'IrrepTree 2])))
+              cupFid
+          )
       domIdf = fuseFTreesTerm @(FuseFTrees '[ 'IrrepTree 2] '[ 'IrrepTree 2]) @(FuseFTrees '[ 'IrrepTree 2] '[ 'IrrepTree 2]) (idHomFTrees @('[ 'IrrepTree 2])) f22
       outerIdf = fmoveOuterHom @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) domIdf
       cupIdf = fmoveInnerHom @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) outerIdf
       outIdf =
         unitorHom @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2])
-          (cupTensorIdHom @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) @('[ 'IrrepTree 2]) cupIdf)
+          ( idRight
+              (idLeft @_ @_ @('[ 'IrrepTree 2]) (cup @('[ 'IrrepTree 2])))
+              cupIdf
+          )
   dumpNZ "outer Fid (Hom-pres)" outerFid
   dumpNZ "cupR Fid" cupFid
   putStrLn $ "outFid = " ++ show (VS.toList (fTreeVToExpandedFlat @(FuseFTrees '[ 'IrrepTree 2] '[ 'IrrepTree 2]) outFid))

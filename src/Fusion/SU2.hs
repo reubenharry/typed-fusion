@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -14,6 +13,9 @@
 -- @2j@ label (@Spin (1/2) = 1@, @Spin (1/1) = 2@).
 -- @fSymbol@ is the screenshot amplitude @[F^{abc}_d]_{ef}@ (Racah \/ CG),
 -- matching 'Symmetry.CG.FSymbol' Schur blocks for irrep triples.
+--
+-- Flat CG \/ F-move on irrep triples delegates to 'Symmetry.CG.SU2'
+-- (@fmoveFlatSectors@, @denseFMoveSectors@, …) with unit-mult spines.
 module Fusion.SU2
   ( SU2Th
   , SpinKind (..)
@@ -34,7 +36,6 @@ module Fusion.SU2
   , unpackIrrepsFlat
   ) where
 
-import Control.Monad.ST (runST)
 import Data.Complex (Complex (..))
 import Data.List (elemIndex)
 import Data.Maybe (fromMaybe, mapMaybe)
@@ -45,7 +46,13 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
 import qualified Numeric.LinearAlgebra as LA
-import Symmetry.CG.SU2 (cgMatrixTwoIrreps, fusionChannels)
+import Symmetry.CG.SU2
+  ( denseFMoveSectors
+  , fmoveFlatSectors
+  , fusedSectorPairs
+  , fusionChannels
+  , sectorsFromPairs
+  )
 import Symmetry.Tensor (TensorIrrepRepSU2)
 
 data SU2Th
@@ -70,10 +77,7 @@ instance FusionTheory Nat SU2Th where
   type DualLab SU2Th j = j
 
 su2FuseOutcomes :: Int -> Int -> [(Int, Int)]
-su2FuseOutcomes j1 j2 =
-  let lo = abs (j1 - j2)
-      hi = j1 + j2
-   in [ (j, 1) | j <- [lo, lo + 2 .. hi] ]
+su2FuseOutcomes j1 j2 = [(j, 1) | j <- fusionChannels j1 j2]
 
 -- | Channel R-phase for bosonic SU(2): @(-1)^{j₁+j₂-j}@ with labels as @2j@.
 -- Equivalent to the single-channel content of 'Symmetry.CG.RSymbol'.
@@ -108,223 +112,14 @@ allowedF a b c d =
   , canFuseTJ a f d
   ]
 
--- | CG fuse of two irreps (@2j@ labels): product flat → fused flat
--- (channels in 'fusionChannels' order, each of dim @tj+1@).
-applyCGIrreps :: Int -> Int -> VS.Vector (Complex Double) -> VS.Vector (Complex Double)
-applyCGIrreps j1 j2 vin =
-  let mat = cgMatrixTwoIrreps j1 j2
-      nRows = length mat
-      nCols = (j1 + 1) * (j2 + 1)
-   in VS.generate nRows $ \r ->
-        sum
-          [ ((mat !! r !! col) :+ 0) * (vin VS.! col)
-          | col <- [0 .. nCols - 1]
-          ]
+-- | Unit-multiplicity irrep spine for 'Symmetry.CG.SU2' sector APIs.
+irrepSpine :: Int -> [(Int, Int, Int)]
+irrepSpine tj = sectorsFromPairs [(tj, 1)]
 
--- | Fuse coalesced left spine (unit-mult channels) with irrep @c@.
-fuseChannelsIrrep
-  :: [Int]
-  -> Int
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fuseChannelsIrrep leftChans c vin =
-  let dimC = c + 1
-      leftOffs =
-        scanl (+) 0 [tj + 1 | tj <- leftChans]
-      dimL = last leftOffs
-      contribs =
-        [ (tjOut, e, eOff)
-        | (e, eOff) <- zip leftChans leftOffs
-        , tjOut <- fusionChannels e c
-        ]
-      multByJ =
-        Map.fromListWith (+) [(tj, 1) | (tj, _, _) <- contribs]
-      sortedJs = Map.keys multByJ
-      outOffByJ =
-        Map.fromList $
-          zip
-            sortedJs
-            (scanl (+) 0 [m * (j + 1) | j <- sortedJs, let m = multByJ Map.! j])
-      dimF =
-        case sortedJs of
-          [] -> 0
-          _ ->
-            let j = last sortedJs
-             in (outOffByJ Map.! j) + (multByJ Map.! j) * (j + 1)
-      μ0 = Map.fromList [(j, 0) | j <- sortedJs]
-   in runST $ do
-        vout <- MVS.replicate dimF 0
-        let step μCursors (tjOut, e, eOff) = do
-              let mat = cgMatrixTwoIrreps e c
-                  chans = fusionChannels e c
-                  row0 = sum [ch + 1 | ch <- takeWhile (/= tjOut) chans]
-                  nOut = tjOut + 1
-                  dE = e + 1
-                  μBase = μCursors Map.! tjOut
-                  outBase = (outOffByJ Map.! tjOut) + μBase * nOut
-              mapM_
-                ( \iOut -> do
-                    let acc =
-                          sum
-                            [ let col = kE * dimC + kC
-                                  inp = vin VS.! ((eOff + kE) * dimC + kC)
-                                  cg = (mat !! (row0 + iOut)) !! col
-                               in inp * (cg :+ 0)
-                            | kE <- [0 .. dE - 1]
-                            , kC <- [0 .. dimC - 1]
-                            ]
-                    MVS.write vout (outBase + iOut) acc
-                )
-                [0 .. nOut - 1]
-              pure (Map.insert tjOut (μBase + 1) μCursors)
-        _ <- foldM step μ0 contribs
-        VS.freeze vout
-  where
-    foldM _ z [] = pure z
-    foldM f z (x : xs) = do
-      z' <- f z x
-      foldM f z' xs
-
--- | @((a⊗b)⊗c)@ product → left-fused coalesced flat.
-fuseLeftIrreps
-  :: Int -> Int -> Int -> VS.Vector (Complex Double) -> VS.Vector (Complex Double)
-fuseLeftIrreps a b c vin =
-  let da = a + 1
-      db = b + 1
-      dc = c + 1
-      dimAB = da * db
-      dimABf = dimAB
-      mid = runST $ do
-        m <- MVS.new (dimABf * dc)
-        mapM_
-          ( \iC -> do
-              let fiber =
-                    VS.generate dimAB $ \iAB ->
-                      vin VS.! (iAB * dc + iC)
-                  fused = applyCGIrreps a b fiber
-              mapM_
-                ( \iAB' ->
-                    MVS.write m (iAB' * dc + iC) (fused VS.! iAB')
-                )
-                [0 .. dimABf - 1]
-          )
-          [0 .. dc - 1]
-        VS.freeze m
-   in fuseChannelsIrrep (fusionChannels a b) c mid
-
--- | @(a⊗(b⊗c))@ product → right-fused coalesced flat.
-fuseRightIrreps
-  :: Int -> Int -> Int -> VS.Vector (Complex Double) -> VS.Vector (Complex Double)
-fuseRightIrreps a b c vin =
-  let da = a + 1
-      db = b + 1
-      dc = c + 1
-      dimBC = db * dc
-      dimBCf = dimBC
-      mid = runST $ do
-        m <- MVS.new (da * dimBCf)
-        mapM_
-          ( \iA -> do
-              let fiber =
-                    VS.generate dimBC $ \iBC ->
-                      vin VS.! (iA * dimBC + iBC)
-                  fused = applyCGIrreps b c fiber
-              mapM_
-                ( \iBC' ->
-                    MVS.write m (iA * dimBCf + iBC') (fused VS.! iBC')
-                )
-                [0 .. dimBCf - 1]
-          )
-          [0 .. da - 1]
-        VS.freeze m
-   in fuseIrrepChannels a (fusionChannels b c) mid
-
--- | Fuse irrep @a@ with coalesced right spine.
-fuseIrrepChannels
-  :: Int
-  -> [Int]
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fuseIrrepChannels a rightChans vin =
-  let da = a + 1
-      rightOffs = scanl (+) 0 [tj + 1 | tj <- rightChans]
-      dimR = last rightOffs
-      contribs =
-        [ (tjOut, f, fOff)
-        | (f, fOff) <- zip rightChans rightOffs
-        , tjOut <- fusionChannels a f
-        ]
-      multByJ =
-        Map.fromListWith (+) [(tj, 1) | (tj, _, _) <- contribs]
-      sortedJs = Map.keys multByJ
-      outOffByJ =
-        Map.fromList $
-          zip
-            sortedJs
-            (scanl (+) 0 [m * (j + 1) | j <- sortedJs, let m = multByJ Map.! j])
-      dimF =
-        case sortedJs of
-          [] -> 0
-          _ ->
-            let j = last sortedJs
-             in (outOffByJ Map.! j) + (multByJ Map.! j) * (j + 1)
-      μ0 = Map.fromList [(j, 0) | j <- sortedJs]
-   in runST $ do
-        vout <- MVS.replicate dimF 0
-        let step μCursors (tjOut, f, fOff) = do
-              let mat = cgMatrixTwoIrreps a f
-                  chans = fusionChannels a f
-                  row0 = sum [ch + 1 | ch <- takeWhile (/= tjOut) chans]
-                  nOut = tjOut + 1
-                  dF = f + 1
-                  μBase = μCursors Map.! tjOut
-                  outBase = (outOffByJ Map.! tjOut) + μBase * nOut
-              mapM_
-                ( \iOut -> do
-                    let acc =
-                          sum
-                            [ let col = kA * dF + kF
-                                  inp = vin VS.! (kA * dimR + (fOff + kF))
-                                  cg = (mat !! (row0 + iOut)) !! col
-                               in inp * (cg :+ 0)
-                            | kA <- [0 .. da - 1]
-                            , kF <- [0 .. dF - 1]
-                            ]
-                    MVS.write vout (outBase + iOut) acc
-                )
-                [0 .. nOut - 1]
-              pure (Map.insert tjOut (μBase + 1) μCursors)
-        _ <- foldM step μ0 contribs
-        VS.freeze vout
-  where
-    foldM _ z [] = pure z
-    foldM f z (x : xs) = do
-      z' <- f z x
-      foldM f z' xs
-
-matFromMap
-  :: Int
-  -> Int
-  -> (VS.Vector (Complex Double) -> VS.Vector (Complex Double))
-  -> LA.Matrix (Complex Double)
-matFromMap _nRows nCols f =
-  LA.fromColumns
-    [ VS.convert (f (e i))
-    | i <- [0 .. nCols - 1]
-    ]
-  where
-    e i = VS.generate nCols $ \j -> if i == j then 1 else 0
-
--- | Dense left→right F for irrep triple (same construction as 'denseFMove').
+-- | Dense left→right F for an irrep triple (@2j@ labels).
 denseFIrreps :: Int -> Int -> Int -> LA.Matrix (Complex Double)
 denseFIrreps a b c =
-  let dimP = (a + 1) * (b + 1) * (c + 1)
-      zeroP = VS.replicate dimP 0
-      nL = VS.length (fuseLeftIrreps a b c zeroP)
-      nR = VS.length (fuseRightIrreps a b c zeroP)
-      mL = matFromMap nL dimP (fuseLeftIrreps a b c)
-      mR = matFromMap nR dimP (fuseRightIrreps a b c)
-   in mR LA.<> LA.tr mL
+  denseFMoveSectors (irrepSpine a) (irrepSpine b) (irrepSpine c)
 
 -- | Apply dense F (or @Fᵀ ≈ F⁻¹@) on left\/right sector flats from
 -- 'leftSectors' \/ 'rightSectors'. Label-driven — no per-triple typed flats.
@@ -335,43 +130,19 @@ fmoveIrrepsFlat
   -> Int
   -> VS.Vector (Complex Double)
   -> VS.Vector (Complex Double)
-fmoveIrrepsFlat inv a b c vin =
-  let mat = denseFIrreps a b c
-      v = VS.convert vin :: LA.Vector (Complex Double)
-      v' =
-        if inv
-          then LA.tr mat LA.#> v
-          else mat LA.#> v
-   in VS.convert v'
+fmoveIrrepsFlat inv a b c =
+  fmoveFlatSectors inv (irrepSpine a) (irrepSpine b) (irrepSpine c)
 
 -- | Sector layout of left-fused @((a⊗b)⊗c)@: @(tj, mult, flat offset)@.
 leftSectors :: Int -> Int -> Int -> [(Int, Int, Int)]
 leftSectors a b c =
-  let es = fusionChannels a b
-      contribs =
-        [ tjOut
-        | e <- es
-        , tjOut <- fusionChannels e c
-        ]
-      multByJ = Map.fromListWith (+) [(tj, 1) | tj <- contribs]
-      sortedJs = Map.keys multByJ
-      offs =
-        scanl (+) 0 [m * (j + 1) | j <- sortedJs, let m = multByJ Map.! j]
-   in zip3 sortedJs [multByJ Map.! j | j <- sortedJs] offs
+  let ab = fusedSectorPairs [(a, 1)] [(b, 1)]
+   in sectorsFromPairs (fusedSectorPairs ab [(c, 1)])
 
 rightSectors :: Int -> Int -> Int -> [(Int, Int, Int)]
 rightSectors a b c =
-  let fs = fusionChannels b c
-      contribs =
-        [ tjOut
-        | f <- fs
-        , tjOut <- fusionChannels a f
-        ]
-      multByJ = Map.fromListWith (+) [(tj, 1) | tj <- contribs]
-      sortedJs = Map.keys multByJ
-      offs =
-        scanl (+) 0 [m * (j + 1) | j <- sortedJs, let m = multByJ Map.! j]
-   in zip3 sortedJs [multByJ Map.! j | j <- sortedJs] offs
+  let bc = fusedSectorPairs [(b, 1)] [(c, 1)]
+   in sectorsFromPairs (fusedSectorPairs [(a, 1)] bc)
 
 -- | Pack @(d, mid, irrep)@ channels into a left\/right sector flat.
 packIrrepsFlat

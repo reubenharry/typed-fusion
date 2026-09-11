@@ -18,9 +18,8 @@ module Hom.Smoke
   , fmoveTrees000, fmoveInvTrees000
   , fmoveTrees110, fmoveInvTrees110
   , fmoveTrees112, fmoveInvTrees112
-  , fuseMapRightFinv111
+  , idRightFinv111
   , fillFTreeVScaled
-  , cupTensorIdHomI1
   , approxHomTrees
   , approxHom11
   , checkFmoveTrees111
@@ -44,7 +43,7 @@ module Hom.Smoke
   , checkForgetHomInterCompose111
   , checkI2FmoveSmoke
   , checkFmoveOuter111
-  , checkFuseMapLeftId111
+  , checkIdLeftId111
   ) where
 
 import Control.Arrow.Constrained (($), arr)
@@ -114,12 +113,12 @@ fmoveInvTrees112
   -> FTreeV (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 2])
 fmoveInvTrees112 = fmoveInvTrees @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 2])
 
--- | @Fuse(id, F-inv)@ on Mid — instance of 'fuseMapRight'.
-fuseMapRightFinv111
+-- | @Fuse(id, F-inv)@ on Mid — instance of 'idRight'.
+idRightFinv111
   :: FTreeV (FuseFTrees '[ 'IrrepTree 1] (FuseFTrees '[ 'IrrepTree 1] (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1])))
   -> FTreeV (FuseFTrees '[ 'IrrepTree 1] (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 1]))
-fuseMapRightFinv111 =
-  fuseMapRight
+idRightFinv111 =
+  idRight
     @('[ 'IrrepTree 1])
     @(FuseFTrees '[ 'IrrepTree 1] (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]))
     @(FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 1])
@@ -140,15 +139,6 @@ fillFTreeVScaled = go 0 (fTreesSing @_ @ts)
           FCons (konst (0.1 * fromIntegral (i + 1) :+ 0)) (go (i + 1) rest)
         SFrom {} ->
           FCons (konst (0.1 * fromIntegral (i + 1) :+ 0)) (go (i + 1) rest)
-
-cupTensorIdHomI1
-  :: FTreeV
-       ( FuseFTrees
-           '[ 'IrrepTree 1]
-           (FuseFTrees (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]) '[ 'IrrepTree 1])
-       )
-  -> FTreeV (FuseFTrees '[ 'IrrepTree 1] (FuseFTrees Unit '[ 'IrrepTree 1]))
-cupTensorIdHomI1 = cupTensorIdHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1])
 
 -- | Approx equality on Hom / association spines (expanded spine-order flat).
 approxHomTrees
@@ -233,7 +223,7 @@ checkUnitorI1 =
           let d = x ^-^ konst 0.42
            in magnitude (d <.> d) < 1e-18
 
--- | 'unitorHom' = 'fuseMapRight' 'unitor' on after-cup leaf-½ spine.
+-- | 'unitorHom' = 'idRight' 'unitor' on after-cup leaf-½ spine.
 checkUnitorHom11 :: Bool
 checkUnitorHom11 =
   let mid =
@@ -541,9 +531,9 @@ checkFmoveOuter111 =
         dom
         back
 
--- | 'fuseMapLeft id' is the identity on Mid.
-checkFuseMapLeftId111 :: Bool
-checkFuseMapLeftId111 =
+-- | 'idLeft id' is the identity on Mid.
+checkIdLeftId111 :: Bool
+checkIdLeftId111 =
   let mid =
         fmoveOuterHom @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) @('[ 'IrrepTree 1]) $
           fuseFTreesTerm
@@ -552,7 +542,7 @@ checkFuseMapLeftId111 =
             (idHomFTrees @('[ 'IrrepTree 1]))
             (idHomFTrees @('[ 'IrrepTree 1]))
       mid' =
-        fuseMapLeft
+        idLeft
           @('[ 'IrrepTree 1])
           @('[ 'IrrepTree 1])
           @(FuseFTrees '[ 'IrrepTree 1] (FuseFTrees '[ 'IrrepTree 1] '[ 'IrrepTree 1]))

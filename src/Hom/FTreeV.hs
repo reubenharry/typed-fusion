@@ -397,8 +397,8 @@ approxFTreeV = go (fTreesSing @_ @ts)
 
 -- | Keep trivial-root channels of a 'FTreeV' spine ('FilterTrivial').
 --
--- Singleton walk + 'cmpNat': refines @CmpNat j 0@ so 'FilterTrivial' reduces
--- in each branch (no method class / overlapping instances).
+-- Singleton walk + 'cmpNat': refines @j ~ 0@ so 'FilterTrivial' reduces in each
+-- branch (Nat labels; U(1) uses the same type family on @Z@).
 filterTrivialFTreeV
   :: forall (ts :: FTrees Nat)
    . KnownFTrees ts
@@ -406,7 +406,7 @@ filterTrivialFTreeV
   -> FTreeV (FilterTrivial ts)
 filterTrivialFTreeV = go (fTreesSing @_ @ts)
   where
-    go :: forall ts'. SFTrees ts' -> FTreeV ts' -> FTreeV (FilterTrivial ts')
+    go :: forall (ts' :: FTrees Nat). SFTrees ts' -> FTreeV ts' -> FTreeV (FilterTrivial ts')
     go SFTreesNil FNil = FNil
     go (SFTreesCons t rest) (FCons v rs) =
       case t of
@@ -429,7 +429,7 @@ embedTrivialFTreeV
   -> FTreeV ts
 embedTrivialFTreeV = go (fTreesSing @_ @ts)
   where
-    go :: forall ts'. SFTrees ts' -> FTreeV (FilterTrivial ts') -> FTreeV ts'
+    go :: forall (ts' :: FTrees Nat). SFTrees ts' -> FTreeV (FilterTrivial ts') -> FTreeV ts'
     go SFTreesNil FNil = FNil
     go (SFTreesCons t rest) fr =
       case t of
