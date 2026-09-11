@@ -47,6 +47,8 @@ import qualified Data.Vector.Storable as VS
 import Prelude hiding (id, (.), ($))
 import Categorical.Linear (runit, swapMap)
 import Hom.Vec (vec)
+import Symmetry.SU2 (SU2Element, su2Alpha, su2Beta)
+import Test.QuickCheck (Gen, Property, counterexample, generate, (==>))
 
 -- exampleFTreeV :: FTreeV '[ 'IrrepTree (Spin (1/2)), 'IrrepTree (Spin (3 / 2))]
 example1 :: Unfused SU2 ('Irrep (Spin (1/2)) :⊕: 'Irrep (Spin (3 / 2)))
@@ -356,6 +358,57 @@ symbolicExamplesOk =
     , cupCapRoundtripSpinHalfOk
     , composeHomTreesI1TypedOk
     ]
+
+--------------------------------------------------------------------------------
+-- Group action on fused ½ ⊗ ½ (QuickCheck)
+--------------------------------------------------------------------------------
+
+-- | @½ ⊗ ½@ as a fused object (singlet ⊕ triplet).
+type FusedHalfHalf = Fused SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))
+
+su2FarFromIdent :: SU2Element -> Bool
+su2FarFromIdent g =
+  magnitude (su2Beta g) > 0.15
+    || magnitude (su2Alpha g - 1) > 0.15
+
+tripletNormSq :: FusedHalfHalf -> Double
+tripletNormSq (_singlet, trip) =
+  VS.sum $ VS.map (\z -> magnitude z * magnitude z) (toArray trip)
+
+fusedHalfHalfApproxEq :: FusedHalfHalf -> FusedHalfHalf -> Bool
+fusedHalfHalfApproxEq v w =
+  approxFTreeV @(ObjTrees SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))))
+    (makeFTrees v)
+    (makeFTrees w)
+
+-- | Random non-trivial @g@ and fused @½ ⊗ ½@ with triplet weight: @g · v ≠ v@.
+--
+-- (The singlet sector is invariant; a pure singlet would be fixed by every @g@.)
+fusedHalfHalfActionMovesProp :: SU2Element -> FusedHalfHalf -> Property
+fusedHalfHalfActionMovesProp g v =
+  let moved = actsOnFused @SU2 @('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) g v
+   in (su2FarFromIdent g && tripletNormSq v > 1e-6)
+        ==> counterexample
+              ("|β|="
+                 ++ show (magnitude (su2Beta g))
+                 ++ " trip²="
+                 ++ show (tripletNormSq v))
+              (not (fusedHalfHalfApproxEq moved v))
+
+-- | One random draw of @(g, v)@; prints @g@, @v@, and @g·v@ (fused channel form).
+sampleFusedHalfHalfAction :: IO ()
+sampleFusedHalfHalfAction = do
+  g <- generate (arbitrary :: Gen SU2Element)
+  v <- generate (arbitrary :: Gen FusedHalfHalf)
+  let v' = actsOnFused @SU2 @('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) g v
+      trees = makeFTrees @(ObjTrees SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))))
+  putStrLn $ "g: α=" ++ ppComplex (su2Alpha g) ++ " β=" ++ ppComplex (su2Beta g)
+  putStrLn $ "v:  " ++ ppFTreeV (trees v)
+  putStrLn $ "g·v:" ++ ppFTreeV (trees v')
+  putStrLn $
+    if fusedHalfHalfApproxEq v v'
+      then "(unchanged)"
+      else "(changed)"
 
 -- | Fused Mac Lane suite (leaf Hom). Right-unit @f ∘ id@ is currently failing on
 -- main as well; kept as a separate probe, not in 'symbolicExamplesOk'.

@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -129,7 +130,7 @@ fillFTreeVScaled
   :: forall ts
    . KnownFTrees ts
   => FTreeV ts
-fillFTreeVScaled = go 0 (fTreesSing @ts)
+fillFTreeVScaled = go 0 (fTreesSing @_ @ts)
   where
     go :: Int -> SFTrees ts' -> FTreeV ts'
     go _ SFTreesNil = FNil

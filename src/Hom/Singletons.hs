@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -15,61 +17,89 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
 -- | Term-level singletons for genealogy-preserving 'FTree' / 'FTrees' trees.
--- SU(2) phase: labels are 'Nat'.
+-- Label-polymorphic: SU(2) uses @Nat@ (@2j@); U(1) uses 'Z'.
 module Hom.Singletons
-  ( SFTree (..)
+  ( KnownRoot (..)
+  , KnownLabId
+  , SFTree (..)
   , KnownFTree (..)
   , SFTrees (..)
   , KnownFTrees (..)
   , rootLab
   ) where
 
+import Data.Complex (Complex)
+import Data.Kind (Constraint)
 import Data.Proxy (Proxy (..))
+import Data.VectorSpace (Scalar, VectorSpace)
 import Hom.Expr
-import Hom.TypeLevel (IrrepDim)
+import Hom.TypeLevel (LabCarrier, LabDim)
 import GHC.TypeLits (KnownNat, Nat, natVal)
+import Symmetry.Utils (KnownZ, Z, getZ)
 
--- | Singleton for a genealogy-preserving 'FTree' tree (@lab ~ Nat@ / SU(2)).
-data SFTree (t :: FTree Nat) where
+-- | Term-level access to a root label. Superclasses give the carrier @C (LabDim j)@.
+class
+  ( KnownNat (LabDim j)
+  , VectorSpace (LabCarrier j)
+  , Scalar (LabCarrier j) ~ Complex Double
+  ) =>
+  KnownRoot (j :: k)
+  where
+  rootVal :: Proxy j -> Integer
+
+instance KnownNat j => KnownRoot (j :: Nat) where
+  rootVal _ = natVal (Proxy @j)
+
+instance KnownZ j => KnownRoot (j :: Z) where
+  rootVal _ = getZ @j
+
+-- | Extra identity constraint: @KnownNat@ on @Nat@ roots (for 'cmpNat' walks);
+-- vacuous on 'Z'.
+type family KnownLabId (j :: k) :: Constraint where
+  KnownLabId (j :: Nat) = KnownNat j
+  KnownLabId (_ :: Z) = ()
+
+-- | Singleton for a genealogy-preserving 'FTree'.
+data SFTree (t :: FTree lab) where
   SIrrepTree
-    :: forall j
-     . ( KnownNat j
-       , KnownNat (IrrepDim j)
+    :: forall lab (j :: lab)
+     . ( KnownRoot j
+       , KnownLabId j
        )
     => SFTree ('IrrepTree j)
   SFrom
-    :: forall j l r
-     . ( KnownNat j
-       , KnownNat (IrrepDim j)
+    :: forall lab (j :: lab) (l :: FTree lab) (r :: FTree lab)
+     . ( KnownRoot j
+       , KnownLabId j
        )
     => SFTree l
     -> SFTree r
     -> SFTree ('From j '(l, r))
 
 -- | Materialize 'SFTree' for a statically known tree.
-class KnownFTree (t :: FTree Nat) where
+class KnownFTree (t :: FTree lab) where
   fTreeSing :: SFTree t
 
 instance
-  ( KnownNat j
-  , KnownNat (IrrepDim j)
+  ( KnownRoot j
+  , KnownLabId j
   ) =>
   KnownFTree ('IrrepTree j)
   where
-  fTreeSing = SIrrepTree @j
+  fTreeSing = SIrrepTree @_ @j
 
 instance
-  ( KnownNat j
-  , KnownNat (IrrepDim j)
+  ( KnownRoot j
+  , KnownLabId j
   , KnownFTree l
   , KnownFTree r
   ) =>
   KnownFTree ('From j '(l, r))
   where
-  fTreeSing = SFrom @j (fTreeSing @l) (fTreeSing @r)
+  fTreeSing = SFrom @_ @j (fTreeSing @_ @l) (fTreeSing @_ @r)
 
 -- | Singleton spine for 'FTrees'.
-data SFTrees (ts :: FTrees Nat) where
+data SFTrees (ts :: FTrees lab) where
   SFTreesNil :: SFTrees '[]
   SFTreesCons
     :: forall t rest
@@ -78,7 +108,7 @@ data SFTrees (ts :: FTrees Nat) where
     -> SFTrees (t ': rest)
 
 -- | Materialize 'SFTrees' for a statically known tree list.
-class KnownFTrees (ts :: FTrees Nat) where
+class KnownFTrees (ts :: FTrees lab) where
   fTreesSing :: SFTrees ts
 
 instance KnownFTrees '[] where
@@ -90,9 +120,9 @@ instance
   ) =>
   KnownFTrees (t ': rest)
   where
-  fTreesSing = SFTreesCons (fTreeSing @t) (fTreesSing @rest)
+  fTreesSing = SFTreesCons (fTreeSing @_ @t) (fTreesSing @_ @rest)
 
--- | Root @2j@ as an 'Int' (for channel keys / Racah packing).
+-- | Root label as 'Int' (SU(2) @2j@ / U(1) charge).
 rootLab :: SFTree t -> Int
-rootLab (SIrrepTree @j) = fromIntegral (natVal (Proxy @j))
-rootLab (SFrom @j _ _) = fromIntegral (natVal (Proxy @j))
+rootLab (SIrrepTree @_ @j) = fromInteger (rootVal (Proxy @j))
+rootLab (SFrom @_ @j _ _) = fromInteger (rootVal (Proxy @j))

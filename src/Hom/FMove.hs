@@ -1,8 +1,10 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -65,10 +67,10 @@ collectAssocLChannel
 collectAssocLChannel SFTreesNil FNil = []
 collectAssocLChannel (SFTreesCons t rest) (FCons v rs) =
   case t of
-    SFrom @d left right ->
+    SFrom left right ->
       case left of
-        SFrom @_ a_i b_j ->
-          ( fromIntegral (natVal (Proxy @d))
+        SFrom a_i b_j ->
+          ( rootLab t
           , rootLab left
           , rootLab a_i
           , rootLab b_j
@@ -89,10 +91,10 @@ collectAssocRChannel
 collectAssocRChannel SFTreesNil FNil = []
 collectAssocRChannel (SFTreesCons t rest) (FCons v rs) =
   case t of
-    SFrom @d left right ->
+    SFrom left right ->
       case right of
-        SFrom @_ b_j c_k ->
-          ( fromIntegral (natVal (Proxy @d))
+        SFrom b_j c_k ->
+          ( rootLab t
           , rootLab right
           , rootLab left
           , rootLab b_j
@@ -113,11 +115,11 @@ scatterAssocLChannel
 scatterAssocLChannel SFTreesNil _ = FNil
 scatterAssocLChannel (SFTreesCons (t :: SFTree u) rest) m =
   case t of
-    SFrom @d left right ->
+    SFrom left right ->
       case left of
-        SFrom @_ a_i b_j ->
+        SFrom a_i b_j ->
           let key =
-                ( fromIntegral (natVal (Proxy @d))
+                ( rootLab t
                 , rootLab left
                 , rootLab a_i
                 , rootLab b_j
@@ -138,11 +140,11 @@ scatterAssocRChannel
 scatterAssocRChannel SFTreesNil _ = FNil
 scatterAssocRChannel (SFTreesCons (t :: SFTree u) rest) m =
   case t of
-    SFrom @d left right ->
+    SFrom left right ->
       case right of
-        SFrom @_ b_j c_k ->
+        SFrom b_j c_k ->
           let key =
-                ( fromIntegral (natVal (Proxy @d))
+                ( rootLab t
                 , rootLab right
                 , rootLab left
                 , rootLab b_j
@@ -179,7 +181,7 @@ fmoveTrees
   => FTreeV (FuseFTrees (FuseFTrees a b) c)
   -> FTreeV (FuseFTrees a (FuseFTrees b c))
 fmoveTrees tv =
-  let chans = collectAssocLChannel (fTreesSing @(FuseFTrees (FuseFTrees a b) c)) tv
+  let chans = collectAssocLChannel (fTreesSing @_ @(FuseFTrees (FuseFTrees a b) c)) tv
       triples =
         Map.keys $
           Map.fromList [((ra, rb, rc), ()) | (_, _, ra, rb, rc, _) <- chans]
@@ -208,7 +210,7 @@ fmoveTrees tv =
           )
           triples
    in scatterAssocRChannel
-        (fTreesSing @(FuseFTrees a (FuseFTrees b c)))
+        (fTreesSing @_ @(FuseFTrees a (FuseFTrees b c)))
         (Map.fromList [((d, f, ra, rb, rc), v) | (d, f, ra, rb, rc, v) <- out])
 
 fmoveInvTrees
@@ -219,7 +221,7 @@ fmoveInvTrees
   => FTreeV (FuseFTrees a (FuseFTrees b c))
   -> FTreeV (FuseFTrees (FuseFTrees a b) c)
 fmoveInvTrees tv =
-  let chans = collectAssocRChannel (fTreesSing @(FuseFTrees a (FuseFTrees b c))) tv
+  let chans = collectAssocRChannel (fTreesSing @_ @(FuseFTrees a (FuseFTrees b c))) tv
       triples =
         Map.keys $
           Map.fromList [((ra, rb, rc), ()) | (_, _, ra, rb, rc, _) <- chans]
@@ -248,7 +250,7 @@ fmoveInvTrees tv =
           )
           triples
    in scatterAssocLChannel
-        (fTreesSing @(FuseFTrees (FuseFTrees a b) c))
+        (fTreesSing @_ @(FuseFTrees (FuseFTrees a b) c))
         (Map.fromList [((d, e, ra, rb, rc), v) | (d, e, ra, rb, rc, v) <- out])
 
 -- | Outer Hom F: @(a⊗b) ⊗ Hom(b,c) → a ⊗ (b ⊗ Hom(b,c))@.
@@ -351,9 +353,9 @@ fuseMapRight
   -> FTreeV (FuseFTrees a q)
   -> FTreeV (FuseFTrees a q')
 fuseMapRight f tv =
-  let secsA = repExpandedSectors (fTreesSing @a)
-      secsQ = repExpandedSectors (fTreesSing @q)
-      secsQ' = repExpandedSectors (fTreesSing @q')
+  let secsA = repExpandedSectors (fTreesSing @_ @a)
+      secsQ = repExpandedSectors (fTreesSing @_ @q)
+      secsQ' = repExpandedSectors (fTreesSing @_ @q')
       fFlat = fTreeVToExpandedFlat @q' . f . expandedFlatToFTreeV @q
       vin = fTreeVToExpandedFlat @(FuseFTrees a q) tv
       vout = fuseMapRightFlatSectors secsA secsQ secsQ' fFlat vin
@@ -372,9 +374,9 @@ fuseMapLeft
   -> FTreeV (FuseFTrees a b)
   -> FTreeV (FuseFTrees a' b)
 fuseMapLeft f tv =
-  let secsA = repExpandedSectors (fTreesSing @a)
-      secsA' = repExpandedSectors (fTreesSing @a')
-      secsB = repExpandedSectors (fTreesSing @b)
+  let secsA = repExpandedSectors (fTreesSing @_ @a)
+      secsA' = repExpandedSectors (fTreesSing @_ @a')
+      secsB = repExpandedSectors (fTreesSing @_ @b)
       fFlat = fTreeVToExpandedFlat @a' . f . expandedFlatToFTreeV @a
       vin = fTreeVToExpandedFlat @(FuseFTrees a b) tv
       vout = fuseMapLeftFlatSectors secsA secsA' secsB fFlat vin
@@ -397,7 +399,7 @@ fTreeVToExpandedFlat
    . KnownFTrees ts
   => FTreeV ts
   -> VS.Vector (Complex Double)
-fTreeVToExpandedFlat = go (fTreesSing @ts)
+fTreeVToExpandedFlat = go (fTreesSing @_ @ts)
   where
     go :: SFTrees ts' -> FTreeV ts' -> VS.Vector (Complex Double)
     go SFTreesNil FNil = VS.empty
@@ -413,17 +415,17 @@ expandedFlatToFTreeV
    . KnownFTrees ts
   => VS.Vector (Complex Double)
   -> FTreeV ts
-expandedFlatToFTreeV buf = go 0 (fTreesSing @ts)
+expandedFlatToFTreeV buf = go 0 (fTreesSing @_ @ts)
   where
     go :: Int -> SFTrees ts' -> FTreeV ts'
     go _ SFTreesNil = FNil
     go off (SFTreesCons (t :: SFTree u) rest) =
       case t of
-        SIrrepTree @j ->
-          let d = fromIntegral (natVal (Proxy @j)) + 1
+        SIrrepTree {} ->
+          let d = rootLab t + 1
               v = unsafeFromArray (VS.slice off d buf)
            in FCons @u v (go (off + d) rest)
-        SFrom @j _ _ ->
-          let d = fromIntegral (natVal (Proxy @j)) + 1
+        SFrom {} ->
+          let d = rootLab t + 1
               v = unsafeFromArray (VS.slice off d buf)
            in FCons @u v (go (off + d) rest)

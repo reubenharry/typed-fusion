@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
@@ -16,6 +17,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
 -- | Term-level 'FTreeV' spines and CG fuse ('fuseFTreesTerm').
+-- 'FTreeV' is label-polymorphic (@Nat@ / 'Z'); SU(2) CG fuse stays @Nat@.
 module Hom.FTreeV
   ( FTreeV (..)
   , fTreeVToV
@@ -64,18 +66,21 @@ import Symmetry.Utils (Append)
 
 import Prelude hiding (($))
 
--- | Spine of root vectors, indexed by type-level 'FTrees'.
-data FTreeV (ts :: FTrees Nat) where
+-- | Spine of root vectors, indexed by type-level 'FTrees' (label-polymorphic).
+data FTreeV (ts :: FTrees lab) where
   FNil :: FTreeV '[]
   FCons
     :: forall t rest
-     . ToVTree t
+     . ( VectorSpace (ToVTree t)
+       , Scalar (ToVTree t) ~ Complex Double
+       )
+    => ToVTree t
     -> FTreeV rest
     -> FTreeV (t ': rest)
 
 -- | Forgetful map: nonempty 'FTreeV' → 'ToVFTrees'.
 fTreeVToV :: forall ts. KnownFTrees ts => FTreeV ts -> ToVFTrees ts
-fTreeVToV = go (fTreesSing @ts)
+fTreeVToV = go (fTreesSing @_ @ts)
   where
     go :: forall ts'. SFTrees ts' -> FTreeV ts' -> ToVFTrees ts'
     go (SFTreesCons _ SFTreesNil) (FCons v FNil) = v
@@ -85,13 +90,17 @@ fTreeVToV = go (fTreesSing @ts)
 
 -- | Inverse of 'fTreeVToV'.
 makeFTrees :: forall ts. KnownFTrees ts => ToVFTrees ts -> FTreeV ts
-makeFTrees = go (fTreesSing @ts)
+makeFTrees = go (fTreesSing @_ @ts)
   where
     go :: forall ts'. SFTrees ts' -> ToVFTrees ts' -> FTreeV ts'
-    go (SFTreesCons (_ :: SFTree t) SFTreesNil) v =
-      FCons @t v FNil
-    go (SFTreesCons (_ :: SFTree t) sRest@(SFTreesCons {})) (v, rest) =
-      FCons @t v (go sRest rest)
+    go (SFTreesCons t SFTreesNil) v =
+      case t of
+        SIrrepTree {} -> FCons v FNil
+        SFrom {} -> FCons v FNil
+    go (SFTreesCons t sRest@(SFTreesCons {})) (v, rest) =
+      case t of
+        SIrrepTree {} -> FCons v (go sRest rest)
+        SFrom {} -> FCons v (go sRest rest)
     go _ _ = error "makeFTrees: expected nonempty KnownFTrees"
 
 -- | Append two tree spines.
@@ -241,13 +250,13 @@ homChannelsDiag
   :: forall t1 t2
    . KnownFTrees (FuseTrees t1 t2)
   => FTreeV (FuseTrees t1 t2)
-homChannelsDiag = go (fTreesSing @(FuseTrees t1 t2))
+homChannelsDiag = go (fTreesSing @_ @(FuseTrees t1 t2))
   where
-    go :: forall ts. SFTrees ts -> FTreeV ts
+    go :: forall (ts :: FTrees Nat). SFTrees ts -> FTreeV ts
     go SFTreesNil = FNil
     go (SFTreesCons (t :: SFTree u) rest) =
       case t of
-        SFrom @d _l _r ->
+        SFrom @_ @d _l _r ->
           case sameNat (Proxy @d) (Proxy @0) of
             Just Refl -> FCons @u (konst 1) (go rest)
             Nothing -> FCons @u zeroV (go rest)
@@ -259,7 +268,7 @@ homChannelsZero
   :: forall t1 t2
    . KnownFTrees (FuseTrees t1 t2)
   => FTreeV (FuseTrees t1 t2)
-homChannelsZero = go (fTreesSing @(FuseTrees t1 t2))
+homChannelsZero = go (fTreesSing @_ @(FuseTrees t1 t2))
   where
     go :: forall ts. SFTrees ts -> FTreeV ts
     go SFTreesNil = FNil
@@ -276,7 +285,7 @@ idHomFTrees
      , FuseFTreesIdC rs rs
      )
   => FTreeV (FuseFTrees rs rs)
-idHomFTrees = goLeft (fTreesSing @rs) 0
+idHomFTrees = goLeft (fTreesSing @_ @rs) 0
   where
     goLeft
       :: forall ls
@@ -287,7 +296,7 @@ idHomFTrees = goLeft (fTreesSing @rs) 0
     goLeft SFTreesNil _ = FNil
     goLeft (SFTreesCons (_ :: SFTree t1) rest) i =
       appendFTreeV
-        (goOne @t1 (fTreesSing @rs) i 0)
+        (goOne @t1 (fTreesSing @_ @rs) i 0)
         (goLeft rest (i + 1))
 
     goOne
@@ -317,7 +326,7 @@ fuseFTreesTerm
   -> FTreeV qs
   -> FTreeV (FuseFTrees rs qs)
 fuseFTreesTerm rs qs =
-  go (fTreesSing @rs) rs (fTreesSing @qs) qs
+  go (fTreesSing @_ @rs) rs (fTreesSing @_ @qs) qs
   where
     go
       :: forall rs' qs'
@@ -356,7 +365,7 @@ scaleFTreeV
   => Complex Double
   -> FTreeV ts
   -> FTreeV ts
-scaleFTreeV s = go (fTreesSing @ts)
+scaleFTreeV s = go (fTreesSing @_ @ts)
   where
     go :: SFTrees ts' -> FTreeV ts' -> FTreeV ts'
     go SFTreesNil FNil = FNil
@@ -371,7 +380,7 @@ approxFTreeV
   => FTreeV ts
   -> FTreeV ts
   -> Bool
-approxFTreeV = go (fTreesSing @ts)
+approxFTreeV = go (fTreesSing @_ @ts)
   where
     closeVec a b =
       let da = toArray a
@@ -391,22 +400,22 @@ approxFTreeV = go (fTreesSing @ts)
 -- Singleton walk + 'cmpNat': refines @CmpNat j 0@ so 'FilterTrivial' reduces
 -- in each branch (no method class / overlapping instances).
 filterTrivialFTreeV
-  :: forall ts
+  :: forall (ts :: FTrees Nat)
    . KnownFTrees ts
   => FTreeV ts
   -> FTreeV (FilterTrivial ts)
-filterTrivialFTreeV = go (fTreesSing @ts)
+filterTrivialFTreeV = go (fTreesSing @_ @ts)
   where
     go :: forall ts'. SFTrees ts' -> FTreeV ts' -> FTreeV (FilterTrivial ts')
     go SFTreesNil FNil = FNil
     go (SFTreesCons t rest) (FCons v rs) =
       case t of
-        SIrrepTree @j ->
+        SIrrepTree @_ @j ->
           case cmpNat (Proxy @j) (Proxy @0) of
             EQI -> FCons @('IrrepTree 0) v (go rest rs)
             GTI -> go rest rs
             LTI -> go rest rs
-        SFrom @j (_ :: SFTree l) (_ :: SFTree r) ->
+        SFrom @_ @j (_ :: SFTree l) (_ :: SFTree r) ->
           case cmpNat (Proxy @j) (Proxy @0) of
             EQI -> FCons @('From 0 '(l, r)) v (go rest rs)
             GTI -> go rest rs
@@ -414,24 +423,24 @@ filterTrivialFTreeV = go (fTreesSing @ts)
 
 -- | Embed a trivial-sector spine back into the full 'FuseFTrees' (zeros elsewhere).
 embedTrivialFTreeV
-  :: forall ts
+  :: forall (ts :: FTrees Nat)
    . KnownFTrees ts
   => FTreeV (FilterTrivial ts)
   -> FTreeV ts
-embedTrivialFTreeV = go (fTreesSing @ts)
+embedTrivialFTreeV = go (fTreesSing @_ @ts)
   where
     go :: forall ts'. SFTrees ts' -> FTreeV (FilterTrivial ts') -> FTreeV ts'
     go SFTreesNil FNil = FNil
     go (SFTreesCons t rest) fr =
       case t of
-        SIrrepTree @j ->
+        SIrrepTree @_ @j ->
           case cmpNat (Proxy @j) (Proxy @0) of
             EQI ->
               case fr of
                 FCons v rs -> FCons @('IrrepTree 0) v (go rest rs)
             GTI -> FCons @('IrrepTree j) zeroV (go rest fr)
             LTI -> FCons @('IrrepTree j) zeroV (go rest fr)
-        SFrom @j (_ :: SFTree l) (_ :: SFTree r) ->
+        SFrom @_ @j (_ :: SFTree l) (_ :: SFTree r) ->
           case cmpNat (Proxy @j) (Proxy @0) of
             EQI ->
               case fr of

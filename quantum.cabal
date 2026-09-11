@@ -39,6 +39,9 @@ library
         Hom.FTreeV
         Hom.FMove
         Hom.Core
+        Hom.Action
+        Hom.Arbitrary
+        Hom.Pretty
         Hom.Smoke
         Hom.Reference
         Examples.Symbolic
@@ -85,4 +88,5 @@ test-suite quantum-test
     default-language: GHC2021
     build-depends:
         base ^>=4.19.2.0,
-        quantum
+        quantum,
+        QuickCheck

@@ -27,6 +27,8 @@ module Hom.TypeLevel
   , ObjTrees
     -- * Fusion trees (Nat genealogy engine; SU(2))
   , Root
+  , LabDim
+  , LabCarrier
   , ToVTree
   , ToVFTrees
   , FromCG
@@ -36,7 +38,7 @@ module Hom.TypeLevel
   , FilterTrivial
   , Unit
   , UnitorCodomain
-    -- * U(1) genealogy (Z labels)
+  -- * U(1) genealogy (Z labels)
   , FuseTreesU1
   , FuseFTreesU1
   , FilterTrivialU1
@@ -95,16 +97,15 @@ type family ToVObj (g :: Group) (a :: Obj (Irreps g)) :: Type where
   ToVObj U1 ((a :⊕: b)) = (ToVObj U1 a, ToVObj U1 b)
 
 -- | Object-space views of an @Obj@ (vector spaces — not Hom morphisms).
--- Fused/Sym genealogy views are SU(2)/@Nat@ for now (@ToVFTrees@).
 type Unfused (g :: Group) (a :: Obj (Irreps g)) = ToVObj g a
 
 type family Fused (g :: Group) (a :: Obj (Irreps g)) :: Type where
   Fused SU2 a = ToVFTrees (ObjTrees SU2 a)
-  Fused U1 a = ToVFTreesU1 (ObjTrees U1 a)
+  Fused U1 a = ToVFTrees (ObjTrees U1 a)
 
 type family Sym (g :: Group) (a :: Obj (Irreps g)) :: Type where
   Sym SU2 a = ToVFTrees (FilterTrivial (ObjTrees SU2 a))
-  Sym U1 a = ToVFTreesU1 (FilterTrivialU1 (ObjTrees U1 a))
+  Sym U1 a = ToVFTrees (FilterTrivialU1 (ObjTrees U1 a))
 
 --------------------------------------------------------------------------------
 -- Skeletal objects → bare FTrees (HomFused object index)
@@ -167,11 +168,19 @@ type family Root (t :: FTree lab) :: lab where
   Root ('IrrepTree j) = j
   Root ('From j '(_, _)) = j
 
--- | Space of one fusion tree: root irrep only (SU(2) @Nat@ labels).
-type family ToVTree (t :: FTree Nat) :: Type where
-  ToVTree t = C (IrrepDim (Root t))
+-- | Carrier dimension of a root label: SU(2) @j+1@, U(1) @1@.
+type family LabDim (j :: k) :: Nat where
+  LabDim (j :: Nat) = IrrepDim j
+  LabDim (_ :: Z) = 1
 
-type family ToVFTrees (ts :: FTrees Nat) :: Type where
+-- | Carrier of a root label: @C (LabDim j)@.
+type LabCarrier (j :: k) = C (LabDim j)
+
+-- | Space of one fusion tree: root irrep carrier (label-polymorphic).
+type family ToVTree (t :: FTree lab) :: Type where
+  ToVTree t = LabCarrier (Root t)
+
+type family ToVFTrees (ts :: FTrees lab) :: Type where
   ToVFTrees '[t] = ToVTree t
   ToVFTrees (t ': s ': rest) =
     (ToVTree t, ToVFTrees (s ': rest))
@@ -230,13 +239,9 @@ type family UnitorCodomain (uc :: FTrees Nat) :: FTrees Nat where
 -- U(1) genealogy engine (Z labels)
 --------------------------------------------------------------------------------
 
-type family ToVTreeU1 (t :: FTree Z) :: Type where
-  ToVTreeU1 _t = C 1
-
-type family ToVFTreesU1 (ts :: FTrees Z) :: Type where
-  ToVFTreesU1 '[t] = ToVTreeU1 t
-  ToVFTreesU1 (t ': s ': rest) =
-    (ToVTreeU1 t, ToVFTreesU1 (s ': rest))
+-- | U(1) synonyms for the label-polymorphic carriers.
+type ToVTreeU1 (t :: FTree Z) = ToVTree t
+type ToVFTreesU1 (ts :: FTrees Z) = ToVFTrees ts
 
 type family FuseTreesU1 (t1 :: FTree Z) (t2 :: FTree Z) :: FTrees Z where
   FuseTreesU1 t1 t2 =

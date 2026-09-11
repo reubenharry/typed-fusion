@@ -37,7 +37,7 @@ import Data.Complex (Complex ((:+)), conjugate, magnitude, realPart)
 import Data.Proxy (Proxy (..))
 import Data.Type.Equality ((:~:) (Refl))
 import Data.VectorSpace (InnerSpace ((<.>)), Scalar, VectorSpace ((*^)))
-import GHC.TypeLits (KnownNat, sameNat)
+import GHC.TypeLits (KnownNat, Nat, sameNat)
 import Control.Arrow.Constrained (($), arr)
 import Control.Category.Constrained.Prelude (Category (..))
 import Categorical.Associative (Associative (..))
@@ -123,9 +123,8 @@ type family HomFusedRep (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g))
           (ObjFTrees SU2 (DualObj SU2Th a))
           (ObjFTrees SU2 b)
       )
-  -- U(1) fused payload: type-level only in this phase (term 'FTreeV' is Nat-indexed).
   HomFusedRep U1 a b =
-    ToVFTreesU1
+    FTreeV
       ( FuseFTreesU1
           (ObjFTrees U1 (DualObj U1Th a))
           (ObjFTrees U1 b)
@@ -141,7 +140,7 @@ type family HomInterRep (g :: Group) (a :: Obj (Irreps g)) (b :: Obj (Irreps g))
           )
       )
   HomInterRep U1 a b =
-    ToVFTreesU1
+    FTreeV
       ( FilterTrivialU1
           ( FuseFTreesU1
               (ObjFTrees U1 (DualObj U1Th a))
@@ -533,21 +532,21 @@ cup bb =
   where
     -- Singlet walk via 'SFTrees': @sameNat@ refines @j ~ 0@ so payloads stay @C 1@.
     cupHomTreesScalar
-      :: forall ts
+      :: forall (ts :: FTrees Nat)
        . KnownFTrees ts
       => FTreeV ts
       -> Complex Double
-    cupHomTreesScalar = go (fTreesSing @ts)
+    cupHomTreesScalar = go (fTreesSing @_ @ts)
       where
-        go :: forall ts'. SFTrees ts' -> FTreeV ts' -> Complex Double
+        go :: forall (ts' :: FTrees Nat). SFTrees ts' -> FTreeV ts' -> Complex Double
         go SFTreesNil FNil = 0
         go (SFTreesCons t rest) (FCons v rs) =
           case t of
-            SIrrepTree @j ->
+            SIrrepTree @_ @j ->
               case sameNat (Proxy @j) (Proxy @0) of
                 Just Refl -> (konst 1 <.> v) + go rest rs
                 Nothing -> go rest rs
-            SFrom @j l _r ->
+            SFrom @_ @j l _r ->
               case sameNat (Proxy @j) (Proxy @0) of
                 Just Refl ->
                   su2CupFactor (rootLab l) * (konst 1 <.> v) + go rest rs
@@ -586,30 +585,30 @@ unitor
      )
   => FTreeV (FuseFTrees Unit c)
   -> FTreeV c
-unitor = go (fTreesSing @(FuseFTrees Unit c))
+unitor = go (fTreesSing @_ @(FuseFTrees Unit c))
   where
     -- @sameNat@ refines left child to @'IrrepTree 0@; 'UnitorCodomain' drops it.
     go
-      :: forall uc
+      :: forall (uc :: FTrees Nat)
        . SFTrees uc
       -> FTreeV uc
       -> FTreeV (UnitorCodomain uc)
     go SFTreesNil FNil = FNil
     go (SFTreesCons t rest) (FCons v rs) =
       case t of
-        SFrom @j l r ->
+        SFrom @_ @j l r ->
           case l of
-            SIrrepTree @zj ->
+            SIrrepTree @_ @zj ->
               case sameNat (Proxy @zj) (Proxy @0) of
                 Just Refl ->
                   case r of
-                    SIrrepTree @rj ->
+                    SIrrepTree @_ @rj ->
                       case sameNat (Proxy @rj) (Proxy @j) of
                         Just Refl ->
                           FCons @('IrrepTree rj) v (go rest rs)
                         Nothing ->
                           error "unitor: root mismatch after 0⊗t"
-                    SFrom @rj @rl @rr _l _r ->
+                    SFrom @_ @rj (rlSing :: SFTree rl) (rrSing :: SFTree rr) ->
                       case sameNat (Proxy @rj) (Proxy @j) of
                         Just Refl ->
                           FCons @('From rj '(rl, rr)) v (go rest rs)

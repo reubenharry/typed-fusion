@@ -11,6 +11,9 @@
 -- Hierarchy: 'Hom.Expr' (kinds),
 -- 'Hom.TypeLevel' (families),
 -- 'Hom.Singletons' / 'FTreeV' / 'FMove' / 'Core' (term-level),
+-- 'Hom.Action' (group action on 'ToVObj' / fused spines),
+-- 'Hom.Arbitrary' (QuickCheck generators),
+-- 'Hom.Pretty' (pretty-printers for 'ToVObj' / 'FTreeV'),
 -- 'Hom.Smoke' (concrete SU(2) spines + checks).
 -- Examples: 'Examples.Symbolic'.
 module Hom
@@ -20,13 +23,19 @@ module Hom
   , module Hom.FTreeV
   , module Hom.FMove
   , module Hom.Core
+  , module Hom.Action
+  , module Hom.Arbitrary
+  , module Hom.Pretty
   , module Hom.Smoke
   ) where
 
+import Hom.Action
+import Hom.Arbitrary
 import Hom.Core
 import Hom.Expr
 import Hom.FMove
 import Hom.FTreeV
+import Hom.Pretty
 import Hom.Singletons
 import Hom.Smoke
 import Hom.TypeLevel
