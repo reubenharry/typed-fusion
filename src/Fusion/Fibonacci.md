@@ -171,17 +171,18 @@ $\mathrm{id}_X$ is the identity matrix in each sector $s$.
 $\tau$ is self-dual. Choose evaluation / coevaluation morphisms
 
 $$
-\mathrm{cup} \colon 𝟙 \to \tau \otimes \tau,
+\mathrm{cup} \colon \tau \otimes \tau \to 𝟙,
 \qquad
-\mathrm{cap} \colon \tau \otimes \tau \to 𝟙
+\mathrm{cap} \colon 𝟙 \to \tau \otimes \tau
 $$
 
-so that the snake identities hold in $\mathrm{Hom}(𝟙,𝟙)$ and $\mathrm{Hom}(\tau,\tau)$.
+(so cup = counit $\varepsilon$, cap = unit $\eta$) so that the snake identities
+hold in $\mathrm{Hom}(𝟙,𝟙)$ and $\mathrm{Hom}(\tau,\tau)$.
 
 In a unitary pivotal fusion category with standard normalization,
 
 $$
-\mathrm{cap} \circ \mathrm{cup} = d_\tau \cdot \mathrm{id}_𝟙 = \varphi \cdot \mathrm{id}_𝟙.
+\mathrm{cup} \circ \mathrm{cap} = d_\tau \cdot \mathrm{id}_𝟙 = \varphi \cdot \mathrm{id}_𝟙.
 $$
 
 **Important:** $\varphi$ is **not** a weird compose rule. It lives in the
@@ -200,8 +201,8 @@ $$
 \mathbb{C},
 $$
 
-so cup is a single scalar in the $𝟙$-channel (the $\tau$-channel component is zero).
-Same for cap the other way.
+so cap is a single scalar in the $𝟙$-channel (the $\tau$-channel component is zero).
+Same for cup the other way.
 
 ---
 
@@ -352,7 +353,7 @@ Resolved for the current code:
 
 Still open:
 
-3. **Cup/cap normalization:** currently $\varphi$ on cup, $1$ on cap (snake $= d_τ$); unitary $\sqrt{\varphi}$ each is an alternative.
+3. **Cup/cap normalization:** @cupCoeff@ on cup ($ε$), $1$ on cap ($η$) (snake $= d_τ$); matches Hom; unitary $\sqrt{\varphi}$ each is an alternative.
 4. **Pentagon / hexagon tests** for `associate` / `braid` (§7; basis fixed; coherence not yet checked in code).
 5. **Whether trees are objects of the same `Category` instance** as the skeleton, or
    skeletal category + a separate tree language with interpretation $\mathrm{Fuse}$.

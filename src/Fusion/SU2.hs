@@ -1,6 +1,8 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -39,9 +41,10 @@ module Fusion.SU2
 import Data.Complex (Complex (..))
 import Data.List (elemIndex)
 import Data.Maybe (fromMaybe, mapMaybe)
-import Fusion.Data (FusionData (..))
+import Fusion.Data (FusionData (..), allowedLeftMids, allowedRightMids)
 import Fusion.Theory (FusionTheory (..))
 import GHC.TypeLits (Nat, type (*), type Div)
+import Data.Proxy (Proxy (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
@@ -93,24 +96,15 @@ su2RPhase tj1 tj2 tj
 --------------------------------------------------------------------------------
 
 canFuseTJ :: Int -> Int -> Int -> Bool
-canFuseTJ a b c =
-  abs (a - b) <= c && c <= a + b && even (a + b - c)
+canFuseTJ a b c = canFuseD (Proxy @SU2Th) a b c
 
 -- | Left intermediates @e@ for @((a⊗b)e)⊗c → d@.
 allowedE :: Int -> Int -> Int -> Int -> [Int]
-allowedE a b c d =
-  [ e
-  | e <- fusionChannels a b
-  , canFuseTJ e c d
-  ]
+allowedE = allowedLeftMids (Proxy @SU2Th)
 
 -- | Right intermediates @f@ for @a⊗((b⊗c)f) → d@.
 allowedF :: Int -> Int -> Int -> Int -> [Int]
-allowedF a b c d =
-  [ f
-  | f <- fusionChannels b c
-  , canFuseTJ a f d
-  ]
+allowedF = allowedRightMids (Proxy @SU2Th)
 
 -- | Unit-multiplicity irrep spine for 'Symmetry.CG.SU2' sector APIs.
 irrepSpine :: Int -> [(Int, Int, Int)]
@@ -256,4 +250,7 @@ instance FusionData Nat SU2Th where
   rSymbol p a b c
     | nSymbol p a b c == 0 = 0
     | otherwise = su2RPhase a b c
-  cupCoeff _ tj = fromIntegral (tj + 1) :+ 0
+  cupCoeff _ tj =
+    let fs = if even tj then 1 else -1
+        dim = fromIntegral (tj + 1) :: Double
+     in (fs * dim) :+ 0

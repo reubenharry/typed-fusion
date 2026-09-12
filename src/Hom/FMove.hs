@@ -13,10 +13,13 @@
 
 -- | F-moves and FuseFTrees naturality on genealogy spines.
 --
+-- Channel enumeration uses 'Fusion.Data.allowedLeftMids' \/ 'allowedRightMids'
+-- (@SU2Th@). The dense F matrix is still CG densification
+-- ('Fusion.SU2.fmoveIrrepsFlat') — typed per-channel @C (d+1)@ F from
+-- 'fSymbol' is the follow-on (see ROADMAP).
+--
 -- Production 'idRight'/'idLeft' use expanded spine-order flats
--- (no coalesced 'ForgetRep'). Irrep F-moves still route through Fusion.SU2
--- collect/scatter flats as an oracle — typed per-channel @C (d+1)@ F is a
--- follow-on (Phase 4).
+-- (no coalesced 'ForgetRep').
 module Hom.FMove
   ( fmoveTrees
   , fmoveInvTrees
@@ -36,9 +39,9 @@ import Data.Complex (Complex)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Vector.Storable as VS
+import Fusion.Data (allowedLeftMids, allowedRightMids)
 import Fusion.SU2
-  ( allowedE
-  , allowedF
+  ( SU2Th
   , fmoveIrrepsFlat
   , leftSectors
   , packIrrepsFlat
@@ -198,13 +201,13 @@ fmoveTrees tv =
                   buf =
                     packIrrepsFlat
                       (leftSectors ra rb rc)
-                      (\d -> allowedE ra rb rc d)
+                      (\d -> allowedLeftMids (Proxy @SU2Th) ra rb rc d)
                       chH
                   buf' = fmoveIrrepsFlat False ra rb rc buf
                   unpacked =
                     unpackIrrepsFlat
                       (rightSectors ra rb rc)
-                      (\d -> allowedF ra rb rc d)
+                      (\d -> allowedRightMids (Proxy @SU2Th) ra rb rc d)
                       buf'
                in [(d, f, ra, rb, rc, v) | (d, f, v) <- unpacked]
           )
@@ -238,13 +241,13 @@ fmoveInvTrees tv =
                   buf =
                     packIrrepsFlat
                       (rightSectors ra rb rc)
-                      (\d -> allowedF ra rb rc d)
+                      (\d -> allowedRightMids (Proxy @SU2Th) ra rb rc d)
                       chH
                   buf' = fmoveIrrepsFlat True ra rb rc buf
                   unpacked =
                     unpackIrrepsFlat
                       (leftSectors ra rb rc)
-                      (\d -> allowedE ra rb rc d)
+                      (\d -> allowedLeftMids (Proxy @SU2Th) ra rb rc d)
                       buf'
                in [(d, e, ra, rb, rc, v) | (d, e, v) <- unpacked]
           )

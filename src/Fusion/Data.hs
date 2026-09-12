@@ -18,6 +18,8 @@ module Fusion.Data
   ( FusionData (..)
   , fuseOutcomesFinite
   , LabVal (..)
+  , allowedLeftMids
+  , allowedRightMids
   ) where
 
 import Data.Complex (Complex)
@@ -32,6 +34,12 @@ class LabVal (lab :: Type) (s :: lab) where
 
 -- | Value-level structure constants.
 -- @TermLab@ may differ from @code@ (e.g. SU(2): @code = Nat@, @TermLab = Int@).
+--
+-- Mathematical source for Hom cups \/ F \/ R scalars:
+--
+--   * 'cupCoeff' — cup\/ε factor on a simple (includes FS when the theory has it)
+--   * 'fSymbol' — @[F^{abc}_d]_{e f}@ amplitudes
+--   * 'rSymbol' — channel R-phase on @a ⊗ b → c@
 class FusionTheory code t => FusionData (code :: Type) (t :: Type) | t -> code where
   type TermLab t :: Type
   fuseOutcomes :: Proxy t -> TermLab t -> TermLab t -> [(TermLab t, Int)]
@@ -56,6 +64,7 @@ class FusionTheory code t => FusionData (code :: Type) (t :: Type) | t -> code w
     -> TermLab t
     -> [(TermLab t, Complex Double)]
   rSymbol :: Proxy t -> TermLab t -> TermLab t -> TermLab t -> Complex Double
+  -- | Cup\/ε scalar on simple @j@ (SU(2): @FS(j)·dim(j)@; Fib: @d_τ = φ@ on τ).
   cupCoeff :: Proxy t -> TermLab t -> Complex Double
 
 -- | @fuseOutcomes@ from 'irrVals' + 'nSymbol' when @TermLab t ~ code@.
@@ -71,4 +80,34 @@ fuseOutcomesFinite p a b =
   | c <- irrVals p
   , let n = nSymbol p a b c
   , n > 0
+  ]
+
+-- | Left intermediates @e@ for @((a⊗b)e)⊗c → d@.
+allowedLeftMids
+  :: FusionData code t
+  => Proxy t
+  -> TermLab t
+  -> TermLab t
+  -> TermLab t
+  -> TermLab t
+  -> [TermLab t]
+allowedLeftMids p a b c d =
+  [ e
+  | (e, _) <- fuseOutcomes p a b
+  , canFuseD p e c d
+  ]
+
+-- | Right intermediates @f@ for @a⊗((b⊗c)f) → d@.
+allowedRightMids
+  :: FusionData code t
+  => Proxy t
+  -> TermLab t
+  -> TermLab t
+  -> TermLab t
+  -> TermLab t
+  -> [TermLab t]
+allowedRightMids p a b c d =
+  [ f
+  | (f, _) <- fuseOutcomes p b c
+  , canFuseD p a f d
   ]

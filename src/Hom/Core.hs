@@ -45,6 +45,7 @@ import Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
 import Categorical.Braided (Braided (..))
 import Categorical.Monoidal (Monoidal (..))
 import Fusion.Obj (DualObj, Obj (Irrep, (:⊗:), (:⊕:)))
+import Fusion.Data (FusionData (..))
 import Fusion.SU2 (SU2Th)
 import Fusion.U1 (U1Th)
 import Symmetry.Group (Group (..), Irreps)
@@ -492,9 +493,9 @@ fmoveInnerHom =
 
 -- | Evaluation @ε : b ⊗ b* → 𝟙@ on genealogy Hom (@FuseFTrees b b@, dual≅primal).
 --
--- Interim: singlet walk on 'SFTrees' (scale by FS·dim). True η/ε morphisms once
--- typed per-channel F replaces Fusion.SU2 flats (blocker: channel morphisms on
--- @C (d+1)@).
+-- Interim: singlet walk on 'SFTrees' (scale by 'cupCoeff' @SU2Th@). True η/ε
+-- morphisms once typed per-channel F replaces Fusion.SU2 flats (blocker: channel
+-- morphisms on @C (d+1)@).
 cup
   :: forall b
    . KnownFTrees (FuseFTrees b b)
@@ -522,15 +523,8 @@ cup bb =
             SFrom @_ @j l _r ->
               case sameNat (Proxy @j) (Proxy @0) of
                 Just Refl ->
-                  su2CupFactor (rootLab l) * (konst 1 <.> v) + go rest rs
+                  cupCoeff (Proxy @SU2Th) (rootLab l) * (konst 1 <.> v) + go rest rs
                 Nothing -> go rest rs
-
-    -- Frobenius–Schur cup factor @FS(j)·dim(j)@ (@tj = 2j@).
-    su2CupFactor :: Int -> Complex Double
-    su2CupFactor tj =
-      let fs = if even tj then 1 else -1
-          dim = fromIntegral (tj + 1) :: Double
-       in (fs * dim) :+ 0
 
 -- | Step 5: @id ⊗ λ@ — @a* ⊗ (Unit ⊗ c) → a* ⊗ c@ (not type-level absorption).
 unitorHom

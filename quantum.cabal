@@ -20,6 +20,7 @@ library
         Categorical.Associative
         Categorical.Monoidal
         Categorical.Braided
+        Categorical.CompactClosed
         Categorical.Linear
         -- Fusion theories (incl. Fibonacci)
         Fusion.Theory

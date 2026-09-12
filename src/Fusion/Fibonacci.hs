@@ -54,6 +54,8 @@ module Fusion.Fibonacci
   , phiInvSqrt
   , cup
   , cap
+  , cupObj
+  , capObj
   , zeroMor
   , fuseMap
   , eqFib
@@ -67,10 +69,12 @@ module Fusion.Fibonacci
 import Control.Category.Constrained.Prelude (Category (..))
 import Data.Complex (Complex (..))
 import Data.Kind (Constraint)
+import Data.List (foldl')
 import Data.Proxy (Proxy (..))
 import Categorical.Associative (Associative (..))
 import Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
 import Categorical.Braided (Braided (..))
+import Categorical.CompactClosed (CompactClosed (..))
 import Categorical.Monoidal (Monoidal (..))
 import Fusion.Data (FusionData (..), fuseOutcomesFinite)
 import Fusion.Hom
@@ -81,7 +85,8 @@ import Fusion.Hom
   , zeroHom
   )
 import Fusion.Obj
-  ( Fuse
+  ( DualObj
+  , Fuse
   , FuseIdemMult
   , FuseNorm
   , HomDim
@@ -96,6 +101,8 @@ import Fusion.Ops
   , associateSectors
   , braidSectors
   , disassociateSectors
+  , idxXY
+  , multOf
   , packHom
   , tensorSectors
   , unpackHom
@@ -434,20 +441,6 @@ disassociateBlocks =
 -- Named morphisms
 --------------------------------------------------------------------------------
 
-cup :: Fib ('Irrep 'One) ((('Irrep 'Tau) :⊗: ('Irrep 'Tau)))
-cup =
-  Fib $
-    HomCons
-      (fromList [phi] :: M 1 1)
-      (HomCons (konst 0 :: M 1 0) HomNil)
-
-cap :: Fib ((('Irrep 'Tau) :⊗: ('Irrep 'Tau))) ('Irrep 'One)
-cap =
-  Fib $
-    HomCons
-      (fromList [1] :: M 1 1)
-      (HomCons (konst 0 :: M 0 1) HomNil)
-
 fuse :: Fib ((('Irrep 'Tau) :⊗: ('Irrep 'Tau))) ((('Irrep 'One) :⊕: ('Irrep 'Tau)))
 fuse = Fib idHom
 
@@ -621,3 +614,122 @@ instance Braided Fib (:⊗:) where
           (Proxy @FibTh)
           [natI @(MultOne a), natI @(MultTau a)]
           [natI @(MultOne b), natI @(MultTau b)]
+
+--------------------------------------------------------------------------------
+-- Cups \/ caps (cup = ε, cap = η)
+--------------------------------------------------------------------------------
+
+-- | Math contract (skeletal Fib):
+--
+--   * @ε_X : X ⊗ X* → 𝟙@, @η_X : 𝟙 → X* ⊗ X@ ('DualObj' / 'CompactClosed').
+--   * HomS vacuum block size is @n_𝟙(cod) × n_𝟙(dom)@; for @ε_X@ that is
+--     @1 × n_𝟙(X⊗X*)@ with @n_𝟙(X⊗X*) = n_𝟙(X)^2 + n_τ(X)^2@ (Fib fusion).
+--   * Fill paired multiplicity indices (@idxXY@) with @cupCoeff j@ on @ε@ and
+--     @1@ on @η@ (asymmetric norm; snake = Σ_j n_j cupCoeff(j)).
+
+type FibDual (a :: FibObj) = DualObj FibTh a
+
+-- | Vacuum-channel pairing weights for @X ⊗ Y → 𝟙@ (or the dual column).
+vacuumPairing
+  :: [Int]
+  -- ^ multiplicities of left factor
+  -> [Int]
+  -- ^ multiplicities of right factor
+  -> (Simple -> Complex Double)
+  -- ^ weight per simple (@cupCoeff@ or @const 1@)
+  -> Int
+  -- ^ @n_𝟙@ of the fused tensor (row\/column length)
+  -> [Complex Double]
+vacuumPairing nx ny weight nVac =
+  let p = Proxy @FibTh
+      irr = irrVals p
+      pairs =
+        [ (i, weight j)
+        | j <- irr
+        , let nL = multOf irr nx j
+              nR = multOf irr ny j
+        , nL == nR
+        , k <- [0 .. nL - 1]
+        , Just i <- [idxXY p nx ny j k j k One]
+        ]
+   in foldl'
+        (\ws (i, c) ->
+           [ if k == i then ws !! k + c else ws !! k
+           | k <- [0 .. nVac - 1]
+           ]
+        )
+        (replicate nVac 0)
+        pairs
+
+-- | Counit @ε_a : a ⊗ a* → 𝟙@.
+cupObj
+  :: forall a
+   . ( Object Fib a
+     , Object Fib (FibDual a)
+     , Object Fib (a :⊗: FibDual a)
+     , Object Fib ('Irrep 'One)
+     )
+  => Fib (a :⊗: FibDual a) ('Irrep 'One)
+cupObj =
+  let nx = [natI @(MultOne a), natI @(MultTau a)]
+      ny = [natI @(MultOne (FibDual a)), natI @(MultTau (FibDual a))]
+      nVac = natI @(MultOne (a :⊗: FibDual a))
+      w = vacuumPairing nx ny (cupCoeff (Proxy @FibTh)) nVac
+   in Fib $
+        HomCons
+          (fromList w :: M 1 (MultOne (a :⊗: FibDual a)))
+          (HomCons
+             (konst 0 :: M 0 (MultTau (a :⊗: FibDual a)))
+             HomNil)
+
+-- | Unit @η_a : 𝟙 → a* ⊗ a@.
+capObj
+  :: forall a
+   . ( Object Fib a
+     , Object Fib (FibDual a)
+     , Object Fib (FibDual a :⊗: a)
+     , Object Fib ('Irrep 'One)
+     )
+  => Fib ('Irrep 'One) (FibDual a :⊗: a)
+capObj =
+  let nx = [natI @(MultOne (FibDual a)), natI @(MultTau (FibDual a))]
+      ny = [natI @(MultOne a), natI @(MultTau a)]
+      nVac = natI @(MultOne (FibDual a :⊗: a))
+      w = vacuumPairing nx ny (const 1) nVac
+   in Fib $
+        HomCons
+          (fromList w :: M (MultOne (FibDual a :⊗: a)) 1)
+          (HomCons
+             (konst 0 :: M (MultTau (FibDual a :⊗: a)) 0)
+             HomNil)
+
+-- | Irrep specialisation of 'cupObj'.
+cup
+  :: forall j
+   . ( Object Fib ('Irrep j)
+     , Object Fib (FibDual ('Irrep j))
+     , Object Fib (('Irrep j) :⊗: FibDual ('Irrep j))
+     , Object Fib ('Irrep 'One)
+     )
+  => Fib (('Irrep j) :⊗: FibDual ('Irrep j)) ('Irrep 'One)
+cup = cupObj @('Irrep j)
+
+-- | Irrep specialisation of 'capObj'.
+cap
+  :: forall j
+   . ( Object Fib ('Irrep j)
+     , Object Fib (FibDual ('Irrep j))
+     , Object Fib (FibDual ('Irrep j) :⊗: 'Irrep j)
+     , Object Fib ('Irrep 'One)
+     )
+  => Fib ('Irrep 'One) (FibDual ('Irrep j) :⊗: 'Irrep j)
+cap = capObj @('Irrep j)
+
+--------------------------------------------------------------------------------
+-- Compact closed (right duals)
+--------------------------------------------------------------------------------
+
+instance CompactClosed Fib (:⊗:) where
+  type Dual Fib (:⊗:) a = DualObj FibTh a
+  unit = capObj
+  counit = cupObj
