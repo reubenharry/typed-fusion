@@ -50,7 +50,7 @@ ex2 :: Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Ir
 ex2 = (vec (1,2,3), (konst 1, (vec ( 2,3,4), vec (5,6,7,8,9))))
 ```
 
-Here, the type `Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (1/1)))` is the space $(1 \oplus 0 \oplus 1 \oplus 3/2)$, or concretely $\mathbb{C}^3 \otimes \mathbb{C}^1\otimes \mathbb{C}^3 \otimes \mathbb{C}^5$. Haskell computes this for you *at the type level*, so if you tried to change the number of elements in `vec (2,3,4)` for example, it would instantly complain.
+Here, the type `Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (1/1)))` is the space $(1 \oplus 0 \oplus 1 \oplus \frac{3}{2})$, or concretely $\mathbb{C}^3 \oplus \mathbb{C}^1\oplus \mathbb{C}^3 \oplus \mathbb{C}^5$. Haskell computes this for you *at the type level*, so if you tried to change the number of elements in `vec (2,3,4)` for example, it would instantly complain.
 
 And finally:
 
