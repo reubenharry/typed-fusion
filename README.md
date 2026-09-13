@@ -38,7 +38,7 @@ ex1 :: Unfused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: '
 ex1 =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
 ```
 
-`Unfused SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))` is what you'd typically write as $\(frac{1}{2} \otimes \frac{1}{2})^*\otimes 1$, i.e. the tensor product of two spin-1/2 representations, or $\mathbb{C}^2 \otimes \mathbb{C}^2 \otimes \mathbb{C}^3$. The second line is a vector in that space; as you'd expect, the lengths of the arrays are checked at compile time.
+`Unfused SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))` is what you'd typically write as $(\frac{1}{2} \otimes \frac{1}{2})^*\otimes 1$, i.e. the tensor product of two spin-1/2 representations, or $\mathbb{C}^2 \otimes \mathbb{C}^2 \otimes \mathbb{C}^3$. The second line is a vector in that space; as you'd expect, the lengths of the arrays are checked at compile time.
 
  By contrast:
 
