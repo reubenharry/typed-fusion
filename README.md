@@ -38,16 +38,16 @@ ex1 :: Unfused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: '
 ex1 =  ((vec (1,2) ⊗ vec (1,2)) ⊗ vec (1,2,3)) ^+^ (vec (4,2) ⊗ vec (1,2)) ⊗ vec (1,2,7)
 ```
 
-`Unfused SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))` is what you'd typically write as $(\frac{1}{2} \otimes \frac{1}{2})^*\otimes 1$, i.e. the tensor product of two spin-1/2 representations, or $\mathbb{C}^2 \otimes \mathbb{C}^2 \otimes \mathbb{C}^3$. The second line is a vector in that space; as you'd expect, the lengths of the arrays are checked at compile time.
+`Unfused SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))` is what you'd typically write as $(\frac{1}{2} \otimes \frac{1}{2})^*\otimes 1$, i.e. the tensor product of two spin-1/2 representations, or $\mathbb{C}^2 \otimes \mathbb{C}^2 \otimes \mathbb{C}^3$. The second line is a vector in that space (equivalently: a value of that type). As you'd expect, the lengths of the arrays are checked at compile time.
 
- By contrast:
+ By contrast, the fused version looks like:
 
 <!-- fusedExample :: Fused SU2 ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2)))
 fusedExample = (konst 1, vec (4,5,6)) -->
 
 ```haskell
 ex2 :: Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (1/1)))
-ex2 = (vec (1,2,3), (konst 1, (vec ( 2,3,4), vec (5,6,7,8,9))))
+ex2 = (vec (1,2,3), (konst 1, (vec (2,3,4), vec (5,6,7,8,9))))
 ```
 
 Here, the type `Fused SU2 (Dual ('Irrep (Spin (1/2)) :⊗: 'Irrep (Spin (1/2))) :⊗: 'Irrep (Spin (1/1)))` is the space $(1 \oplus 0 \oplus 1 \oplus \frac{3}{2})$, or concretely $\mathbb{C}^3 \oplus \mathbb{C}^1\oplus \mathbb{C}^3 \oplus \mathbb{C}^5$. Haskell computes this for you *at the type level*, so if you tried to change the number of elements in `vec (2,3,4)` for example, it would instantly complain.
@@ -61,7 +61,7 @@ ex3 = konst 1
 
 Here, we keep only the trivial sectors, of which there is just one in this case.
 
-As an example, we can look at the action of a random element of SU(2) on a random element of the space $(1/2 \otimes 1/2)$:
+<!-- As an example, we can look at the action of a random element of SU(2) on a random element of the space $(1/2 \otimes 1/2)$:
 
 ```haskell
 sampleFusedHalfHalfAction :: IO ()
@@ -85,7 +85,7 @@ This prints:
 g: α=-0.5677+4.65e-2i β=0.5754-0.5869i
 v:  [j=0: [0.3048+0.7993i], j=2: [-0.6498-4.42e-2i, -0.338+0.5466i, -6.33e-2+0.409i]]
 g·v:[j=0: [0.3048+0.7993i], j=2: [-6.84e-2-0.3461i, -0.333-0.7278i, -0.4246-0.2513i]]
-```
+``` -->
 
 ## Fusion trees
 
