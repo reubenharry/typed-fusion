@@ -8,7 +8,7 @@
 
 -- | U(1) charge category as 'FusionTheory' \/ 'FusionData'.
 --
--- Labels are 'Symmetry.Utils.Z' at the type level; term labels are 'Integer'
+-- Labels are 'Symmetry.Utils.Z' at the type level (@Label U1Th@); term labels are 'Integer'
 -- charges. Fusion is charge addition (multiplicity 1); dual is negation.
 -- Bosonic U(1): @F = 1@, @R = 1@, @cupCoeff = 1@.
 module Fusion.U1
@@ -17,11 +17,13 @@ module Fusion.U1
 
 import Data.Complex (Complex)
 import Fusion.Data (FusionData (..))
-import Fusion.Theory (FusionTheory (..))
+import Fusion.Theory (FusionTheory (..), Label)
 import Symmetry.Utils (Add, Negate, Z (..))
 
 -- | Phantom tag for the U(1) fusion theory.
 data U1Th
+
+type instance Label U1Th = Z
 
 instance FusionTheory Z U1Th where
   type UnitLab U1Th = 'Zero

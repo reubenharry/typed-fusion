@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -26,29 +27,14 @@ module Fusion.Fibonacci
   , Fuse
   , FuseNorm
   , Stabilize
-  , MultOne
-  , MultTau
   , Mult
   , Mults
   , HomDim
   , FuseIdemMult
     -- * KnownNat bundles
   , KnownMult
-  , KnownNTensor
-  , KnownAssoc
-  , KnownTensorMult
-  , KnownAssocMult
     -- * Hom
-  , HomS (..)
-  , HomBlocks (..)
   , Fib (..)
-  , composeBlocks
-  , idBlocks
-  , zeroBlocks
-  , tensorBlocks
-  , braidBlocks
-  , associateBlocks
-  , disassociateBlocks
   , phi
   , phiInv
   , phiInvSqrt
@@ -68,8 +54,6 @@ module Fusion.Fibonacci
 
 import Control.Category.Constrained.Prelude (Category (..))
 import Data.Complex (Complex (..))
-import Data.Kind (Constraint)
-import Data.List (foldl')
 import Data.Proxy (Proxy (..))
 import Categorical.Associative (Associative (..))
 import Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
@@ -77,13 +61,27 @@ import Categorical.Braided (Braided (..))
 import Categorical.CompactClosed (CompactClosed (..))
 import Categorical.Monoidal (Monoidal (..))
 import Fusion.Data (FusionData (..), fuseOutcomesFinite)
+import Control.Arrow.Constrained (arr)
+import Data.VectorSpace (AdditiveGroup (zeroV), InnerSpace ((<.>)), VectorSpace ((*^)))
 import Fusion.Hom
-  ( HomS (..)
-  , composeHom
-  , eqHom
-  , idHom
-  , zeroHom
+  ( HomDualS (..)
+  , MultsVal (..)
+  , composeHomDual
+  , eqHomDual
+  , idHomDual
+  , sectorFromMap
+  , zeroHomDual
   )
+import Math.LinearMap.Category
+  ( DualVector
+  , pattern LinearFunction
+  , type (+>)
+  , type (⊗)
+  )
+import Math.LinearMap.Category.Backend.HMatrix ()
+import Math.LinearMap.Category.Instances ()
+import Math.OrphanInstances ()
+import Numeric.LinearAlgebra.Static.COrphans ()
 import Fusion.Obj
   ( DualObj
   , Fuse
@@ -97,19 +95,17 @@ import Fusion.Obj
   , Stabilize
   )
 import Fusion.Ops
-  ( PackHom (..)
-  , associateSectors
-  , braidSectors
-  , disassociateSectors
-  , idxXY
-  , multOf
-  , packHom
-  , tensorSectors
-  , unpackHom
+  ( BuildHomDualS
+  , HomSectors
+  , associateHomDual
+  , braidHomDual
+  , disassociateHomDual
+  , tensorHomDual
+  , vacuumPairing
   )
-import Fusion.Theory (FiniteIrr (..), FusionTheory (..))
-import GHC.TypeLits (KnownNat, Nat, natVal, type (*), type (+))
-import Numeric.LinearAlgebra.Static (M, Sized (fromList), konst)
+import Fusion.Theory (FiniteIrr (..), FusionTheory (..), Label)
+import GHC.TypeLits (KnownNat, natVal)
+import Numeric.LinearAlgebra.Static (C, Sized (fromList), konst)
 import Prelude hiding (id, (.))
 
 --------------------------------------------------------------------------------
@@ -124,6 +120,8 @@ data Simple
   | Tau
   deriving (Eq, Ord, Show)
 
+type instance Label FibTh = Simple
+
 instance FusionTheory Simple FibTh where
   type UnitLab FibTh = 'One
   type FuseN FibTh 'One 'One = '[ '( 'One, 1)]
@@ -135,6 +133,7 @@ instance FusionTheory Simple FibTh where
 instance FiniteIrr Simple FibTh where
   type Irr FibTh = '[ 'One, 'Tau]
   irrVals _ = [One, Tau]
+  unitVal _ = One
 
 instance FusionData Simple FibTh where
   type TermLab FibTh = Simple
@@ -174,131 +173,27 @@ instance FusionData Simple FibTh where
 
 type FibObj = Obj Simple
 
--- | Fib aliases onto generic @Mult@.
-type MultOne (a :: FibObj) = Mult FibTh 'One a
-type MultTau (a :: FibObj) = Mult FibTh 'Tau a
-
-type FuseIdemMultFib (a :: FibObj) = FuseIdemMult FibTh a
-
 --------------------------------------------------------------------------------
--- KnownNat bundles (2-sector Fib layout, for static matrix sizes)
+-- KnownNat bundles
 --------------------------------------------------------------------------------
-
-type family AllKnownNat (ns :: [Nat]) :: Constraint where
-  AllKnownNat '[] = ()
-  AllKnownNat (n ': ns) = (KnownNat n, AllKnownNat ns)
-
-type family AppendNat (xs :: [Nat]) (ys :: [Nat]) :: [Nat] where
-  AppendNat '[] ys = ys
-  AppendNat (x ': xs) ys = x ': AppendNat xs ys
-
-type family NTensorNats (n1a :: Nat) (nta :: Nat) (n1b :: Nat) (ntb :: Nat) :: [Nat] where
-  NTensorNats n1a nta n1b ntb =
-    '[ n1a * n1b
-     , n1b * n1a
-     , nta * ntb
-     , ntb * nta
-     , n1a * ntb
-     , ntb * n1a
-     , nta * n1b
-     , n1b * nta
-     , n1a * n1b + nta * ntb
-     , n1b * n1a + ntb * nta
-     , n1a * ntb + nta * n1b
-     , n1b * nta + ntb * n1a
-     , (n1a * ntb + nta * n1b) + nta * ntb
-     , (n1b * nta + ntb * n1a) + ntb * nta
-     ]
-
-type KnownNTensor (n1a :: Nat) (nta :: Nat) (n1b :: Nat) (ntb :: Nat) =
-  ( KnownNat n1a
-  , KnownNat nta
-  , KnownNat n1b
-  , KnownNat ntb
-  , AllKnownNat (NTensorNats n1a nta n1b ntb)
-  )
-
-type family AssocNats
-  (n1a :: Nat) (nta :: Nat)
-  (n1b :: Nat) (ntb :: Nat)
-  (n1c :: Nat) (ntc :: Nat) :: [Nat] where
-  AssocNats n1a nta n1b ntb n1c ntc =
-    AppendNat
-      (NTensorNats n1a nta n1b ntb)
-      ( AppendNat
-          (NTensorNats n1b ntb n1c ntc)
-          ( AppendNat
-              ( NTensorNats
-                  (n1a * n1b + nta * ntb)
-                  ((n1a * ntb + nta * n1b) + nta * ntb)
-                  n1c
-                  ntc
-              )
-              ( NTensorNats
-                  n1a
-                  nta
-                  (n1b * n1c + ntb * ntc)
-                  ((n1b * ntc + ntb * n1c) + ntb * ntc)
-              )
-          )
-      )
-
-type KnownAssoc
-  (n1a :: Nat) (nta :: Nat)
-  (n1b :: Nat) (ntb :: Nat)
-  (n1c :: Nat) (ntc :: Nat) =
-  ( KnownNat n1a
-  , KnownNat nta
-  , KnownNat n1b
-  , KnownNat ntb
-  , KnownNat n1c
-  , KnownNat ntc
-  , AllKnownNat (AssocNats n1a nta n1b ntb n1c ntc)
-  )
 
 type KnownMult (a :: FibObj) =
-  ( KnownNat (MultOne a)
-  , KnownNat (MultTau a)
+  ( KnownNat (Mult FibTh 'One a)
+  , KnownNat (Mult FibTh 'Tau a)
   )
 
-type KnownTensorMult (a :: FibObj) (b :: FibObj) =
-  KnownNTensor (MultOne a) (MultTau a) (MultOne b) (MultTau b)
-
-type KnownAssocMult (a :: FibObj) (b :: FibObj) (c :: FibObj) =
-  KnownAssoc
-    (MultOne a) (MultTau a)
-    (MultOne b) (MultTau b)
-    (MultOne c) (MultTau c)
-
 --------------------------------------------------------------------------------
--- Hom: HomS spine + 2-sector view for diagrams
+-- Hom: Dual-left Fib
 --------------------------------------------------------------------------------
-
--- | Compatibility view of 2-sector Hom (diagrams \/ legacy).
-data HomBlocks (n1x :: Nat) (ntx :: Nat) (n1y :: Nat) (nty :: Nat) = HomBlocks
-  { blkOne :: M n1y n1x
-  , blkTau :: M nty ntx
-  }
-
-homSToBlocks
-  :: HomS '[n1x, ntx] '[n1y, nty]
-  -> HomBlocks n1x ntx n1y nty
-homSToBlocks (HomCons o (HomCons t HomNil)) = HomBlocks o t
-
-blocksToHomS
-  :: (KnownNat n1x, KnownNat ntx, KnownNat n1y, KnownNat nty)
-  => HomBlocks n1x ntx n1y nty
-  -> HomS '[n1x, ntx] '[n1y, nty]
-blocksToHomS (HomBlocks o t) = HomCons o (HomCons t HomNil)
 
 newtype Fib (a :: FibObj) (b :: FibObj) = Fib
-  { unFib :: HomS (Mults FibTh a) (Mults FibTh b) }
+  { unFib :: HomDualS (Mults FibTh a) (Mults FibTh b) }
 
--- Mults FibTh a = '[MultOne a, MultTau a] definitionally when Irr = [One,Tau]
+-- Mults FibTh a = '[Mult FibTh 'One a, Mult FibTh 'Tau a] definitionally when Irr = [One,Tau]
 
 type FibHom a b =
-  ( Mults FibTh a ~ '[MultOne a, MultTau a]
-  , Mults FibTh b ~ '[MultOne b, MultTau b]
+  ( Mults FibTh a ~ '[Mult FibTh 'One a, Mult FibTh 'Tau a]
+  , Mults FibTh b ~ '[Mult FibTh 'One b, Mult FibTh 'Tau b]
   )
 
 phi :: Complex Double
@@ -313,152 +208,28 @@ phiInvSqrt = sqrt phiInv
 natI :: forall n. KnownNat n => Int
 natI = fromIntegral (natVal (Proxy @n))
 
-idBlocks
-  :: forall n1 nt
-   . (KnownNat n1, KnownNat nt)
-  => HomBlocks n1 nt n1 nt
-idBlocks = homSToBlocks (idHom @'[n1, nt])
-
-zeroBlocks
-  :: forall n1x ntx n1y nty
-   . (KnownNat n1x, KnownNat ntx, KnownNat n1y, KnownNat nty)
-  => HomBlocks n1x ntx n1y nty
-zeroBlocks = homSToBlocks (zeroHom @'[n1x, ntx] @'[n1y, nty])
-
-composeBlocks
-  :: forall n1x ntx n1y nty n1z ntz
-   . ( KnownNat n1x
-     , KnownNat ntx
-     , KnownNat n1y
-     , KnownNat nty
-     , KnownNat n1z
-     , KnownNat ntz
-     )
-  => HomBlocks n1y nty n1z ntz
-  -> HomBlocks n1x ntx n1y nty
-  -> HomBlocks n1x ntx n1z ntz
-composeBlocks g f =
-  homSToBlocks $
-    composeHom (blocksToHomS g) (blocksToHomS f)
-
---------------------------------------------------------------------------------
--- Ops via generic Fusion.Ops
---------------------------------------------------------------------------------
-
-tensorBlocks
-  :: forall n1x ntx n1y nty n1z ntz n1w ntw
-   . ( KnownNTensor n1x ntx n1z ntz
-     , KnownNTensor n1y nty n1w ntw
-     )
-  => HomBlocks n1x ntx n1y nty
-  -> HomBlocks n1z ntz n1w ntw
-  -> HomBlocks
-      (n1x * n1z + ntx * ntz)
-      ((n1x * ntz + ntx * n1z) + ntx * ntz)
-      (n1y * n1w + nty * ntw)
-      ((n1y * ntw + nty * n1w) + nty * ntw)
-tensorBlocks f g =
-  let fs = unpackHom (blocksToHomS f)
-      gs = unpackHom (blocksToHomS g)
-      rs =
-        tensorSectors
-          (Proxy @FibTh)
-          [natI @n1x, natI @ntx]
-          [natI @n1z, natI @ntz]
-          [natI @n1y, natI @nty]
-          [natI @n1w, natI @ntw]
-          fs
-          gs
-   in homSToBlocks (packHom rs)
-
-braidBlocks
-  :: forall n1a nta n1b ntb
-   . KnownNTensor n1a nta n1b ntb
-  => HomBlocks
-      (n1a * n1b + nta * ntb)
-      ((n1a * ntb + nta * n1b) + nta * ntb)
-      (n1b * n1a + ntb * nta)
-      ((n1b * nta + ntb * n1a) + ntb * nta)
-braidBlocks =
-  let rs =
-        braidSectors
-          (Proxy @FibTh)
-          [natI @n1a, natI @nta]
-          [natI @n1b, natI @ntb]
-   in homSToBlocks (packHom rs)
-
-associateBlocks
-  :: forall n1a nta n1b ntb n1c ntc
-   . KnownAssoc n1a nta n1b ntb n1c ntc
-  => HomBlocks
-      ( (n1a * n1b + nta * ntb) * n1c
-          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
-      )
-      ( ((n1a * n1b + nta * ntb) * ntc + ((n1a * ntb + nta * n1b) + nta * ntb) * n1c)
-          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
-      )
-      ( n1a * (n1b * n1c + ntb * ntc)
-          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
-      )
-      ( (n1a * ((n1b * ntc + ntb * n1c) + ntb * ntc) + nta * (n1b * n1c + ntb * ntc))
-          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
-      )
-associateBlocks =
-  let rs =
-        associateSectors
-          (Proxy @FibTh)
-          [natI @n1a, natI @nta]
-          [natI @n1b, natI @ntb]
-          [natI @n1c, natI @ntc]
-   in homSToBlocks (packHom rs)
-
-disassociateBlocks
-  :: forall n1a nta n1b ntb n1c ntc
-   . KnownAssoc n1a nta n1b ntb n1c ntc
-  => HomBlocks
-      ( n1a * (n1b * n1c + ntb * ntc)
-          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
-      )
-      ( (n1a * ((n1b * ntc + ntb * n1c) + ntb * ntc) + nta * (n1b * n1c + ntb * ntc))
-          + nta * ((n1b * ntc + ntb * n1c) + ntb * ntc)
-      )
-      ( (n1a * n1b + nta * ntb) * n1c
-          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
-      )
-      ( ((n1a * n1b + nta * ntb) * ntc + ((n1a * ntb + nta * n1b) + nta * ntb) * n1c)
-          + ((n1a * ntb + nta * n1b) + nta * ntb) * ntc
-      )
-disassociateBlocks =
-  let rs =
-        disassociateSectors
-          (Proxy @FibTh)
-          [natI @n1a, natI @nta]
-          [natI @n1b, natI @ntb]
-          [natI @n1c, natI @ntc]
-   in homSToBlocks (packHom rs)
-
 --------------------------------------------------------------------------------
 -- Named morphisms
 --------------------------------------------------------------------------------
 
 fuse :: Fib ((('Irrep 'Tau) :⊗: ('Irrep 'Tau))) ((('Irrep 'One) :⊕: ('Irrep 'Tau)))
-fuse = Fib idHom
+fuse = Fib idHomDual
 
 split :: Fib ((('Irrep 'One) :⊕: ('Irrep 'Tau))) ((('Irrep 'Tau) :⊗: ('Irrep 'Tau)))
-split = Fib idHom
+split = Fib idHomDual
 
 eqFib :: (KnownMult a, KnownMult b, FibHom a b) => Fib a b -> Fib a b -> Bool
-eqFib (Fib h) (Fib g) = eqHom h g
+eqFib (Fib h) (Fib g) = eqHomDual h g
 
 zeroMor
   :: forall a c
    . (KnownMult a, KnownMult c, FibHom a c)
   => Fib a c
-zeroMor = Fib zeroHom
+zeroMor = Fib zeroHomDual
 
 fuseMap
   :: forall a b
-   . (FuseIdemMultFib a, FuseIdemMultFib b)
+   . (FuseIdemMult FibTh a, FuseIdemMult FibTh b)
   => Fib a b
   -> Fib (Fuse FibTh a) (Fuse FibTh b)
 fuseMap (Fib h) = Fib h
@@ -468,10 +239,10 @@ fuseMap (Fib h) = Fib h
 --------------------------------------------------------------------------------
 
 instance Category Fib where
-  type Object Fib a = (KnownMult a, Mults FibTh a ~ '[MultOne a, MultTau a])
+  type Object Fib a = (KnownMult a, Mults FibTh a ~ '[Mult FibTh 'One a, Mult FibTh 'Tau a])
 
   id :: forall a. Object Fib a => Fib a a
-  id = Fib idHom
+  id = Fib idHomDual
 
   (.)
     :: forall a b c
@@ -479,7 +250,7 @@ instance Category Fib where
     => Fib b c
     -> Fib a b
     -> Fib a c
-  (.) (Fib g) (Fib f) = Fib (composeHom g f)
+  (.) (Fib g) (Fib f) = Fib (composeHomDual g f)
 
 instance PFunctor (:⊗:) Fib Fib where
   first
@@ -507,6 +278,7 @@ instance QFunctor (:⊗:) Fib Fib where
     -> Fib (c :⊗: a) (c :⊗: b)
   second g = bimap (id :: Fib c c) g
 
+-- Dual-left morphisms from Ops (no densify buffer \/ pack).
 instance Bifunctor (:⊗:) Fib Fib Fib where
   bimap
     :: forall a b c d
@@ -516,24 +288,15 @@ instance Bifunctor (:⊗:) Fib Fib Fib where
        , Object Fib d
        , Object Fib (a :⊗: c)
        , Object Fib (b :⊗: d)
-       , PackHom (Mults FibTh a) (Mults FibTh b)
-       , PackHom (Mults FibTh c) (Mults FibTh d)
-       , PackHom (Mults FibTh (a :⊗: c)) (Mults FibTh (b :⊗: d))
+       , HomSectors (Mults FibTh a) (Mults FibTh b)
+       , HomSectors (Mults FibTh c) (Mults FibTh d)
+       , BuildHomDualS (Mults FibTh (a :⊗: c)) (Mults FibTh (b :⊗: d))
        )
     => Fib a b
     -> Fib c d
     -> Fib (a :⊗: c) (b :⊗: d)
   bimap (Fib f) (Fib g) =
-    Fib $
-      packHom $
-        tensorSectors
-          (Proxy @FibTh)
-          [natI @(MultOne a), natI @(MultTau a)]
-          [natI @(MultOne c), natI @(MultTau c)]
-          [natI @(MultOne b), natI @(MultTau b)]
-          [natI @(MultOne d), natI @(MultTau d)]
-          (unpackHom f)
-          (unpackHom g)
+    Fib (tensorHomDual (Proxy @FibTh) f g)
 
 instance Associative Fib (:⊗:) where
   associate
@@ -545,19 +308,18 @@ instance Associative Fib (:⊗:) where
        , Object Fib (b :⊗: c)
        , Object Fib ((a :⊗: b) :⊗: c)
        , Object Fib (a :⊗: (b :⊗: c))
-       , PackHom
+       , BuildHomDualS
            (Mults FibTh ((a :⊗: b) :⊗: c))
            (Mults FibTh (a :⊗: (b :⊗: c)))
        )
     => Fib ((a :⊗: b) :⊗: c) (a :⊗: (b :⊗: c))
   associate =
     Fib $
-      packHom $
-        associateSectors
-          (Proxy @FibTh)
-          [natI @(MultOne a), natI @(MultTau a)]
-          [natI @(MultOne b), natI @(MultTau b)]
-          [natI @(MultOne c), natI @(MultTau c)]
+      associateHomDual
+        (Proxy @FibTh)
+        [natI @(Mult FibTh 'One a), natI @(Mult FibTh 'Tau a)]
+        [natI @(Mult FibTh 'One b), natI @(Mult FibTh 'Tau b)]
+        [natI @(Mult FibTh 'One c), natI @(Mult FibTh 'Tau c)]
 
   disassociate
     :: forall a b c
@@ -568,34 +330,33 @@ instance Associative Fib (:⊗:) where
        , Object Fib (b :⊗: c)
        , Object Fib ((a :⊗: b) :⊗: c)
        , Object Fib (a :⊗: (b :⊗: c))
-       , PackHom
+       , BuildHomDualS
            (Mults FibTh (a :⊗: (b :⊗: c)))
            (Mults FibTh ((a :⊗: b) :⊗: c))
        )
     => Fib (a :⊗: (b :⊗: c)) ((a :⊗: b) :⊗: c)
   disassociate =
     Fib $
-      packHom $
-        disassociateSectors
-          (Proxy @FibTh)
-          [natI @(MultOne a), natI @(MultTau a)]
-          [natI @(MultOne b), natI @(MultTau b)]
-          [natI @(MultOne c), natI @(MultTau c)]
+      disassociateHomDual
+        (Proxy @FibTh)
+        [natI @(Mult FibTh 'One a), natI @(Mult FibTh 'Tau a)]
+        [natI @(Mult FibTh 'One b), natI @(Mult FibTh 'Tau b)]
+        [natI @(Mult FibTh 'One c), natI @(Mult FibTh 'Tau c)]
 
 instance Monoidal Fib (:⊗:) where
   type Id Fib (:⊗:) = 'Irrep 'One
 
   idl :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib ('Irrep 'One :⊗: a)) => Fib ('Irrep 'One :⊗: a) a
-  idl = Fib idHom
+  idl = Fib idHomDual
 
   idr :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib (a :⊗: 'Irrep 'One)) => Fib (a :⊗: 'Irrep 'One) a
-  idr = Fib idHom
+  idr = Fib idHomDual
 
   coidl :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib ('Irrep 'One :⊗: a)) => Fib a ('Irrep 'One :⊗: a)
-  coidl = Fib idHom
+  coidl = Fib idHomDual
 
   coidr :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib (a :⊗: 'Irrep 'One)) => Fib a (a :⊗: 'Irrep 'One)
-  coidr = Fib idHom
+  coidr = Fib idHomDual
 
 instance Braided Fib (:⊗:) where
   braid
@@ -604,125 +365,99 @@ instance Braided Fib (:⊗:) where
        , Object Fib b
        , Object Fib (a :⊗: b)
        , Object Fib (b :⊗: a)
-       , PackHom (Mults FibTh (a :⊗: b)) (Mults FibTh (b :⊗: a))
+       , BuildHomDualS (Mults FibTh (a :⊗: b)) (Mults FibTh (b :⊗: a))
        )
     => Fib (a :⊗: b) (b :⊗: a)
   braid =
     Fib $
-      packHom $
-        braidSectors
-          (Proxy @FibTh)
-          [natI @(MultOne a), natI @(MultTau a)]
-          [natI @(MultOne b), natI @(MultTau b)]
+      braidHomDual
+        (Proxy @FibTh)
+        [natI @(Mult FibTh 'One a), natI @(Mult FibTh 'Tau a)]
+        [natI @(Mult FibTh 'One b), natI @(Mult FibTh 'Tau b)]
 
 --------------------------------------------------------------------------------
 -- Cups \/ caps (cup = ε, cap = η)
 --------------------------------------------------------------------------------
 
--- | Math contract (skeletal Fib):
+-- | Math contract (skeletal finite fusion):
 --
 --   * @ε_X : X ⊗ X* → 𝟙@, @η_X : 𝟙 → X* ⊗ X@ ('DualObj' / 'CompactClosed').
---   * HomS vacuum block size is @n_𝟙(cod) × n_𝟙(dom)@; for @ε_X@ that is
---     @1 × n_𝟙(X⊗X*)@ with @n_𝟙(X⊗X*) = n_𝟙(X)^2 + n_τ(X)^2@ (Fib fusion).
---   * Fill paired multiplicity indices (@idxXY@) with @cupCoeff j@ on @ε@ and
---     @1@ on @η@ (asymmetric norm; snake = Σ_j n_j cupCoeff(j)).
+--   * Vacuum sector is Dual-left @Dual (C n_𝟙(X⊗X*)) ⊗ C 1@ (ε) or the
+--     dual column (η); other Irr sectors are zero Hom.
+--   * Weights from 'vacuumPairing' + 'cupCoeff' (ε) \/ @1@ (η).
 
-type FibDual (a :: FibObj) = DualObj FibTh a
-
--- | Vacuum-channel pairing weights for @X ⊗ Y → 𝟙@ (or the dual column).
-vacuumPairing
-  :: [Int]
-  -- ^ multiplicities of left factor
-  -> [Int]
-  -- ^ multiplicities of right factor
-  -> (Simple -> Complex Double)
-  -- ^ weight per simple (@cupCoeff@ or @const 1@)
-  -> Int
-  -- ^ @n_𝟙@ of the fused tensor (row\/column length)
-  -> [Complex Double]
-vacuumPairing nx ny weight nVac =
-  let p = Proxy @FibTh
-      irr = irrVals p
-      pairs =
-        [ (i, weight j)
-        | j <- irr
-        , let nL = multOf irr nx j
-              nR = multOf irr ny j
-        , nL == nR
-        , k <- [0 .. nL - 1]
-        , Just i <- [idxXY p nx ny j k j k One]
-        ]
-   in foldl'
-        (\ws (i, c) ->
-           [ if k == i then ws !! k + c else ws !! k
-           | k <- [0 .. nVac - 1]
-           ]
-        )
-        (replicate nVac 0)
-        pairs
-
--- | Counit @ε_a : a ⊗ a* → 𝟙@.
+-- | Counit @ε_a : a ⊗ a* → 𝟙@ as Dual-left sector Hom.
 cupObj
   :: forall a
    . ( Object Fib a
-     , Object Fib (FibDual a)
-     , Object Fib (a :⊗: FibDual a)
+     , Object Fib (DualObj FibTh a)
+     , Object Fib (a :⊗: DualObj FibTh a)
      , Object Fib ('Irrep 'One)
      )
-  => Fib (a :⊗: FibDual a) ('Irrep 'One)
+  => Fib (a :⊗: DualObj FibTh a) ('Irrep 'One)
 cupObj =
-  let nx = [natI @(MultOne a), natI @(MultTau a)]
-      ny = [natI @(MultOne (FibDual a)), natI @(MultTau (FibDual a))]
-      nVac = natI @(MultOne (a :⊗: FibDual a))
-      w = vacuumPairing nx ny (cupCoeff (Proxy @FibTh)) nVac
+  let nx = multsVal @(Mults FibTh a)
+      ny = multsVal @(Mults FibTh (DualObj FibTh a))
+      w = vacuumPairing (Proxy @FibTh) nx ny (cupCoeff (Proxy @FibTh))
+      wVec = fromList w :: C (Mult FibTh 'One (a :⊗: DualObj FibTh a))
+      vac =
+        sectorFromMap
+          ( arr (LinearFunction (\v -> konst (wVec <.> v)))
+              :: C (Mult FibTh 'One (a :⊗: DualObj FibTh a)) +> C 1
+          )
    in Fib $
-        HomCons
-          (fromList w :: M 1 (MultOne (a :⊗: FibDual a)))
-          (HomCons
-             (konst 0 :: M 0 (MultTau (a :⊗: FibDual a)))
-             HomNil)
+        HomDualCons
+          vac
+          (HomDualCons
+             (zeroV :: DualVector (C (Mult FibTh 'Tau (a :⊗: DualObj FibTh a))) ⊗ C 0)
+             HomDualNil)
 
--- | Unit @η_a : 𝟙 → a* ⊗ a@.
+-- | Unit @η_a : 𝟙 → a* ⊗ a@ as Dual-left sector Hom.
 capObj
   :: forall a
    . ( Object Fib a
-     , Object Fib (FibDual a)
-     , Object Fib (FibDual a :⊗: a)
+     , Object Fib (DualObj FibTh a)
+     , Object Fib (DualObj FibTh a :⊗: a)
      , Object Fib ('Irrep 'One)
      )
-  => Fib ('Irrep 'One) (FibDual a :⊗: a)
+  => Fib ('Irrep 'One) (DualObj FibTh a :⊗: a)
 capObj =
-  let nx = [natI @(MultOne (FibDual a)), natI @(MultTau (FibDual a))]
-      ny = [natI @(MultOne a), natI @(MultTau a)]
-      nVac = natI @(MultOne (FibDual a :⊗: a))
-      w = vacuumPairing nx ny (const 1) nVac
+  let nx = multsVal @(Mults FibTh (DualObj FibTh a))
+      ny = multsVal @(Mults FibTh a)
+      w = vacuumPairing (Proxy @FibTh) nx ny (const 1)
+      wVec = fromList w :: C (Mult FibTh 'One (DualObj FibTh a :⊗: a))
+      vac =
+        sectorFromMap
+          ( arr (LinearFunction (\s -> (konst 1 <.> s) *^ wVec))
+              :: C 1 +> C (Mult FibTh 'One (DualObj FibTh a :⊗: a))
+          )
    in Fib $
-        HomCons
-          (fromList w :: M (MultOne (FibDual a :⊗: a)) 1)
-          (HomCons
-             (konst 0 :: M (MultTau (FibDual a :⊗: a)) 0)
-             HomNil)
+        HomDualCons
+          vac
+          (HomDualCons
+             (zeroV :: DualVector (C 0) ⊗ C (Mult FibTh 'Tau (DualObj FibTh a :⊗: a)))
+             HomDualNil)
 
 -- | Irrep specialisation of 'cupObj'.
 cup
   :: forall j
    . ( Object Fib ('Irrep j)
-     , Object Fib (FibDual ('Irrep j))
-     , Object Fib (('Irrep j) :⊗: FibDual ('Irrep j))
+     , Object Fib (DualObj FibTh ('Irrep j))
+     , Object Fib (('Irrep j) :⊗: DualObj FibTh ('Irrep j))
      , Object Fib ('Irrep 'One)
      )
-  => Fib (('Irrep j) :⊗: FibDual ('Irrep j)) ('Irrep 'One)
+  => Fib (('Irrep j) :⊗: DualObj FibTh ('Irrep j)) ('Irrep 'One)
 cup = cupObj @('Irrep j)
 
 -- | Irrep specialisation of 'capObj'.
 cap
   :: forall j
    . ( Object Fib ('Irrep j)
-     , Object Fib (FibDual ('Irrep j))
-     , Object Fib (FibDual ('Irrep j) :⊗: 'Irrep j)
+     , Object Fib (DualObj FibTh ('Irrep j))
+     , Object Fib (DualObj FibTh ('Irrep j) :⊗: 'Irrep j)
      , Object Fib ('Irrep 'One)
      )
-  => Fib ('Irrep 'One) (FibDual ('Irrep j) :⊗: 'Irrep j)
+  => Fib ('Irrep 'One) (DualObj FibTh ('Irrep j) :⊗: 'Irrep j)
 cap = capObj @('Irrep j)
 
 --------------------------------------------------------------------------------

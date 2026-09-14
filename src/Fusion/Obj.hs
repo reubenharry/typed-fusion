@@ -32,6 +32,7 @@ module Fusion.Obj
   ) where
 
 import Data.Kind (Constraint, Type)
+import Data.Type.Bool (If)
 import Data.Type.Equality (type (==))
 import Fusion.Theory (FiniteIrr (..), FusionTheory (..))
 import Fusion.Unbounded (Spine)
@@ -246,15 +247,13 @@ type family SpineInsertZOrd
 -- Multiplicities
 --------------------------------------------------------------------------------
 
-type family DeltaLab (s :: lab) (r :: lab) :: Nat where
-  DeltaLab s s = 1
-  DeltaLab _s _r = 0
+type DeltaLab (s :: lab) (r :: lab) = If (s == r) 1 0
 
 -- | @n_s(X)@: multiplicity of simple @s@ in object @X@.
 type family Mult (t :: Type) (s :: lab) (a :: Obj lab) :: Nat where
   Mult _t s ('Irrep r) = DeltaLab s r
-  Mult t s ((a :⊕: b)) = Mult t s a + Mult t s b
-  Mult t s ((a :⊗: b)) = MultTensor t s a b (Irr t)
+  Mult t s (a :⊕: b ) = Mult t s a + Mult t s b
+  Mult t s (a :⊗: b) = MultTensor t s a b (Irr t)
 
 type family MultTensor
   (t :: Type)

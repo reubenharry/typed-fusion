@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -13,28 +14,48 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoStarIsType #-}
 
--- | Sector Hom as an Irr-ordered spine of matrices.
+-- | Sector Hom: Irr-ordered Dual-left spines.
+--
+-- 'HomDualS' — @Dual (C n_s(X)) ⊗ C n_s(Y)@ per sector (skeletal finite Hom).
 module Fusion.Hom
-  ( HomS (..)
-  , idHom
-  , zeroHom
-  , composeHom
-  , eqHom
+  ( HomDualS (..)
+  , SectorDual
+  , idHomDual
+  , zeroHomDual
+  , composeHomDual
+  , eqHomDual
+  , sectorFromMap
+  , sectorToMap
   , KnownMults
+  , MultsVal (..)
   , AllKnownNat
-  , eyeM
   ) where
 
+import Control.Arrow.Constrained (($))
+import Control.Category.Constrained.Prelude (Category (..))
+import Data.Complex (Complex)
 import Data.Kind (Constraint)
 import Data.Proxy (Proxy (..))
+import Data.VectorSpace (AdditiveGroup (zeroV), Scalar)
 import GHC.TypeLits (KnownNat, Nat, natVal)
-import Numeric.LinearAlgebra.Static
-  ( Domain (mul)
-  , M
-  , Sized (fromList, unwrap)
-  , konst
+import Math.LinearMap.Category
+  ( DualVector
+  , LinearSpace
+  , TensorSpace
+  , type (+>)
+  , type (⊗)
   )
-import Prelude
+import Math.LinearMap.Category.Backend.HMatrix ()
+import Math.LinearMap.Category.Instances ()
+import Math.LinearMap.Category.Class (asTensor, fromTensor)
+import Math.LinearMap.Coercion ((-+$=>))
+import Math.OrphanInstances ()
+import Numeric.LinearAlgebra.Static
+  ( C
+  , Sized (fromList, unwrap)
+  )
+import Numeric.LinearAlgebra.Static.COrphans ()
+import Prelude hiding (id, (.), ($))
 
 --------------------------------------------------------------------------------
 -- KnownNat on a multiplicity list
@@ -46,65 +67,122 @@ type family AllKnownNat (ns :: [Nat]) :: Constraint where
 
 type KnownMults (ns :: [Nat]) = AllKnownNat ns
 
+-- | Value-level read of a 'KnownMults' spine (Irr order).
+class MultsVal (ns :: [Nat]) where
+  multsVal :: [Int]
+
+instance MultsVal '[] where
+  multsVal = []
+
+instance (KnownNat n, MultsVal ns) => MultsVal (n ': ns) where
+  multsVal = fromIntegral (natVal (Proxy @n)) : multsVal @ns
+
 --------------------------------------------------------------------------------
--- Hom spine
+-- HomDualS spine (Dual-left linearmap packs)
 --------------------------------------------------------------------------------
 
--- | One matrix per Irr sector: @Hom(X,Y)_s ∈ Mat_{n_s(Y), n_s(X)}@.
-data HomS (nsDom :: [Nat]) (nsCod :: [Nat]) where
-  HomNil :: HomS '[] '[]
-  HomCons
-    :: (KnownNat nd, KnownNat nc)
-    => M nc nd
-    -> HomS nds ncs
-    -> HomS (nd ': nds) (nc ': ncs)
+-- | Constraints for a Dual-left sector @Dual (C nd) ⊗ C nc@.
+type SectorDual nd nc =
+  ( KnownNat nd
+  , KnownNat nc
+  , LinearSpace (C nd)
+  , LinearSpace (C nc)
+  , LinearSpace (DualVector (C nd))
+  , TensorSpace (C nd)
+  , TensorSpace (C nc)
+  , TensorSpace (DualVector (C nd))
+  , TensorSpace (DualVector (C nd) ⊗ C nc)
+  , Scalar (C nd) ~ Complex Double
+  , Scalar (C nc) ~ Complex Double
+  )
 
-eyeM :: forall n. KnownNat n => M n n
-eyeM =
-  let n = fromIntegral (natVal (Proxy @n)) :: Int
-   in fromList
-        [ if i == j then 1 else 0
-        | i <- [0 .. n - 1]
-        , j <- [0 .. n - 1]
-        ]
+-- | One Dual-left Hom per Irr sector: @Dual (C n_s(X)) ⊗ C n_s(Y)@.
+data HomDualS (nsDom :: [Nat]) (nsCod :: [Nat]) where
+  HomDualNil :: HomDualS '[] '[]
+  HomDualCons
+    :: SectorDual nd nc
+    => DualVector (C nd) ⊗ C nc
+    -> HomDualS nds ncs
+    -> HomDualS (nd ': nds) (nc ': ncs)
 
-class BuildId (ns :: [Nat]) where
-  buildId :: HomS ns ns
+sectorFromMap
+  :: forall nd nc
+   . SectorDual nd nc
+  => (C nd +> C nc)
+  -> DualVector (C nd) ⊗ C nc
+sectorFromMap m = asTensor -+$=> m
 
-instance BuildId '[] where
-  buildId = HomNil
+sectorToMap
+  :: forall nd nc
+   . SectorDual nd nc
+  => DualVector (C nd) ⊗ C nc
+  -> (C nd +> C nc)
+sectorToMap t = fromTensor -+$=> t
 
-instance (KnownNat n, BuildId ns) => BuildId (n ': ns) where
-  buildId = HomCons (eyeM @n) (buildId @ns)
+class BuildIdDual (ns :: [Nat]) where
+  buildIdDual :: HomDualS ns ns
 
-idHom :: forall ns. BuildId ns => HomS ns ns
-idHom = buildId @ns
+instance BuildIdDual '[] where
+  buildIdDual = HomDualNil
 
-class BuildZero (nsDom :: [Nat]) (nsCod :: [Nat]) where
-  buildZero :: HomS nsDom nsCod
+instance (SectorDual n n, BuildIdDual ns) => BuildIdDual (n ': ns) where
+  buildIdDual =
+    HomDualCons (sectorFromMap @n @n id) (buildIdDual @ns)
 
-instance BuildZero '[] '[] where
-  buildZero = HomNil
+idHomDual :: forall ns. BuildIdDual ns => HomDualS ns ns
+idHomDual = buildIdDual @ns
 
-instance (KnownNat nd, KnownNat nc, BuildZero nds ncs) =>
-  BuildZero (nd ': nds) (nc ': ncs) where
-  buildZero = HomCons (konst 0) (buildZero @nds @ncs)
+class BuildZeroDual (nsDom :: [Nat]) (nsCod :: [Nat]) where
+  buildZeroDual :: HomDualS nsDom nsCod
 
-zeroHom
+instance BuildZeroDual '[] '[] where
+  buildZeroDual = HomDualNil
+
+instance (SectorDual nd nc, BuildZeroDual nds ncs) =>
+  BuildZeroDual (nd ': nds) (nc ': ncs) where
+  buildZeroDual =
+    HomDualCons zeroV (buildZeroDual @nds @ncs)
+
+zeroHomDual
   :: forall nsDom nsCod
-   . BuildZero nsDom nsCod
-  => HomS nsDom nsCod
-zeroHom = buildZero @nsDom @nsCod
+   . BuildZeroDual nsDom nsCod
+  => HomDualS nsDom nsCod
+zeroHomDual = buildZeroDual @nsDom @nsCod
 
-composeHom
-  :: HomS nsY nsZ
-  -> HomS nsX nsY
-  -> HomS nsX nsZ
-composeHom HomNil HomNil = HomNil
-composeHom (HomCons g gs) (HomCons f fs) =
-  HomCons (mul g f) (composeHom gs fs)
+composeHomDual
+  :: HomDualS nsY nsZ
+  -> HomDualS nsX nsY
+  -> HomDualS nsX nsZ
+composeHomDual HomDualNil HomDualNil = HomDualNil
+composeHomDual (HomDualCons g gs) (HomDualCons f fs) =
+  HomDualCons
+    (sectorFromMap (sectorToMap g . sectorToMap f))
+    (composeHomDual gs fs)
 
-eqHom :: HomS nsDom nsCod -> HomS nsDom nsCod -> Bool
-eqHom HomNil HomNil = True
-eqHom (HomCons a as) (HomCons b bs) =
-  unwrap a == unwrap b && eqHom as bs
+-- | Equality by comparing Static unwraps of maps on the domain basis.
+eqHomDual :: HomDualS nsDom nsCod -> HomDualS nsDom nsCod -> Bool
+eqHomDual HomDualNil HomDualNil = True
+eqHomDual (HomDualCons a as) (HomDualCons b bs) =
+  sectorMapsEq a b && eqHomDual as bs
+
+sectorMapsEq
+  :: forall nd nc
+   . SectorDual nd nc
+  => DualVector (C nd) ⊗ C nc
+  -> DualVector (C nd) ⊗ C nc
+  -> Bool
+sectorMapsEq ta tb =
+  let fa = sectorToMap ta
+      fb = sectorToMap tb
+      n = fromIntegral (natVal (Proxy @nd)) :: Int
+   in and
+        [ unwrap (fa $ e i) == unwrap (fb $ e i)
+        | i <- [0 .. n - 1]
+        ]
+  where
+    e :: Int -> C nd
+    e i =
+      fromList
+        [ if j == i then 1 else 0
+        | j <- [0 .. fromIntegral (natVal (Proxy @nd)) - 1]
+        ]

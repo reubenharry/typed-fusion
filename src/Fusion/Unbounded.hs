@@ -7,11 +7,11 @@
 
 -- | Unbounded \/ Rep fusion — design spike and a tiny typed milestone.
 --
--- Finite theories (Fib, Ising) use full-Irr @HomS@ spines. Unbounded Irr
+-- Finite theories (Fib, Ising) use full-Irr @HomDualS@ spines. Unbounded Irr
 -- (U(1), SU(2), …) must /not/ stretch that representation: Hom is a
 -- finite-support map over shared charges, and F\/R come from formulas
 -- (CG \/ 6j), aligning with @Hom@
--- rather than cloning Fib’s table-driven @associateSectors@.
+-- rather than cloning Fib’s table-driven densify.
 --
 -- This module records that fork and offers a U(1)-style multiplicity spine
 -- as the first typed milestone (no full associator). @Obj Nat → Spine@ for

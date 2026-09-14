@@ -10,7 +10,7 @@
 
 -- | SU(2) representation category as 'FusionTheory' \/ 'FusionData'.
 --
--- Type-level labels are @Nat@ (@2j@). Term-level @TermLab = Int@.
+-- Type-level labels are @Label SU2Th = Nat@ (@2j@). Term-level @TermLab = Int@.
 -- Spin fractions have kind 'SpinKind' (@1/2@, @3/2@, …); reduce with 'Spin' to a
 -- @2j@ label (@Spin (1/2) = 1@, @Spin (1/1) = 2@).
 -- @fSymbol@ is the screenshot amplitude @[F^{abc}_d]_{ef}@ (Racah \/ CG),
@@ -42,7 +42,7 @@ import Data.Complex (Complex (..))
 import Data.List (elemIndex)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Fusion.Data (FusionData (..), allowedLeftMids, allowedRightMids)
-import Fusion.Theory (FusionTheory (..))
+import Fusion.Theory (FusionTheory (..), Label)
 import GHC.TypeLits (Nat, type (*), type Div)
 import Data.Proxy (Proxy (..))
 import qualified Data.Map.Strict as Map
@@ -74,6 +74,8 @@ infixl 7 /
 type family Spin (s :: SpinKind) :: Nat where
   Spin (n :/ d) = Div (2 * n) d
 
+type instance Label SU2Th = Nat
+
 instance FusionTheory Nat SU2Th where
   type UnitLab SU2Th = 0
   type FuseN SU2Th j1 j2 = TensorIrrepRepSU2 j1 j2
@@ -96,7 +98,7 @@ su2RPhase tj1 tj2 tj
 --------------------------------------------------------------------------------
 
 canFuseTJ :: Int -> Int -> Int -> Bool
-canFuseTJ a b c = canFuseD (Proxy @SU2Th) a b c
+canFuseTJ = canFuseD (Proxy @SU2Th)
 
 -- | Left intermediates @e@ for @((a⊗b)e)⊗c → d@.
 allowedE :: Int -> Int -> Int -> Int -> [Int]

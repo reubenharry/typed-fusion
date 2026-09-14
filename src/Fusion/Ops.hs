@@ -2,7 +2,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -11,86 +14,115 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Generic skeletal tensor \/ braid \/ associator from 'FusionData'.
+--
+-- Each Hom sector is emitted as Dual-left @C n_s(X) +> C n_s(Y)@ (no matrix
+-- densify buffer, no pack\/unpack).
 module Fusion.Ops
-  ( PackHom (..)
-  , tensorSectors
-  , braidSectors
-  , associateSectors
-  , disassociateSectors
+  ( BuildHomDualS
+  , HomSectors
+  , tensorHomDual
+  , braidHomDual
+  , associateHomDual
+  , disassociateHomDual
   , channelPairs
   , multOf
   , idxXY
-  , commuteKron
-  , kronLA
-  , blockDiagLA
+  , vacuumPairing
   ) where
 
+import Control.Arrow.Constrained (arr, ($))
 import Control.Monad (guard)
 import Data.Complex (Complex)
-import Data.List (elemIndex, findIndex)
+import Data.List (elemIndex, findIndex, foldl')
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
+import Data.Vector.Storable (toList)
+import Data.VectorSpace (AdditiveGroup (zeroV))
 import Fusion.Data (FusionData (..))
-import Fusion.Theory (FiniteIrr (..))
-import Fusion.Hom (HomS (..))
-import GHC.TypeLits (KnownNat, Nat)
-import qualified Numeric.LinearAlgebra as LA
-import Numeric.LinearAlgebra.Static (Sized (create, unwrap))
-import Prelude
+import Fusion.Hom
+  ( HomDualS (..)
+  , SectorDual
+  , sectorFromMap
+  , sectorToMap
+  )
+import Fusion.Theory (FiniteIrr (..), Label)
+import GHC.TypeLits (KnownNat, Nat, natVal)
+import Math.LinearMap.Category
+  ( DualVector
+  , pattern LinearFunction
+  , type (⊗)
+  )
+import Math.LinearMap.Category.Backend.HMatrix ()
+import Math.LinearMap.Category.Instances ()
+import Math.OrphanInstances ()
+import Numeric.LinearAlgebra.Static (C, Sized (fromList, unwrap))
+import Numeric.LinearAlgebra.Static.COrphans ()
+import Prelude hiding (($))
 
 --------------------------------------------------------------------------------
--- Pack \/ unpack HomS ↔ sector list
+-- Dual-left sector spine builders
 --------------------------------------------------------------------------------
 
-class PackHom (nsDom :: [Nat]) (nsCod :: [Nat]) where
-  unpackHom :: HomS nsDom nsCod -> [LA.Matrix (Complex Double)]
-  packHom :: [LA.Matrix (Complex Double)] -> HomS nsDom nsCod
+-- | Build an Irr-ordered 'HomDualS' by emitting one Dual-left sector at a time.
+class BuildHomDualS (nsDom :: [Nat]) (nsCod :: [Nat]) where
+  buildHomDualS
+    :: ( forall nd nc
+         . SectorDual nd nc
+        => Int
+        -> Proxy nd
+        -> Proxy nc
+        -> DualVector (C nd) ⊗ C nc
+       )
+    -> HomDualS nsDom nsCod
 
-instance PackHom '[] '[] where
-  unpackHom HomNil = []
-  packHom [] = HomNil
-  packHom _ = error "packHom: length mismatch (nil)"
+instance BuildHomDualS '[] '[] where
+  buildHomDualS _ = HomDualNil
 
-instance (KnownNat nd, KnownNat nc, PackHom nds ncs) =>
-  PackHom (nd ': nds) (nc ': ncs) where
-  unpackHom (HomCons m rest) = unwrap m : unpackHom rest
-  packHom (m : ms) =
-    case create m of
-      Just sm -> HomCons sm (packHom @nds @ncs ms)
-      Nothing -> error "packHom: dimension mismatch"
-  packHom [] = error "packHom: length mismatch (cons)"
+instance (SectorDual nd nc, BuildHomDualS nds ncs) =>
+  BuildHomDualS (nd ': nds) (nc ': ncs) where
+  buildHomDualS f =
+    HomDualCons
+      (f 0 (Proxy @nd) (Proxy @nc))
+      (buildHomDualS @nds @ncs (\i pd pc -> f (i + 1) pd pc))
 
---------------------------------------------------------------------------------
--- Linear-algebra helpers
---------------------------------------------------------------------------------
+-- | Existential Dual-left sector (lookup by Irr index).
+data SomeSector where
+  SomeSector
+    :: SectorDual nd nc
+    => DualVector (C nd) ⊗ C nc
+    -> SomeSector
 
-kronLA
-  :: LA.Matrix (Complex Double)
-  -> LA.Matrix (Complex Double)
-  -> LA.Matrix (Complex Double)
-kronLA = LA.kronecker
+class HomSectors (nsDom :: [Nat]) (nsCod :: [Nat]) where
+  homSectors :: HomDualS nsDom nsCod -> [SomeSector]
 
-blockDiagLA :: [LA.Matrix (Complex Double)] -> LA.Matrix (Complex Double)
-blockDiagLA [] = LA.konst 0 (0, 0)
-blockDiagLA [m] = m
-blockDiagLA (m : ms) =
-  let rest = blockDiagLA ms
-      (r1, c1) = LA.size m
-      (r2, c2) = LA.size rest
-   in LA.fromBlocks
-        [ [m, LA.konst 0 (r1, c2)]
-        , [LA.konst 0 (r2, c1), rest]
-        ]
+instance HomSectors '[] '[] where
+  homSectors HomDualNil = []
 
-commuteKron :: Int -> Int -> Complex Double -> LA.Matrix (Complex Double)
-commuteKron n m phase
-  | n == 0 || m == 0 = LA.konst 0 (m * n, n * m)
-  | otherwise =
-      LA.accum (LA.konst 0 (m * n, n * m)) const $
-        [ ((j * n + i, i * m + j), phase)
-        | i <- [0 .. n - 1]
-        , j <- [0 .. m - 1]
-        ]
+instance HomSectors nds ncs => HomSectors (nd ': nds) (nc ': ncs) where
+  homSectors (HomDualCons t rest) = SomeSector t : homSectors rest
+
+sectorLin
+  :: forall nd nc
+   . SectorDual nd nc
+  => (C nd -> C nc)
+  -> DualVector (C nd) ⊗ C nc
+sectorLin f = sectorFromMap (arr (LinearFunction f))
+
+coords :: forall n. KnownNat n => C n -> [Complex Double]
+coords = toList . unwrap
+
+fromCoords :: forall n. KnownNat n => [Complex Double] -> C n
+fromCoords = fromList
+
+applySectorCoords :: SomeSector -> [Complex Double] -> [Complex Double]
+applySectorCoords (SomeSector (t :: DualVector (C nd) ⊗ C nc)) vin =
+  coords @nc (sectorToMap t $ fromCoords @nd vin)
+
+zeroSector
+  :: forall nd nc
+   . SectorDual nd nc
+  => DualVector (C nd) ⊗ C nc
+zeroSector = zeroV
 
 --------------------------------------------------------------------------------
 -- N-basis channels
@@ -102,13 +134,12 @@ multOf irr ms s =
     Just i | i < length ms -> ms !! i
     _ -> 0
 
--- | Pairs @(x,y)@ with @N_{xy}^c > 0@, in Irr×Irr order.
 channelPairs
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
-  -> lab
-  -> [(lab, lab)]
+  -> Label t
+  -> [(Label t, Label t)]
 channelPairs p c =
   let irr = irrVals p
    in [ (x, y)
@@ -118,14 +149,14 @@ channelPairs p c =
       ]
 
 channelOffset
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
   -> [Int]
   -> [Int]
-  -> lab
-  -> lab
-  -> lab
+  -> Label t
+  -> Label t
+  -> Label t
   -> Int
 channelOffset p nx ny c x y =
   let irr = irrVals p
@@ -138,18 +169,17 @@ channelOffset p nx ny c x y =
         | (x', y') <- take idx pairs
         ]
 
--- | Index of @x_i ⊗ y_j → c@ in the N-basis for @X ⊗ Y@.
 idxXY
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
   -> [Int]
   -> [Int]
-  -> lab
+  -> Label t
   -> Int
-  -> lab
+  -> Label t
   -> Int
-  -> lab
+  -> Label t
   -> Maybe Int
 idxXY p nx ny x ix y iy c = do
   guard (canFuseD p x y c)
@@ -163,103 +193,21 @@ idxXY p nx ny x ix y iy c = do
 copies :: Int -> [Int]
 copies n = [0 .. n - 1]
 
---------------------------------------------------------------------------------
--- Tensor
---------------------------------------------------------------------------------
-
-tensorSectors
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
-  => Proxy t
-  -> [Int]
-  -> [Int]
-  -> [Int]
-  -> [Int]
-  -> [LA.Matrix (Complex Double)]
-  -> [LA.Matrix (Complex Double)]
-  -> [LA.Matrix (Complex Double)]
-tensorSectors p _nx _nz _ny _nw fs gs =
-  let irr = irrVals p
-      at mats s =
-        case elemIndex s irr of
-          Just i -> mats !! i
-          Nothing -> LA.konst 0 (0, 0)
-      forCharge c =
-        let blocks =
-              [ kronLA (at fs x) (at gs y)
-              | (x, y) <- channelPairs p c
-              ]
-         in if null blocks then LA.konst 0 (0, 0) else blockDiagLA blocks
-   in map forCharge irr
-
---------------------------------------------------------------------------------
--- Braid
---------------------------------------------------------------------------------
-
-braidSectors
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
-  => Proxy t
-  -> [Int]
-  -> [Int]
-  -> [LA.Matrix (Complex Double)]
-braidSectors p na nb =
-  let irr = irrVals p
-      forCharge c =
-        let pairs = channelPairs p c
-            domSizes = [multOf irr na x * multOf irr nb y | (x, y) <- pairs]
-            codSizes = [multOf irr nb l * multOf irr na r | (l, r) <- pairs]
-            domOff = scanl (+) 0 domSizes
-            codOff = scanl (+) 0 codSizes
-            nCols = last domOff
-            nRows = last codOff
-            paint (x, y) =
-              let Just di = findIndex (\(u, v) -> u == x && v == y) pairs
-                  Just ci = findIndex (\(u, v) -> u == y && v == x) pairs
-                  col0 = domOff !! di
-                  row0 = codOff !! ci
-                  nx = multOf irr na x
-                  ny = multOf irr nb y
-                  blk = commuteKron nx ny (rSymbol p x y c)
-               in (row0, col0, blk)
-         in if nRows == 0 || nCols == 0
-              then LA.konst 0 (nRows, nCols)
-              else
-                foldl
-                  ( \acc xy ->
-                      let (row0, col0, blk) = paint xy
-                          (br, bc) = LA.size blk
-                          emb =
-                            LA.accum (LA.konst 0 (nRows, nCols)) const $
-                              [ ((row0 + i, col0 + j), blk `LA.atIndex` (i, j))
-                              | i <- [0 .. br - 1]
-                              , j <- [0 .. bc - 1]
-                              ]
-                       in acc + emb
-                  )
-                  (LA.konst 0 (nRows, nCols) :: LA.Matrix (Complex Double))
-                  pairs
-   in map forCharge irr
-
---------------------------------------------------------------------------------
--- Associator
---------------------------------------------------------------------------------
-
 sectorChargeSize
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
   -> [Int]
   -> [Int]
-  -> lab
+  -> Label t
   -> Int
 sectorChargeSize p nx ny c =
   let irr = irrVals p
    in sum [multOf irr nx x * multOf irr ny y | (x, y) <- channelPairs p c]
 
 sectorMult
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
   -> [Int]
   -> [Int]
@@ -267,22 +215,200 @@ sectorMult
 sectorMult p nx ny =
   map (sectorChargeSize p nx ny) (irrVals p)
 
--- Simpler leftCol using ab mults:
+--------------------------------------------------------------------------------
+-- Sparse / block actions on coordinate lists (define Dual-left maps)
+--------------------------------------------------------------------------------
+
+addAt :: Int -> Complex Double -> [Complex Double] -> [Complex Double]
+addAt i v xs =
+  [ if k == i then xs !! k + v else xs !! k
+  | k <- [0 .. length xs - 1]
+  ]
+
+-- | Kronecker of two sector maps on flat N-basis blocks.
+kronCoords
+  :: ([Complex Double] -> [Complex Double])
+  -> Int
+  -> Int
+  -> ([Complex Double] -> [Complex Double])
+  -> Int
+  -> Int
+  -> [Complex Double]
+  -> [Complex Double]
+kronCoords f r1 c1 g r2 c2 vin =
+  let vout0 = replicate (r1 * r2) 0
+      -- column-major blocks: input index = i1 * c2 + i2  with i1 in cols of f, i2 in cols of g
+      -- row-major flatten of kron: out (i1,i2) at i1*r2+i2 for rows; in (j1,j2) at j1*c2+j2
+   in foldl'
+        ( \acc j ->
+            let j1 = j `div` c2
+                j2 = j `mod` c2
+                -- unit vector e_j maps under kron to kron(f e_j1, g e_j2)
+                ej1 = [if k == j1 then 1 else 0 | k <- [0 .. c1 - 1]]
+                ej2 = [if k == j2 then 1 else 0 | k <- [0 .. c2 - 1]]
+                fj = f ej1
+                gj = g ej2
+                col =
+                  [ fj !! i1 * gj !! i2
+                  | i1 <- [0 .. r1 - 1]
+                  , i2 <- [0 .. r2 - 1]
+                  ]
+             in foldl'
+                  (\a (i, x) -> addAt i ((vin !! j) * x) a)
+                  acc
+                  (zip [0 ..] col)
+        )
+        vout0
+        [0 .. c1 * c2 - 1]
+
+blockDiagApply
+  :: [([Complex Double] -> [Complex Double], Int, Int)]
+  -> [Complex Double]
+  -> [Complex Double]
+blockDiagApply blocks vin =
+  let domOff = scanl (+) 0 [c | (_, _, c) <- blocks]
+      codOff = scanl (+) 0 [r | (_, r, _) <- blocks]
+      nOut = last codOff
+   in foldl'
+        ( \acc ((f, r, c), di, ci) ->
+            let blockIn = take c (drop di vin)
+                blockOut = f blockIn
+             in foldl'
+                  (\a (k, x) -> addAt (ci + k) x a)
+                  acc
+                  (zip [0 .. r - 1] blockOut)
+        )
+        (replicate nOut 0)
+        (zip3 blocks (init domOff) (init codOff))
+
+commuteApply :: Int -> Int -> Complex Double -> [Complex Double] -> [Complex Double]
+commuteApply n m phase vin
+  | n == 0 || m == 0 = replicate (m * n) 0
+  | otherwise =
+      let vout0 = replicate (m * n) 0
+       in foldl'
+            ( \acc i ->
+                foldl'
+                  ( \a j ->
+                      let src = i * m + j
+                          dst = j * n + i
+                       in addAt dst (phase * (vin !! src)) a
+                  )
+                  acc
+                  [0 .. m - 1]
+            )
+            vout0
+            [0 .. n - 1]
+
+--------------------------------------------------------------------------------
+-- Tensor \/ braid \/ associator (Dual-left)
+--------------------------------------------------------------------------------
+
+kronBlock
+  :: SomeSector
+  -> SomeSector
+  -> ([Complex Double] -> [Complex Double], Int, Int)
+kronBlock sf@(SomeSector (_ :: DualVector (C n1) ⊗ C m1)) sg@(SomeSector (_ :: DualVector (C n2) ⊗ C m2)) =
+  let n1i = fromIntegral (natVal (Proxy @n1)) :: Int
+      m1i = fromIntegral (natVal (Proxy @m1)) :: Int
+      n2i = fromIntegral (natVal (Proxy @n2)) :: Int
+      m2i = fromIntegral (natVal (Proxy @m2)) :: Int
+   in ( kronCoords (applySectorCoords sf) m1i n1i (applySectorCoords sg) m2i n2i
+      , m1i * m2i
+      , n1i * n2i
+      )
+
+tensorHomDual
+  :: forall t nsA nsB nsC nsD nsAC nsBD
+   . ( FiniteIrr (Label t) t
+     , FusionData (Label t) t
+     , Eq (Label t)
+     , TermLab t ~ Label t
+     , HomSectors nsA nsB
+     , HomSectors nsC nsD
+     , BuildHomDualS nsAC nsBD
+     )
+  => Proxy t
+  -> HomDualS nsA nsB
+  -> HomDualS nsC nsD
+  -> HomDualS nsAC nsBD
+tensorHomDual p f g =
+  let irr = irrVals p
+      fs = homSectors f
+      gs = homSectors g
+      at secs s =
+        case elemIndex s irr of
+          Just i | i < length secs -> secs !! i
+          _ -> error "tensorHomDual: missing sector"
+   in buildHomDualS @nsAC @nsBD (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+        let c = irr !! i
+            pairs = channelPairs p c
+         in if null pairs
+              then zeroSector @nd @nc
+              else
+                let blocks = [kronBlock (at fs x) (at gs y) | (x, y) <- pairs]
+                 in sectorLin @nd @nc (fromCoords @nc . blockDiagApply blocks . coords @nd)
+      )
+
+braidHomDual
+  :: forall t nsAB nsBA
+   . ( FiniteIrr (Label t) t
+     , FusionData (Label t) t
+     , Eq (Label t)
+     , TermLab t ~ Label t
+     , BuildHomDualS nsAB nsBA
+     )
+  => Proxy t
+  -> [Int]
+  -> [Int]
+  -> HomDualS nsAB nsBA
+braidHomDual p na nb =
+  let irr = irrVals p
+   in buildHomDualS @nsAB @nsBA (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+        let c = irr !! i
+            pairs = channelPairs p c
+            domSizes = [multOf irr na x * multOf irr nb y | (x, y) <- pairs]
+            codSizes = [multOf irr nb l * multOf irr na r | (l, r) <- pairs]
+            domOff = scanl (+) 0 domSizes
+            codOff = scanl (+) 0 codSizes
+         in sectorLin @nd @nc $ \v ->
+              let vin = coords @nd v
+                  vout0 = replicate (fromIntegral (natVal (Proxy @nc))) 0
+                  paint acc (x, y) =
+                    case ( findIndex (\(u, w) -> u == x && w == y) pairs
+                         , findIndex (\(u, w) -> u == y && w == x) pairs
+                         ) of
+                      (Just di, Just ci) ->
+                        let col0 = domOff !! di
+                            row0 = codOff !! ci
+                            nx = multOf irr na x
+                            ny = multOf irr nb y
+                            phase = rSymbol p x y c
+                            blkIn = take (nx * ny) (drop col0 vin)
+                            blkOut = commuteApply nx ny phase blkIn
+                         in foldl'
+                              (\a (k, x') -> addAt (row0 + k) x' a)
+                              acc
+                              (zip [0 ..] blkOut)
+                      _ -> acc
+               in fromCoords @nc (foldl' paint vout0 pairs)
+      )
+
 leftCol'
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
   -> [Int]
   -> [Int]
   -> [Int]
-  -> lab
+  -> Label t
   -> Int
-  -> lab
+  -> Label t
   -> Int
-  -> lab
+  -> Label t
   -> Int
-  -> lab
-  -> lab
+  -> Label t
+  -> Label t
   -> Maybe Int
 leftCol' p na nb nc a aI b bI c cI e total = do
   guard (canFuseD p a b e)
@@ -292,20 +418,20 @@ leftCol' p na nb nc a aI b bI c cI e total = do
   idxXY p nab nc e eIdx c cI total
 
 rightRow'
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
   -> [Int]
   -> [Int]
   -> [Int]
-  -> lab
+  -> Label t
   -> Int
-  -> lab
+  -> Label t
   -> Int
-  -> lab
+  -> Label t
   -> Int
-  -> lab -- ^ intermediate f
-  -> lab -- ^ total
+  -> Label t
+  -> Label t
   -> Maybe Int
 rightRow' p na nb nc a aI b bI c cI f total = do
   guard (canFuseD p b c f)
@@ -314,17 +440,17 @@ rightRow' p na nb nc a aI b bI c cI f total = do
   let nbc = sectorMult p nb nc
   idxXY p na nbc a aI f fIdx total
 
-assocSectorEntries
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+assocEntries
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
   => Proxy t
   -> Bool
-  -> lab -- ^ total charge
+  -> Label t
   -> [Int]
   -> [Int]
   -> [Int]
   -> [((Int, Int), Complex Double)]
-assocSectorEntries p inv total na nb nc =
+assocEntries p inv total na nb nc =
   let irr = irrVals p
    in [ ((row, col), amp)
       | a <- irr
@@ -341,77 +467,101 @@ assocSectorEntries p inv total na nb nc =
       , Just row <- [rightRow' p na nb nc a aI b bI c cI f total]
       ]
 
-buildAssoc
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
-  => Proxy t
-  -> Bool
-  -> [Int]
-  -> [Int]
-  -> [Int]
-  -> [LA.Matrix (Complex Double)]
-buildAssoc p inv na nb nc =
-  let irr = irrVals p
-      nab = sectorMult p na nb
-      nbc = sectorMult p nb nc
-      nL s = sectorChargeSize p nab nc s -- ((a⊗b)⊗c)
-      nR s = sectorChargeSize p na nbc s -- (a⊗(b⊗c))
-      forCharge total =
-        let nRows = if inv then nL total else nR total
-            nCols = if inv then nR total else nL total
-            ents = assocSectorEntries p inv total na nb nc
-            -- For inverse, swap row/col interpretation: entries still (row,col) from
-            -- leftCol/rightRow with inv F — matching Fibonacci disassociate by
-            -- swapping left/right helpers at call site.
-         in if nRows == 0 || nCols == 0
-              then LA.konst 0 (nRows, nCols)
-              else LA.accum (LA.konst 0 (nRows, nCols)) (+) ents
-   in map forCharge irr
+applyEntries
+  :: Int
+  -> Int
+  -> [((Int, Int), Complex Double)]
+  -> [Complex Double]
+  -> [Complex Double]
+applyEntries nRows _nCols ents vin =
+  foldl'
+    ( \acc ((i, j), a) ->
+        addAt i (a * (vin !! j)) acc
+    )
+    (replicate nRows 0)
+    ents
 
-associateSectors
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
+associateHomDual
+  :: forall t nsL nsR
+   . ( FiniteIrr (Label t) t
+     , FusionData (Label t) t
+     , Eq (Label t)
+     , TermLab t ~ Label t
+     , BuildHomDualS nsL nsR
+     )
   => Proxy t
   -> [Int]
   -> [Int]
   -> [Int]
-  -> [LA.Matrix (Complex Double)]
-associateSectors p na nb nc = buildAssoc p False na nb nc
-
-disassociateSectors
-  :: forall lab t
-   . (FiniteIrr lab t, FusionData lab t, Eq lab, TermLab t ~ lab)
-  => Proxy t
-  -> [Int]
-  -> [Int]
-  -> [Int]
-  -> [LA.Matrix (Complex Double)]
-disassociateSectors p na nb nc =
-  -- Inverse: domain is right-associated; rebuild with inv F and swapped indexers
+  -> HomDualS nsL nsR
+associateHomDual p na nb nc =
   let irr = irrVals p
-      nab = sectorMult p na nb
-      nbc = sectorMult p nb nc
-      nL s = sectorChargeSize p nab nc s
-      nR s = sectorChargeSize p na nbc s
-      forCharge total =
-        let nRows = nL total
-            nCols = nR total
+   in buildHomDualS @nsL @nsR (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+        let total = irr !! i
+            nRows = fromIntegral (natVal (Proxy @nc))
+            nCols = fromIntegral (natVal (Proxy @nd))
+            ents = assocEntries p False total na nb nc
+         in sectorLin @nd @nc $
+              fromCoords @nc . applyEntries nRows nCols ents . coords @nd
+      )
+
+disassociateHomDual
+  :: forall t nsL nsR
+   . ( FiniteIrr (Label t) t
+     , FusionData (Label t) t
+     , Eq (Label t)
+     , TermLab t ~ Label t
+     , BuildHomDualS nsL nsR
+     )
+  => Proxy t
+  -> [Int]
+  -> [Int]
+  -> [Int]
+  -> HomDualS nsL nsR
+disassociateHomDual p na nb nc =
+  let irr = irrVals p
+   in buildHomDualS @nsL @nsR (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+        let total = irr !! i
+            nRows = fromIntegral (natVal (Proxy @nc))
+            nCols = fromIntegral (natVal (Proxy @nd))
             ents =
-              [ ((col, row), amp) -- transpose of forward indexing with F^{-1}
-              | a <- irr
-              , aI <- copies (multOf irr na a)
-              , b <- irr
-              , bI <- copies (multOf irr nb b)
-              , c <- irr
-              , cI <- copies (multOf irr nc c)
-              , e <- irr
-              , canFuseD p a b e
-              , canFuseD p e c total
-              , Just col <- [leftCol' p na nb nc a aI b bI c cI e total]
-              , (f, amp) <- fSymbol p True a b c total e
-              , Just row <- [rightRow' p na nb nc a aI b bI c cI f total]
+              [ ((col, row), amp)
+              | ((row, col), amp) <- assocEntries p True total na nb nc
               ]
-         in if nRows == 0 || nCols == 0
-              then LA.konst 0 (nRows, nCols)
-              else LA.accum (LA.konst 0 (nRows, nCols)) (+) ents
-   in map forCharge irr
+         in sectorLin @nd @nc $
+              fromCoords @nc . applyEntries nRows nCols ents . coords @nd
+      )
+
+--------------------------------------------------------------------------------
+-- Cups (coefficient source for Dual-left Fib cups)
+--------------------------------------------------------------------------------
+
+vacuumPairing
+  :: forall t
+   . (FiniteIrr (Label t) t, FusionData (Label t) t, Eq (Label t), TermLab t ~ Label t)
+  => Proxy t
+  -> [Int]
+  -> [Int]
+  -> (Label t -> Complex Double)
+  -> [Complex Double]
+vacuumPairing p nx ny weight =
+  let irr = irrVals p
+      u = unitVal p
+      nVac = sectorChargeSize p nx ny u
+      pairs =
+        [ (i, weight j)
+        | j <- irr
+        , let nL = multOf irr nx j
+              nR = multOf irr ny j
+        , nL == nR
+        , k <- [0 .. nL - 1]
+        , Just i <- [idxXY p nx ny j k j k u]
+        ]
+   in foldl'
+        (\ws (i, c) ->
+           [ if k == i then ws !! k + c else ws !! k
+           | k <- [0 .. nVac - 1]
+           ]
+        )
+        (replicate nVac 0)
+        pairs

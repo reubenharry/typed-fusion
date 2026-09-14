@@ -526,6 +526,19 @@ cup bb =
                   cupCoeff (Proxy @SU2Th) (rootLab l) * (konst 1 <.> v) + go rest rs
                 Nothing -> go rest rs
 
+-- | Stub: CompactClosed-shaped counit @ε : a ⊗ Dual a → 𝟙@ as a 'HomFused' morphism
+-- (Fib 'cupObj' / 'Categorical.CompactClosed.counit' shape). Contrast spine-applied
+-- 'cup' (@FTreeV (FuseFTrees b b) → FTreeV Unit@). Body TBD — type sketch only.
+cup'
+  :: forall a
+   . ( Object (HomFused SU2) a
+     , Object (HomFused SU2) (DualObj SU2Th a)
+     , Object (HomFused SU2) (a :⊗: DualObj SU2Th a)
+     , Object (HomFused SU2) ('Irrep 0)
+     )
+  => HomFused SU2 (a :⊗: DualObj SU2Th a) ('Irrep 0)
+cup' = undefined
+
 -- | Step 5: @id ⊗ λ@ — @a* ⊗ (Unit ⊗ c) → a* ⊗ c@ (not type-level absorption).
 unitorHom
   :: forall a c

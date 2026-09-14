@@ -25,7 +25,7 @@ module Fusion.Data
 import Data.Complex (Complex)
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
-import Fusion.Theory (FiniteIrr (..), FusionTheory)
+import Fusion.Theory (FiniteIrr (..), FusionTheory, Label)
 import Data.Maybe (fromMaybe)
 
 -- | Promote a simple label to a term-level value (optional).
@@ -33,14 +33,14 @@ class LabVal (lab :: Type) (s :: lab) where
   labVal :: Proxy s -> lab
 
 -- | Value-level structure constants.
--- @TermLab@ may differ from @code@ (e.g. SU(2): @code = Nat@, @TermLab = Int@).
+-- @TermLab@ may differ from @Label t@ (e.g. SU(2): @Label = Nat@, @TermLab = Int@).
 --
 -- Mathematical source for Hom cups \/ F \/ R scalars:
 --
 --   * 'cupCoeff' — cup\/ε factor on a simple (includes FS when the theory has it)
 --   * 'fSymbol' — @[F^{abc}_d]_{e f}@ amplitudes
 --   * 'rSymbol' — channel R-phase on @a ⊗ b → c@
-class FusionTheory code t => FusionData (code :: Type) (t :: Type) | t -> code where
+class FusionTheory lab t => FusionData (lab :: Type) (t :: Type) | t -> lab where
   type TermLab t :: Type
   fuseOutcomes :: Proxy t -> TermLab t -> TermLab t -> [(TermLab t, Int)]
   nSymbol :: Proxy t -> TermLab t -> TermLab t -> TermLab t -> Int
@@ -67,14 +67,14 @@ class FusionTheory code t => FusionData (code :: Type) (t :: Type) | t -> code w
   -- | Cup\/ε scalar on simple @j@ (SU(2): @FS(j)·dim(j)@; Fib: @d_τ = φ@ on τ).
   cupCoeff :: Proxy t -> TermLab t -> Complex Double
 
--- | @fuseOutcomes@ from 'irrVals' + 'nSymbol' when @TermLab t ~ code@.
+-- | @fuseOutcomes@ from 'irrVals' + 'nSymbol' when @TermLab t ~ Label t@.
 fuseOutcomesFinite
-  :: forall code t
-   . (FiniteIrr code t, FusionData code t, TermLab t ~ code)
+  :: forall lab t
+   . (FiniteIrr lab t, FusionData lab t, TermLab t ~ Label t, lab ~ Label t)
   => Proxy t
-  -> code
-  -> code
-  -> [(code, Int)]
+  -> Label t
+  -> Label t
+  -> [(Label t, Int)]
 fuseOutcomesFinite p a b =
   [ (c, n)
   | c <- irrVals p
@@ -84,7 +84,7 @@ fuseOutcomesFinite p a b =
 
 -- | Left intermediates @e@ for @((a⊗b)e)⊗c → d@.
 allowedLeftMids
-  :: FusionData code t
+  :: FusionData lab t
   => Proxy t
   -> TermLab t
   -> TermLab t
@@ -99,7 +99,7 @@ allowedLeftMids p a b c d =
 
 -- | Right intermediates @f@ for @a⊗((b⊗c)f) → d@.
 allowedRightMids
-  :: FusionData code t
+  :: FusionData lab t
   => Proxy t
   -> TermLab t
   -> TermLab t
