@@ -5,7 +5,8 @@ alwaysApply: true
 
 # Basis-sum ban (production paths)
 
-In any module **other than** `*.Reference` and QuickCheck **oracles** that live there:
+In any module **other than** `*.Reference` (under `quantum-reference/`
+package) and QuickCheck **oracles** that live there:
 
 ## Do not
 

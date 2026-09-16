@@ -1,9 +1,12 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -33,10 +36,14 @@
 -- not symmetric. Kelly–Laplaza compact closed would also ask for 'Symmetric'.
 module Categorical.CompactClosed
   ( CompactClosed (..)
+  , ComposeNamesC
+  , composeNames
   ) where
 
 import Control.Category.Constrained (Category (..))
 import Data.Kind (Type)
+import Categorical.Associative (Associative (..))
+import Categorical.Bifunctor (Bifunctor (..))
 import Categorical.Monoidal (Monoidal (..))
 import Prelude hiding (id, (.))
 
@@ -61,3 +68,60 @@ class Monoidal k p => CompactClosed (k :: κ -> κ -> Type) (p :: κ -> κ -> κ
        , Object k (p a (Dual k p a))
        )
     => k (p a (Dual k p a)) (Id k p)
+
+--------------------------------------------------------------------------------
+-- Name composition (Mac Lane ladder on ⌜f⌝ ⊗ ⌜g⌝)
+--------------------------------------------------------------------------------
+
+-- | Object premises for 'composeNames': every tensor that appears in the
+-- five-step Dual-left Hom ladder. Independent of fusion labels \/ 'DualObj';
+-- only 'CompactClosed' (hence 'Monoidal' \/ 'Associative' \/ 'Bifunctor').
+type ComposeNamesC (k :: κ -> κ -> Type) (p :: κ -> κ -> κ) (a :: κ) (b :: κ) (c :: κ) =
+  ( CompactClosed k p
+  , Object k a
+  , Object k b
+  , Object k c
+  , Object k (Id k p)
+  , Object k (Dual k p a)
+  , Object k (Dual k p b)
+  , Object k (p (Dual k p a) b)
+  , Object k (p (Dual k p b) c)
+  , Object k (p (Id k p) (Id k p))
+  , Object k (p (p (Dual k p a) b) (p (Dual k p b) c))
+  , Object k (p (Dual k p a) (p b (p (Dual k p b) c)))
+  , Object k (p b (p (Dual k p b) c))
+  , Object k (p (p b (Dual k p b)) c)
+  , Object k (p (Dual k p a) (p (p b (Dual k p b)) c))
+  , Object k (p b (Dual k p b))
+  , Object k (p (Id k p) c)
+  , Object k (p (Dual k p a) (p (Id k p) c))
+  , Object k (p (Dual k p a) c)
+  )
+
+-- | Compose names @⌜f⌝ : I → a* ⊗ b@ and @⌜g⌝ : I → b* ⊗ c@ to
+-- @⌜g ∘ f⌝ : I → a* ⊗ c@ via the five Mac Lane morphisms
+-- (same ladder as Hom genealogy / 'composeMorObj'):
+--
+-- @
+--   ⌜f⌝ ⊗ ⌜g⌝
+--     ─ α ─►         a* ⊗ (b ⊗ (b* ⊗ c))
+--     ─ id⊗α⁻¹ ─►    a* ⊗ ((b ⊗ b*) ⊗ c)
+--     ─ id⊗(ε⊗id) ─► a* ⊗ (I ⊗ c)
+--     ─ id⊗λ ─►      a* ⊗ c
+-- @
+--
+-- Works in any 'CompactClosed' category (Fib, future Ising, …): no
+-- 'FusionTheory' \/ densify.
+composeNames
+  :: forall {κ} (hom :: κ -> κ -> Type) (prod :: κ -> κ -> κ) (a :: κ) (b :: κ) (c :: κ)
+   . ComposeNamesC hom prod a b c
+  => hom (Id hom prod) (prod (Dual hom prod a) b)
+  -> hom (Id hom prod) (prod (Dual hom prod b) c)
+  -> hom (Id hom prod) (prod (Dual hom prod a) c)
+composeNames nf ng =
+    bimap id idl
+  . bimap id (bimap counit id)
+  . bimap id disassociate
+  . associate
+  . bimap nf ng
+  . coidr

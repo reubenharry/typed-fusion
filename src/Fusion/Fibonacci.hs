@@ -40,8 +40,6 @@ module Fusion.Fibonacci
   , phiInvSqrt
   , cup
   , cap
-  , cupObj
-  , capObj
   , zeroMor
   , fuseMap
   , eqFib
@@ -150,16 +148,15 @@ instance FusionData Simple FibTh where
   fSymbol _ _ Tau Tau Tau Tau Tau =
     [(One, phiInvSqrt), (Tau, -phiInv)]
   fSymbol p _ a b c d e =
-    [ (f, 1)
-    | f <- irrVals p
-    , canFuseD p a b e
-    , canFuseD p e c d
-    , canFuseD p b c f
-    , canFuseD p a f d
-    ]
+    [(f, 1) |
+       canFuseD p a b e,
+       canFuseD p e c d,
+       f <- irrVals p,
+       canFuseD p b c f,
+       canFuseD p a f d]
   rSymbol _ Tau Tau One =
     let i = 0 :+ 1
-     in exp (-4 * pi * i / 5)
+     in exp (- (4 * pi * i / 5))
   rSymbol _ Tau Tau Tau =
     let i = 0 :+ 1
      in exp (3 * pi * i / 5)
@@ -197,7 +194,7 @@ type FibHom a b =
   )
 
 phi :: Complex Double
-phi = ((1 + sqrt 5) / 2) :+ 0
+phi = (1 + sqrt 5) / 2 :+ 0
 
 phiInv :: Complex Double
 phiInv = 1 / phi
@@ -212,10 +209,10 @@ natI = fromIntegral (natVal (Proxy @n))
 -- Named morphisms
 --------------------------------------------------------------------------------
 
-fuse :: Fib ((('Irrep 'Tau) :⊗: ('Irrep 'Tau))) ((('Irrep 'One) :⊕: ('Irrep 'Tau)))
+fuse :: Fib ('Irrep 'Tau :⊗: 'Irrep 'Tau) ('Irrep 'One :⊕: 'Irrep 'Tau)
 fuse = Fib idHomDual
 
-split :: Fib ((('Irrep 'One) :⊕: ('Irrep 'Tau))) ((('Irrep 'Tau) :⊗: ('Irrep 'Tau)))
+split :: Fib ('Irrep 'One :⊕: 'Irrep 'Tau) ('Irrep 'Tau :⊗: 'Irrep 'Tau)
 split = Fib idHomDual
 
 eqFib :: (KnownMult a, KnownMult b, FibHom a b) => Fib a b -> Fib a b -> Bool
@@ -276,7 +273,7 @@ instance QFunctor (:⊗:) Fib Fib where
        )
     => Fib a b
     -> Fib (c :⊗: a) (c :⊗: b)
-  second g = bimap (id :: Fib c c) g
+  second = bimap (id :: Fib c c)
 
 -- Dual-left morphisms from Ops (no densify buffer \/ pack).
 instance Bifunctor (:⊗:) Fib Fib Fib where
@@ -387,7 +384,7 @@ instance Braided Fib (:⊗:) where
 --   * Weights from 'vacuumPairing' + 'cupCoeff' (ε) \/ @1@ (η).
 
 -- | Counit @ε_a : a ⊗ a* → 𝟙@ as Dual-left sector Hom.
-cupObj
+cup
   :: forall a
    . ( Object Fib a
      , Object Fib (DualObj FibTh a)
@@ -395,7 +392,7 @@ cupObj
      , Object Fib ('Irrep 'One)
      )
   => Fib (a :⊗: DualObj FibTh a) ('Irrep 'One)
-cupObj =
+cup =
   let nx = multsVal @(Mults FibTh a)
       ny = multsVal @(Mults FibTh (DualObj FibTh a))
       w = vacuumPairing (Proxy @FibTh) nx ny (cupCoeff (Proxy @FibTh))
@@ -413,7 +410,7 @@ cupObj =
              HomDualNil)
 
 -- | Unit @η_a : 𝟙 → a* ⊗ a@ as Dual-left sector Hom.
-capObj
+cap
   :: forall a
    . ( Object Fib a
      , Object Fib (DualObj FibTh a)
@@ -421,7 +418,7 @@ capObj
      , Object Fib ('Irrep 'One)
      )
   => Fib ('Irrep 'One) (DualObj FibTh a :⊗: a)
-capObj =
+cap =
   let nx = multsVal @(Mults FibTh (DualObj FibTh a))
       ny = multsVal @(Mults FibTh a)
       w = vacuumPairing (Proxy @FibTh) nx ny (const 1)
@@ -438,27 +435,7 @@ capObj =
              (zeroV :: DualVector (C 0) ⊗ C (Mult FibTh 'Tau (DualObj FibTh a :⊗: a)))
              HomDualNil)
 
--- | Irrep specialisation of 'cupObj'.
-cup
-  :: forall j
-   . ( Object Fib ('Irrep j)
-     , Object Fib (DualObj FibTh ('Irrep j))
-     , Object Fib (('Irrep j) :⊗: DualObj FibTh ('Irrep j))
-     , Object Fib ('Irrep 'One)
-     )
-  => Fib (('Irrep j) :⊗: DualObj FibTh ('Irrep j)) ('Irrep 'One)
-cup = cupObj @('Irrep j)
 
--- | Irrep specialisation of 'capObj'.
-cap
-  :: forall j
-   . ( Object Fib ('Irrep j)
-     , Object Fib (DualObj FibTh ('Irrep j))
-     , Object Fib (DualObj FibTh ('Irrep j) :⊗: 'Irrep j)
-     , Object Fib ('Irrep 'One)
-     )
-  => Fib ('Irrep 'One) (DualObj FibTh ('Irrep j) :⊗: 'Irrep j)
-cap = capObj @('Irrep j)
 
 --------------------------------------------------------------------------------
 -- Compact closed (right duals)
@@ -466,5 +443,5 @@ cap = capObj @('Irrep j)
 
 instance CompactClosed Fib (:⊗:) where
   type Dual Fib (:⊗:) a = DualObj FibTh a
-  unit = capObj
-  counit = cupObj
+  unit = cap
+  counit = cup

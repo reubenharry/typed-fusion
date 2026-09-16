@@ -78,9 +78,9 @@ from `FusionData`, but requires `FiniteIrr` and `TermLab ~ code`.
 
 ## Non-goals / keep separate
 
-- **CG densify** (`Symmetry.CG.SU2`) stays as the geometric fuse / oracle for
-  magnetic-index layout; Hom should stop *defining* F by densify once step 3
-  lands.
+- **CG densify** lives only in `Hom.Reference` (`quantum-reference` package);
+  production F uses SixJ / channel morphisms. Do not import `*.Reference` from
+  the main `quantum` library.
 - **No basis-sum in production** — Reference oracles only.
 - **No new `unsafeCoerce`** without explicit approval.
 

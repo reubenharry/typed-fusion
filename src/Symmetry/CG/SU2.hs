@@ -21,15 +21,13 @@
 --     within each @tj@).
 --
 -- Built by highest-weight + @J−@ (Condon–Shortley).
+-- Densify \/ dynamic-LA F oracles live in 'Hom.Reference' (quantum-reference package),
+-- not here.
 module Symmetry.CG.SU2
   ( fuseSU2FlatSectors
   , unfuseSU2FlatSectors
   , fuseMapRightFlatSectors
   , fuseMapLeftFlatSectors
-  , fuseTreeLeftSectors
-  , fuseTreeRightSectors
-  , denseFMoveSectors
-  , fmoveFlatSectors
   , fusedSectorPairs
   , sectorsFromPairs
   , fuseCGChannel
@@ -57,7 +55,6 @@ import Numeric.LinearAlgebra.Static (C)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
-import qualified Numeric.LinearAlgebra as LA
 
 -- | Total-@tj@ channels in @j1 ⊗ j2@ (same order as 'TensorIrrepRepSU2').
 fusionChannels :: Int -> Int -> [Int]
@@ -417,137 +414,3 @@ fusedSectorPairs r q =
       , (tj2, m2) <- q
       , tjOut <- fusionChannels tj1 tj2
       ]
-
--- | @((r⊗q)⊗s)@ product flat → left-fused coalesced flat (sector lists).
-fuseTreeLeftSectors
-  :: [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fuseTreeLeftSectors secsR secsQ secsS vin =
-  let dr = repDimOf secsR
-      dq = repDimOf secsQ
-      ds = repDimOf secsS
-      dimRQ = dr * dq
-      secsRQ =
-        sectorsFromPairs
-          (fusedSectorPairs (pairsOf secsR) (pairsOf secsQ))
-      dimRqF = repDimOf secsRQ
-      mid = runST $ do
-        m <- MVS.new (dimRqF * ds)
-        mapM_
-          ( \iS -> do
-              let fiber =
-                    VS.generate dimRQ $ \iRq ->
-                      vin VS.! (iRq * ds + iS)
-                  fused = fuseSU2FlatSectors secsR secsQ fiber
-              mapM_
-                ( \iRq' ->
-                    MVS.write m (iRq' * ds + iS) (fused VS.! iRq')
-                )
-                [0 .. dimRqF - 1]
-          )
-          [0 .. ds - 1]
-        VS.freeze m
-   in fuseSU2FlatSectors secsRQ secsS mid
-  where
-    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
-
--- | @(r⊗(q⊗s))@ product flat → right-fused coalesced flat (sector lists).
-fuseTreeRightSectors
-  :: [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fuseTreeRightSectors secsR secsQ secsS vin =
-  let dr = repDimOf secsR
-      dq = repDimOf secsQ
-      ds = repDimOf secsS
-      dimQS = dq * ds
-      secsQS =
-        sectorsFromPairs
-          (fusedSectorPairs (pairsOf secsQ) (pairsOf secsS))
-      dimQsF = repDimOf secsQS
-      mid = runST $ do
-        m <- MVS.new (dr * dimQsF)
-        mapM_
-          ( \iR -> do
-              let fiber =
-                    VS.generate dimQS $ \iQs ->
-                      vin VS.! (iR * dimQS + iQs)
-                  fused = fuseSU2FlatSectors secsQ secsS fiber
-              mapM_
-                ( \iQs' ->
-                    MVS.write m (iR * dimQsF + iQs') (fused VS.! iQs')
-                )
-                [0 .. dimQsF - 1]
-          )
-          [0 .. dr - 1]
-        VS.freeze m
-   in fuseSU2FlatSectors secsR secsQS mid
-  where
-    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
-
-matFromMapSecs
-  :: Int
-  -> Int
-  -> (VS.Vector (Complex Double) -> VS.Vector (Complex Double))
-  -> LA.Matrix (Complex Double)
-matFromMapSecs _nRows nCols f =
-  LA.fromColumns
-    [ VS.convert (f (e i))
-    | i <- [0 .. nCols - 1]
-    ]
-  where
-    e i = VS.generate nCols $ \j -> if i == j then 1 else 0
-
--- | Dense left→right F for sector spines @r⊗q⊗s@ (@mR ∘ mL†@).
--- Same densification as 'Symmetry.CG.FSymbol.denseFMove', sector-list driven.
-denseFMoveSectors
-  :: [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> LA.Matrix (Complex Double)
-denseFMoveSectors secsR secsQ secsS =
-  let dr = repDimOf secsR
-      dq = repDimOf secsQ
-      ds = repDimOf secsS
-      dimP = dr * dq * ds
-      secsRQ =
-        sectorsFromPairs
-          (fusedSectorPairs (pairsOf secsR) (pairsOf secsQ))
-      secsQS =
-        sectorsFromPairs
-          (fusedSectorPairs (pairsOf secsQ) (pairsOf secsS))
-      secsL =
-        sectorsFromPairs
-          (fusedSectorPairs (pairsOf secsRQ) (pairsOf secsS))
-      secsRight =
-        sectorsFromPairs
-          (fusedSectorPairs (pairsOf secsR) (pairsOf secsQS))
-      dimL = repDimOf secsL
-      dimRight = repDimOf secsRight
-      mL = matFromMapSecs dimL dimP (fuseTreeLeftSectors secsR secsQ secsS)
-      mR = matFromMapSecs dimRight dimP (fuseTreeRightSectors secsR secsQ secsS)
-   in mR LA.<> LA.tr mL
-  where
-    pairsOf secs = [(tj, m) | (tj, m, _) <- secs]
-
--- | Apply dense F (or @Fᵀ ≈ F⁻¹@) on left\/right coalesced flats of @r⊗q⊗s@.
-fmoveFlatSectors
-  :: Bool
-  -> [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> [(Int, Int, Int)]
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fmoveFlatSectors inv secsR secsQ secsS vin =
-  let mat = denseFMoveSectors secsR secsQ secsS
-      v = VS.convert vin :: LA.Vector (Complex Double)
-      v' =
-        if inv
-          then LA.tr mat LA.#> v
-          else mat LA.#> v
-   in VS.convert v'

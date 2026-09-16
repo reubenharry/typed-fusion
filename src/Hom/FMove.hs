@@ -11,15 +11,11 @@
 {-# LANGUAGE NoStarIsType #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
--- | F-moves and FuseFTrees naturality on genealogy spines.
+-- | Generic F-moves and FuseFTrees naturality on genealogy spines.
 --
 -- Channel enumeration uses 'Fusion.Data.allowedLeftMids' \/ 'allowedRightMids'
--- (@SU2Th@). The dense F matrix is still CG densification
--- ('Fusion.SU2.fmoveIrrepsFlat') — typed per-channel @C (d+1)@ F from
--- 'fSymbol' is the follow-on (see ROADMAP).
---
--- Production 'idRight'/'idLeft' use expanded spine-order flats
--- (no coalesced 'ForgetRep').
+-- (@SU2Th@). Production F applies per-channel irrep payloads via
+-- 'Fusion.ChannelF.fmoveChannelsD' on 'FusionData.fSymbol'.
 module Hom.FMove
   ( fmoveTrees
   , fmoveInvTrees
@@ -36,18 +32,11 @@ module Hom.FMove
   ) where
 
 import Data.Complex (Complex)
-import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
+import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
-import Fusion.Data (allowedLeftMids, allowedRightMids)
-import Fusion.SU2
-  ( SU2Th
-  , fmoveIrrepsFlat
-  , leftSectors
-  , packIrrepsFlat
-  , rightSectors
-  , unpackIrrepsFlat
-  )
+import Fusion.ChannelF (fmoveChannelsD)
+import Fusion.SU2 (SU2Th)
 import Hom.Expr
 import Hom.FTreeV
 import Hom.Singletons
@@ -174,8 +163,7 @@ zeroLike5 (d, _, _, _, _) m =
 -- | 3-factor F-move: @FuseFTrees (FuseFTrees a b) c → FuseFTrees a (FuseFTrees b c)@.
 --
 -- 'FuseFTrees' distributes into channels @((a_i⊗b_j)_e ⊗ c_k)_d@. For each
--- distinct root triple @(r(a_i),r(b_j),r(c_k))@ apply dense Racah
--- @F^{ra rb rc}@, keeping genealogy in the channel key.
+-- root triple @(r(a_i),r(b_j),r(c_k))@ apply channel F on @C (d+1)@ payloads.
 fmoveTrees
   :: forall a b c
    . ( KnownFTrees (FuseFTrees (FuseFTrees a b) c)
@@ -198,18 +186,8 @@ fmoveTrees tv =
                     , rb' == rb
                     , rc' == rc
                     ]
-                  buf =
-                    packIrrepsFlat
-                      (leftSectors ra rb rc)
-                      (\d -> allowedLeftMids (Proxy @SU2Th) ra rb rc d)
-                      chH
-                  buf' = fmoveIrrepsFlat False ra rb rc buf
-                  unpacked =
-                    unpackIrrepsFlat
-                      (rightSectors ra rb rc)
-                      (\d -> allowedRightMids (Proxy @SU2Th) ra rb rc d)
-                      buf'
-               in [(d, f, ra, rb, rc, v) | (d, f, v) <- unpacked]
+                  moved = fmoveChannelsD (Proxy @SU2Th) (\d -> d + 1) False ra rb rc chH
+               in [(d, f, ra, rb, rc, v) | (d, f, v) <- moved]
           )
           triples
    in scatterAssocRChannel
@@ -238,18 +216,8 @@ fmoveInvTrees tv =
                     , rb' == rb
                     , rc' == rc
                     ]
-                  buf =
-                    packIrrepsFlat
-                      (rightSectors ra rb rc)
-                      (\d -> allowedRightMids (Proxy @SU2Th) ra rb rc d)
-                      chH
-                  buf' = fmoveIrrepsFlat True ra rb rc buf
-                  unpacked =
-                    unpackIrrepsFlat
-                      (leftSectors ra rb rc)
-                      (\d -> allowedLeftMids (Proxy @SU2Th) ra rb rc d)
-                      buf'
-               in [(d, e, ra, rb, rc, v) | (d, e, v) <- unpacked]
+                  moved = fmoveChannelsD (Proxy @SU2Th) (\d -> d + 1) True ra rb rc chH
+               in [(d, e, ra, rb, rc, v) | (d, e, v) <- moved]
           )
           triples
    in scatterAssocLChannel

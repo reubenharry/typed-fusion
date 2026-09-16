@@ -1,7 +1,17 @@
 # HLS must use cabal.project (local linearmap-hmatrix with COrphans).
 # Also set haskell.sessionLoading to singleComponent in .vscode/settings.json:
 # multi-repl conflicts with cabal.project.freeze (Cabal == 3.10.3.0).
+#
+# Bare `cabal repl` targets the single-lib `quantum` package. Oracle code is a
+# separate package (`quantum-reference`) so it does not break multi-component
+# selection.
 cradle:
   cabal:
-    component: "lib:quantum"
-
+    - path: "./src"
+      component: "lib:quantum"
+    - path: "./test"
+      component: "quantum:test:quantum-test"
+    - path: "./quantum-reference"
+      component: "lib:quantum-reference"
+    - path: "./scripts"
+      component: "lib:quantum"

@@ -15,8 +15,10 @@ Do not violate these. Full text lives in `.cursor/rules/`.
 1. **No basis-sum in production** — contractions/amplitudes are morphisms
    (composition, `trace`, unitors, `siteDagger`, …). Explicit
    `enumerateSubBasis` / `basis @n i` / coefficient sums belong only in
-   `*.Reference` oracles (and `gen*`). If categorical closure is blocked, use
-   `undefined` and name the blocker — never a basis-sum stand-in.
+   `*.Reference` oracles (and `gen*`), which live in the **`quantum-reference`**
+   package — production modules must not import them. If categorical
+   closure is blocked, use `undefined` and name the blocker — never a
+   basis-sum stand-in.
 2. **No new `unsafeCoerce`** without explicit user approval for that site.
    Prefer typed helpers, `KnownNat` / dimensionality splits, or `coerce` with a
    same-representation proof.
@@ -124,7 +126,7 @@ need interactive `:t` or dependency source.
 | Layer | Role |
 | --- | --- |
 | Production (`TensorNetwork.*`, etc.) | Categorical morphisms; no basis arithmetic |
-| `*.Reference` | Explicit oracles for QuickCheck |
+| `*.Reference` (`quantum-reference`) | Explicit oracles for QuickCheck / probes — not imported by production |
 | `scripts/*.hs` | Probes, MREs, profiling — not production truth |
 | `test/` | Property suite; run at milestones |
 

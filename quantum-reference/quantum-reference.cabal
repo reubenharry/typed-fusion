@@ -1,0 +1,27 @@
+cabal-version:      3.0
+name:               quantum-reference
+version:            0.1.0.0
+license:            BSD-3-Clause
+author:             =
+maintainer:         reubenharry@gmail.com
+category:           Math
+build-type:         Simple
+synopsis:           Quarantined densify / oracle helpers for quantum
+description:
+  CG densify and dynamic-LA F oracles. Depend on this only from tests and
+  probes — never from production @quantum@ modules.
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    exposed-modules:
+        Hom.Reference
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    build-depends:
+        base ^>=4.19.2.0,
+        quantum,
+        hmatrix,
+        vector

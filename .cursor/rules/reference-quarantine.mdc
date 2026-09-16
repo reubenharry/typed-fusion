@@ -1,0 +1,32 @@
+---
+description: Quarantine *.Reference oracles away from production
+globs:
+  - src/**/*.hs
+alwaysApply: false
+---
+
+# Reference quarantine
+
+`*.Reference` modules (today: `Hom.Reference` in the separate
+**`quantum-reference`** package) hold densify / basis-sum / dynamic-LA
+oracles for QuickCheck and probes.
+
+## Do not
+
+- Import any `*.Reference` module from production code under `src/` that is
+  exposed by the main `quantum` library (`Fusion.*`, `Hom.*` except Reference,
+  `Symmetry.CG.SU2`, …).
+- Re-export densify / `fMultBlock` / `denseFMove*` from production CG or Hom
+  modules.
+- Put dynamic `Numeric.LinearAlgebra` densify back into `Symmetry.CG.SU2`.
+
+## Do
+
+- Keep CG densify only in `Hom.Reference` (`quantum-reference` package).
+- Production SU(2) F scalars: `Symmetry.CG.SixJ.su2FAmpTJ` via `FusionData.fSymbol`.
+- Tests / scripts that need oracles: `build-depends: quantum-reference`.
+
+## Compiling vs correct
+
+If a production call site “needs” densify, stop and co-plan — that is a missing
+morphism or a misplaced oracle, not a reason to weaken the quarantine.

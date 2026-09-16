@@ -13,11 +13,10 @@
 -- Type-level labels are @Label SU2Th = Nat@ (@2j@). Term-level @TermLab = Int@.
 -- Spin fractions have kind 'SpinKind' (@1/2@, @3/2@, …); reduce with 'Spin' to a
 -- @2j@ label (@Spin (1/2) = 1@, @Spin (1/1) = 2@).
--- @fSymbol@ is the screenshot amplitude @[F^{abc}_d]_{ef}@ (Racah \/ CG),
--- matching 'Symmetry.CG.FSymbol' Schur blocks for irrep triples.
 --
--- Flat CG \/ F-move on irrep triples delegates to 'Symmetry.CG.SU2'
--- (@fmoveFlatSectors@, @denseFMoveSectors@, …) with unit-mult spines.
+-- 'fSymbol' is closed-form Wigner 6j ('su2FAmpTJ'); production F-move apply
+-- uses 'Fusion.ChannelF.fmoveChannelsD' on those scalars (no densify \/ mat-vec).
+-- CG densify lives only in 'Hom.Reference' (@quantum-reference@ package).
 module Fusion.SU2
   ( SU2Th
   , SpinKind (..)
@@ -32,27 +31,26 @@ module Fusion.SU2
   , canFuseTJ
   , leftSectors
   , rightSectors
-  , denseFIrreps
   , fmoveIrrepsFlat
+  , fmoveChannels
   , packIrrepsFlat
   , unpackIrrepsFlat
+  , applySchurF
   ) where
 
-import Data.Complex (Complex (..))
-import Data.List (elemIndex)
-import Data.Maybe (fromMaybe, mapMaybe)
-import Fusion.Data (FusionData (..), allowedLeftMids, allowedRightMids)
-import Fusion.Theory (FusionTheory (..), Label)
-import GHC.TypeLits (Nat, type (*), type Div)
+import Data.Complex (Complex (..), magnitude)
+import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
-import qualified Numeric.LinearAlgebra as LA
+import Fusion.ChannelF (fmoveChannelsD)
+import Fusion.Data (FusionData (..), allowedLeftMids, allowedRightMids)
+import Fusion.Theory (FusionTheory (..), Label)
+import GHC.TypeLits (Nat, type (*), type Div)
+import Symmetry.CG.SixJ (su2FAmpTJ)
 import Symmetry.CG.SU2
-  ( denseFMoveSectors
-  , fmoveFlatSectors
-  , fusedSectorPairs
+  ( fusedSectorPairs
   , fusionChannels
   , sectorsFromPairs
   )
@@ -85,7 +83,6 @@ su2FuseOutcomes :: Int -> Int -> [(Int, Int)]
 su2FuseOutcomes j1 j2 = [(j, 1) | j <- fusionChannels j1 j2]
 
 -- | Channel R-phase for bosonic SU(2): @(-1)^{j₁+j₂-j}@ with labels as @2j@.
--- Equivalent to the single-channel content of 'Symmetry.CG.RSymbol'.
 su2RPhase :: Int -> Int -> Int -> Complex Double
 su2RPhase tj1 tj2 tj
   | odd (tj1 + tj2 - tj) =
@@ -94,7 +91,7 @@ su2RPhase tj1 tj2 tj
   | otherwise = -1
 
 --------------------------------------------------------------------------------
--- Term-level F-symbols (irrep triples), CG-consistent with Symmetry.CG.FSymbol
+-- Term-level F-symbols (irrep triples)
 --------------------------------------------------------------------------------
 
 canFuseTJ :: Int -> Int -> Int -> Bool
@@ -108,27 +105,6 @@ allowedE = allowedLeftMids (Proxy @SU2Th)
 allowedF :: Int -> Int -> Int -> Int -> [Int]
 allowedF = allowedRightMids (Proxy @SU2Th)
 
--- | Unit-multiplicity irrep spine for 'Symmetry.CG.SU2' sector APIs.
-irrepSpine :: Int -> [(Int, Int, Int)]
-irrepSpine tj = sectorsFromPairs [(tj, 1)]
-
--- | Dense left→right F for an irrep triple (@2j@ labels).
-denseFIrreps :: Int -> Int -> Int -> LA.Matrix (Complex Double)
-denseFIrreps a b c =
-  denseFMoveSectors (irrepSpine a) (irrepSpine b) (irrepSpine c)
-
--- | Apply dense F (or @Fᵀ ≈ F⁻¹@) on left\/right sector flats from
--- 'leftSectors' \/ 'rightSectors'. Label-driven — no per-triple typed flats.
-fmoveIrrepsFlat
-  :: Bool
-  -> Int
-  -> Int
-  -> Int
-  -> VS.Vector (Complex Double)
-  -> VS.Vector (Complex Double)
-fmoveIrrepsFlat inv a b c =
-  fmoveFlatSectors inv (irrepSpine a) (irrepSpine b) (irrepSpine c)
-
 -- | Sector layout of left-fused @((a⊗b)⊗c)@: @(tj, mult, flat offset)@.
 leftSectors :: Int -> Int -> Int -> [(Int, Int, Int)]
 leftSectors a b c =
@@ -139,6 +115,105 @@ rightSectors :: Int -> Int -> Int -> [(Int, Int, Int)]
 rightSectors a b c =
   let bc = fusedSectorPairs [(b, 1)] [(c, 1)]
    in sectorsFromPairs (fusedSectorPairs [(a, 1)] bc)
+
+-- | Multiplicity-block entry @[F^{abc}_d]_{ef}@ (closed-form 6j).
+fMultEntry
+  :: Int -> Int -> Int -> Int -> Int -> Int -> Complex Double
+fMultEntry = su2FAmpTJ
+
+-- | Screenshot F-symbol: @|(ab)e;c;d⟩ = Σ_f [F^{abc}_d]_{ef} |a;(bc)f;d⟩@.
+-- @inv@ yields @[F^{-1}]_{ef} = [F]_{fe}@ (real orthogonal F).
+su2FSymbol
+  :: Bool
+  -> Int
+  -> Int
+  -> Int
+  -> Int
+  -> Int
+  -> [(Int, Complex Double)]
+su2FSymbol inv a b c d e
+  | not (canFuseTJ a b e) = []
+  | not (canFuseTJ e c d) = []
+  | otherwise =
+      mapMaybe
+        ( \fLab ->
+            let amp =
+                  if inv
+                    then su2FAmpTJ a b c d fLab e -- [F^{-1}]_{e f} = [F]_{f e}
+                    else su2FAmpTJ a b c d e fLab
+             in if magnitude amp < 1e-14
+                  then Nothing
+                  else Just (fLab, amp)
+        )
+        (allowedF a b c d)
+
+--------------------------------------------------------------------------------
+-- Schur apply (@F ⊗ I_{d+1}@) — LA-free
+--------------------------------------------------------------------------------
+
+-- | Apply multiplicity F as @{F ⊗ I_dim}@ (@inv@: @Fᵀ ⊗ I@).
+-- @blk!!f!!e = [F]_{e f}@ with rows = right mids, cols = left mids.
+applySchurF
+  :: Bool
+  -> [[Complex Double]]
+  -> Int
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+applySchurF inv blk dim vin =
+  let ne = case blk of
+        (row : _) -> length row
+        [] -> 0
+      nf = length blk
+      -- forward: out[f*dim+m] = sum_e blk[f][e] * in[e*dim+m]
+      -- inv: out[e*dim+m] = sum_f blk[f][e] * in[f*dim+m]  (Fᵀ)
+   in if inv
+        then
+          VS.generate (ne * dim) $ \i ->
+            let e = i `div` dim
+                m = i `mod` dim
+             in sum
+                  [ (blk !! f) !! e * (vin VS.! (f * dim + m))
+                  | f <- [0 .. nf - 1]
+                  ]
+        else
+          VS.generate (nf * dim) $ \i ->
+            let f = i `div` dim
+                m = i `mod` dim
+             in sum
+                  [ (blk !! f) !! e * (vin VS.! (e * dim + m))
+                  | e <- [0 .. ne - 1]
+                  ]
+
+-- | Per-total channel F on irrep payloads (@C (d+1)@ each) via 'fSymbol'.
+fmoveChannels
+  :: Bool
+  -> Int
+  -> Int
+  -> Int
+  -> [(Int, Int, VS.Vector (Complex Double))]
+  -> [(Int, Int, VS.Vector (Complex Double))]
+fmoveChannels = fmoveChannelsD (Proxy @SU2Th) (\d -> d + 1)
+
+-- | Left↔right F on irrep-triple flats via 'fmoveChannels' (pack \/ unpack).
+fmoveIrrepsFlat
+  :: Bool
+  -> Int
+  -> Int
+  -> Int
+  -> VS.Vector (Complex Double)
+  -> VS.Vector (Complex Double)
+fmoveIrrepsFlat inv a b c vin =
+  let secsIn = if inv then rightSectors a b c else leftSectors a b c
+      secsOut = if inv then leftSectors a b c else rightSectors a b c
+      midsIn = if inv then allowedF a b c else allowedE a b c
+      midsOut = if inv then allowedE a b c else allowedF a b c
+      chIn = unpackIrrepsFlat secsIn midsIn vin
+      chOut = fmoveChannels inv a b c chIn
+   in packIrrepsFlat secsOut midsOut chOut
+
+--------------------------------------------------------------------------------
+-- Pack \/ unpack channel flats
+--------------------------------------------------------------------------------
 
 -- | Pack @(d, mid, irrep)@ channels into a left\/right sector flat.
 packIrrepsFlat
@@ -193,57 +268,6 @@ unpackIrrepsFlat secs midsOf buf =
         mids = midsOf d
   , (ei, mid) <- zip [0 :: Int ..] mids
   ]
-
--- | Multiplicity-block entry @M_{f e} = [F^{abc}_d]_{ef}@ from dense F
--- (rows = right intermediate @f@, cols = left @e@; Schur expands as @⊗ I_{d+1}@).
-fMultEntry
-  :: Int -> Int -> Int -> Int -> Int -> Int -> Complex Double
-fMultEntry a b c d e f =
-  let mat = denseFIrreps a b c
-      es = allowedE a b c d
-      fs = allowedF a b c d
-      eIdx = fromMaybe (-1) (elemIndex e es)
-      fIdx = fromMaybe (-1) (elemIndex f fs)
-      secsL = leftSectors a b c
-      secsR = rightSectors a b c
-   in case (lookup3 d secsL, lookup3 d secsR, eIdx >= 0 && fIdx >= 0) of
-        (Just (_mL, offL), Just (_mR, offR), True) ->
-          let dimD = d + 1
-              row = offR + fIdx * dimD
-              col = offL + eIdx * dimD
-           in mat `LA.atIndex` (row, col)
-        _ -> 0
-  where
-    lookup3 tj secs =
-      case [ (m, off) | (t, m, off) <- secs, t == tj ] of
-        (p : _) -> Just p
-        [] -> Nothing
-
--- | Screenshot F-symbol: @|(ab)e;c;d⟩ = Σ_f [F^{abc}_d]_{ef} |a;(bc)f;d⟩@.
--- Labels are @2j@. Returns @[(f, [F^{abc}_d]_{ef})]@. @inv@ yields @[F^{-1}]_{ef} = [F]_{fe}@.
-su2FSymbol
-  :: Bool
-  -> Int
-  -> Int
-  -> Int
-  -> Int
-  -> Int
-  -> [(Int, Complex Double)]
-su2FSymbol inv a b c d e
-  | not (canFuseTJ a b e) = []
-  | not (canFuseTJ e c d) = []
-  | otherwise =
-      mapMaybe
-        ( \f ->
-            let amp =
-                  if inv
-                    then fMultEntry a b c d f e
-                    else fMultEntry a b c d e f
-             in if LA.magnitude amp < 1e-14
-                  then Nothing
-                  else Just (f, amp)
-        )
-        (allowedF a b c d)
 
 instance FusionData Nat SU2Th where
   type TermLab SU2Th = Int

@@ -1,5 +1,6 @@
 packages:
   .
+  quantum-reference
   ../linearmap-family
   ../linearmap-family/constrained-categories
   ../linearmap-family/free-vector-spaces

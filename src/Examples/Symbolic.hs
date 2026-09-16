@@ -1,15 +1,22 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{- HLINT ignore "Redundant bimap" -}
 {- HLINT ignore "Move brackets to avoid $" -}
 {- HLINT ignore "Redundant $" -}
 
 -- | Smokes for 'Hom': term-level checks and compile-time type equalities.
 -- Covers Dual-left 'HomUnfused' and genealogy 'HomFused' / 'composeHomTrees'.
+-- Fibonacci Dual-left CCC: 'composeFGStepsFib' / 'cupCapFibOk'.
 -- Unit laws: 'composeHomTreesSelfTest'.
 -- Fused SU2 cup/cap: genealogy 'cup' / 'idHomFTrees'.
 -- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
@@ -23,7 +30,13 @@ import Data.Proxy (Proxy (..))
 import Data.VectorSpace (InnerSpace ((<.>)), (*^), (^-^))
 import Categorical.Associative (Associative (..))
 import Categorical.Bifunctor (Bifunctor (..))
+import Categorical.CompactClosed (ComposeNamesC, composeNames)
+import Categorical.Monoidal (Monoidal (..))
+import Fusion.Fibonacci (Fib (..), FibObj, FibTh, Simple (..), cap, phi)
+import qualified Fusion.Fibonacci as FibCat (cup)
+import Fusion.Hom (HomDualS (..), sectorToMap)
 import Fusion.Obj (Obj (Irrep, (:⊗:), (:⊕:)), DualObj)
+import Fusion.Theory (UnitLab)
 import Symmetry.Group (Group (SU2, U1))
 import Fusion.SU2 (SU2Th, Spin, type (/))
 import Fusion.U1 (U1Th)
@@ -41,7 +54,7 @@ import Math.LinearMap.Category
 import Math.LinearMap.Category.Class (asTensor, fromTensor)
 import Math.LinearMap.Coercion ((-+$=>))
 import Math.VectorSpace.DimensionAware (toArray, unsafeFromArray)
-import Numeric.LinearAlgebra.Static (C, konst)
+import Numeric.LinearAlgebra.Static (C, Sized (unwrap), konst)
 import qualified Data.Vector.Storable as VS
 
 import Prelude hiding (id, (.), ($))
@@ -49,6 +62,8 @@ import Categorical.Linear (runit, swapMap)
 import Hom.Vec (vec)
 import Symmetry.SU2 (SU2Element, su2Alpha, su2Beta)
 import Test.QuickCheck (Gen, Property, counterexample, generate, (==>))
+import Categorical.CompactClosed (CompactClosed(counit))
+import Fusion.Theory (FusionTheory(UnitLab), Label)
 
 -- exampleFTreeV :: FTreeV '[ 'IrrepTree (Spin (1/2)), 'IrrepTree (Spin (3 / 2))]
 example1 :: Unfused SU2 ('Irrep (Spin (1/2)) :⊕: 'Irrep (Spin (3 / 2)))
@@ -133,6 +148,131 @@ composeFGSteps = step5
           step3
       step5 :: FTreeV (ObjTrees SU2 (Half :⊗: Half))
       step5 = idRight @'[HalfTree] (unitor @'[HalfTree]) step4
+
+--------------------------------------------------------------------------------
+-- Fibonacci: Mac Lane Hom compose (name → cup ladder → unname)
+--------------------------------------------------------------------------------
+
+type FibTau = 'Irrep 'Tau
+type FibOne = 'Irrep 'One
+type DualFib (a :: FibObj) = DualObj FibTh a
+
+-- | Name @⌜f⌝ = (a* ⊗ f) ∘ η_a : 𝟙 → a* ⊗ b@.
+nameFib
+  :: forall (a :: FibObj) (b :: FibObj)
+   . ( Object Fib a
+     , Object Fib b
+     , Object Fib FibOne
+     , Object Fib (DualFib a)
+     , Object Fib (DualFib a :⊗: a)
+     , Object Fib (DualFib a :⊗: b)
+     )
+  => Fib a b
+  -> Fib FibOne (DualFib a :⊗: b)
+nameFib f =
+  bimap (id :: Fib (DualFib a) (DualFib a)) f . cap @a
+
+-- | Unname: recover @f : a → c@ from @⌜f⌝ : 𝟙 → a* ⊗ c@.
+--
+-- @
+-- a ─ρ⁻¹→ a ⊗ 𝟙 ─id⊗⌜f⌝→ a ⊗ (a* ⊗ c) ─α⁻¹→ (a ⊗ a*) ⊗ c ─ε⊗id→ 𝟙 ⊗ c ─λ→ c
+-- @
+unnameFib
+  :: forall (a :: FibObj) (c :: FibObj)
+   . ( Object Fib a
+     , Object Fib c
+     , Object Fib FibOne
+     , Object Fib (DualFib a)
+     , Object Fib (a :⊗: FibOne)
+     , Object Fib (DualFib a :⊗: c)
+     , Object Fib (a :⊗: (DualFib a :⊗: c))
+     , Object Fib ((a :⊗: DualFib a) :⊗: c)
+     , Object Fib (a :⊗: DualFib a)
+     , Object Fib (FibOne :⊗: c)
+     )
+  => Fib FibOne (DualFib a :⊗: c)
+  -> Fib a c
+unnameFib n =
+  idl
+    . bimap (FibCat.cup @a) (id :: Fib c c)
+    . ( disassociate
+          :: Fib
+               (a :⊗: (DualFib a :⊗: c))
+               ((a :⊗: DualFib a) :⊗: c)
+      )
+    . bimap (id :: Fib a a) n
+    . coidr
+
+-- | Fib specialization of 'composeNames' (@CompactClosed Fib (:⊗:)@).
+composeNamesFib
+  :: forall (a :: FibObj) (b :: FibObj) (c :: FibObj)
+   . ComposeNamesC Fib (:⊗:) a b c
+  => Fib (Irrep (UnitLab FibTh)) (DualObj FibTh a :⊗: b)
+  -> Fib (Irrep (UnitLab FibTh)) (DualObj FibTh b :⊗: c)
+  -> Fib (Irrep (UnitLab FibTh)) (DualObj FibTh a :⊗: c)
+composeNamesFib = composeNames @Fib @(:⊗:) @a @b @c
+
+-- | @g ∘ f@ spelled as name → Mac Lane name-compose → unname (equals @g . f@).
+composeFGStepsFib
+  :: forall (a :: FibObj) (b :: FibObj) (c :: FibObj)
+   . ( Object Fib a
+     , Object Fib b
+     , Object Fib c
+     , Object Fib FibOne
+     , Object Fib (DualFib a)
+     , Object Fib (DualFib b)
+     , Object Fib (DualFib a :⊗: a)
+     , Object Fib (DualFib a :⊗: b)
+     , Object Fib (DualFib b :⊗: b)
+     , Object Fib (DualFib b :⊗: c)
+     , Object Fib (a :⊗: FibOne)
+     , Object Fib (a :⊗: DualFib a)
+     , Object Fib (a :⊗: (DualFib a :⊗: c))
+     , Object Fib ((a :⊗: DualFib a) :⊗: c)
+     , Object Fib (FibOne :⊗: FibOne)
+     , Object Fib ((DualFib a :⊗: b) :⊗: (DualFib b :⊗: c))
+     , Object Fib (DualFib a :⊗: (b :⊗: (DualFib b :⊗: c)))
+     , Object Fib (b :⊗: (DualFib b :⊗: c))
+     , Object Fib ((b :⊗: DualFib b) :⊗: c)
+     , Object Fib (DualFib a :⊗: ((b :⊗: DualFib b) :⊗: c))
+     , Object Fib (b :⊗: DualFib b)
+     , Object Fib (FibOne :⊗: c)
+     , Object Fib (DualFib a :⊗: (FibOne :⊗: c))
+     , Object Fib (DualFib a :⊗: c)
+     )
+  => Fib a b
+  -> Fib b c
+  -> Fib a c
+composeFGStepsFib f g =
+  unnameFib @a @c (composeNamesFib @a @b @c (nameFib @a @b f) (nameFib @b @c g))
+
+-- | Mac Lane compose of @id_τ@ with itself recovers @id_τ@.
+composeFGStepsFibOk :: Bool
+composeFGStepsFibOk =
+  let i = id :: Fib FibTau FibTau
+      got = composeFGStepsFib i i
+   in fibEndTauAmp got ~= fibEndTauAmp i
+  where
+    (~=) xs ys =
+      length xs == length ys
+        && and (zipWith (\x y -> magnitude (x - y) < 1e-9) xs ys)
+
+-- | @Hom(τ,τ)@ action on the unit @1 ∈ ℂ¹@ (τ-sector).
+fibEndTauAmp :: Fib FibTau FibTau -> [Complex Double]
+fibEndTauAmp (Fib (HomDualCons _ (HomDualCons t _))) =
+  VS.toList (unwrap (sectorToMap t $ (konst 1 :: C 1)))
+
+-- | Vacuum image of @1@ for @𝟙 → 𝟙@.
+fibOneVacAmp :: Fib FibOne FibOne -> [Complex Double]
+fibOneVacAmp (Fib (HomDualCons vac _)) =
+  VS.toList (unwrap (sectorToMap vac $ (konst 1 :: C 1)))
+
+-- | Vacuum round-trip: @ε ∘ η = φ · id_𝟙@.
+cupCapFibOk :: Bool
+cupCapFibOk =
+  case fibOneVacAmp (FibCat.cup @FibTau . cap @FibTau) of
+    [z] -> magnitude (z - phi) < 1e-9
+    _ -> False
 
 
 
@@ -363,6 +503,8 @@ symbolicExamplesOk =
     , associateHomUnfusedRoundtripOk
     , cupCapRoundtripSpinHalfOk
     , composeHomTreesI1TypedOk
+    , composeFGStepsFibOk
+    , cupCapFibOk
     ]
 
 --------------------------------------------------------------------------------
