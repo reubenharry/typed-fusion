@@ -150,7 +150,7 @@ f \otimes g
 \end{aligned}
 $$
 
-Note that the type in the code above is precise, but very general. It says: for any compact closed category, and any objects $a$, $b$, $c$, if you give me morphisms $f : I \to Dual a \otimes b$ and $g : I \to Dual b \otimes c$, I will give you a morphism $f \circ g : I \to Dual a \otimes c$. Having precise types like this lets you write general (in this case, category-level) code that specializes to specific cases automatically; think of it as a more powerful version of what multiple dispatch in Julia gives you.
+Note that the type in the code above is precise, but very general. It says: for any compact closed category, and any objects $a$, $b$, $c$, if you give me morphisms $f : I \to a^* \otimes b$ and $g : I \to b^* \otimes c$, I will give you a morphism $f \circ g : I \to a^* \otimes c$. Having precise types like this lets you write general (in this case, category-level) code that specializes to specific cases automatically; think of it as a more powerful version of what multiple dispatch in Julia gives you.
 
 # Why do this?
 
