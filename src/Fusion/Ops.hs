@@ -18,9 +18,7 @@
 -- Each Hom sector is emitted as Dual-left @C n_s(X) +> C n_s(Y)@ (no matrix
 -- densify buffer, no pack\/unpack).
 module Fusion.Ops
-  ( BuildHomDualS
-  , HomSectors
-  , tensorHomDual
+  ( tensorHomDual
   , braidHomDual
   , associateHomDual
   , disassociateHomDual
@@ -42,11 +40,12 @@ import Fusion.Data (FusionData (..))
 import Fusion.Hom
   ( HomDualS (..)
   , SectorDual
+  , fillHomDual
   , sectorFromMap
   , sectorToMap
   )
 import Fusion.Theory (FiniteIrr (..), Label)
-import GHC.TypeLits (KnownNat, Nat, natVal)
+import GHC.TypeLits (KnownNat, natVal)
 import Math.LinearMap.Category
   ( DualVector
   , pattern LinearFunction
@@ -63,28 +62,6 @@ import Prelude hiding (($))
 -- Dual-left sector spine builders
 --------------------------------------------------------------------------------
 
--- | Build an Irr-ordered 'HomDualS' by emitting one Dual-left sector at a time.
-class BuildHomDualS (nsDom :: [Nat]) (nsCod :: [Nat]) where
-  buildHomDualS
-    :: ( forall nd nc
-         . SectorDual nd nc
-        => Int
-        -> Proxy nd
-        -> Proxy nc
-        -> DualVector (C nd) ⊗ C nc
-       )
-    -> HomDualS nsDom nsCod
-
-instance BuildHomDualS '[] '[] where
-  buildHomDualS _ = HomDualNil
-
-instance (SectorDual nd nc, BuildHomDualS nds ncs) =>
-  BuildHomDualS (nd ': nds) (nc ': ncs) where
-  buildHomDualS f =
-    HomDualCons
-      (f 0 (Proxy @nd) (Proxy @nc))
-      (buildHomDualS @nds @ncs (\i pd pc -> f (i + 1) pd pc))
-
 -- | Existential Dual-left sector (lookup by Irr index).
 data SomeSector where
   SomeSector
@@ -92,14 +69,9 @@ data SomeSector where
     => DualVector (C nd) ⊗ C nc
     -> SomeSector
 
-class HomSectors (nsDom :: [Nat]) (nsCod :: [Nat]) where
-  homSectors :: HomDualS nsDom nsCod -> [SomeSector]
-
-instance HomSectors '[] '[] where
-  homSectors HomDualNil = []
-
-instance HomSectors nds ncs => HomSectors (nd ': nds) (nc ': ncs) where
-  homSectors (HomDualCons t rest) = SomeSector t : homSectors rest
+homSectors :: HomDualS nsDom nsCod -> [SomeSector]
+homSectors HomDualNil = []
+homSectors (HomDualCons t rest) = SomeSector t : homSectors rest
 
 sectorLin
   :: forall nd nc
@@ -324,15 +296,14 @@ tensorHomDual
      , FusionData (Label t) t
      , Eq (Label t)
      , TermLab t ~ Label t
-     , HomSectors nsA nsB
-     , HomSectors nsC nsD
-     , BuildHomDualS nsAC nsBD
      )
   => Proxy t
+  -> HomDualS nsAC nsAC
+  -> HomDualS nsBD nsBD
   -> HomDualS nsA nsB
   -> HomDualS nsC nsD
   -> HomDualS nsAC nsBD
-tensorHomDual p f g =
+tensorHomDual p idAC idBD f g =
   let irr = irrVals p
       fs = homSectors f
       gs = homSectors g
@@ -340,7 +311,7 @@ tensorHomDual p f g =
         case elemIndex s irr of
           Just i | i < length secs -> secs !! i
           _ -> error "tensorHomDual: missing sector"
-   in buildHomDualS @nsAC @nsBD (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+   in fillHomDual idAC idBD (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
         let c = irr !! i
             pairs = channelPairs p c
          in if null pairs
@@ -356,15 +327,16 @@ braidHomDual
      , FusionData (Label t) t
      , Eq (Label t)
      , TermLab t ~ Label t
-     , BuildHomDualS nsAB nsBA
      )
   => Proxy t
+  -> HomDualS nsAB nsAB
+  -> HomDualS nsBA nsBA
   -> [Int]
   -> [Int]
   -> HomDualS nsAB nsBA
-braidHomDual p na nb =
+braidHomDual p idAB idBA na nb =
   let irr = irrVals p
-   in buildHomDualS @nsAB @nsBA (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+   in fillHomDual idAB idBA (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
         let c = irr !! i
             pairs = channelPairs p c
             domSizes = [multOf irr na x * multOf irr nb y | (x, y) <- pairs]
@@ -487,16 +459,17 @@ associateHomDual
      , FusionData (Label t) t
      , Eq (Label t)
      , TermLab t ~ Label t
-     , BuildHomDualS nsL nsR
      )
   => Proxy t
+  -> HomDualS nsL nsL
+  -> HomDualS nsR nsR
   -> [Int]
   -> [Int]
   -> [Int]
   -> HomDualS nsL nsR
-associateHomDual p na nb nc =
+associateHomDual p idL idR na nb nc =
   let irr = irrVals p
-   in buildHomDualS @nsL @nsR (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+   in fillHomDual idL idR (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
         let total = irr !! i
             nRows = fromIntegral (natVal (Proxy @nc))
             nCols = fromIntegral (natVal (Proxy @nd))
@@ -511,16 +484,17 @@ disassociateHomDual
      , FusionData (Label t) t
      , Eq (Label t)
      , TermLab t ~ Label t
-     , BuildHomDualS nsL nsR
      )
   => Proxy t
+  -> HomDualS nsL nsL
+  -> HomDualS nsR nsR
   -> [Int]
   -> [Int]
   -> [Int]
   -> HomDualS nsL nsR
-disassociateHomDual p na nb nc =
+disassociateHomDual p idL idR na nb nc =
   let irr = irrVals p
-   in buildHomDualS @nsL @nsR (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
+   in fillHomDual idL idR (\i (Proxy :: Proxy nd) (Proxy :: Proxy nc) ->
         let total = irr !! i
             nRows = fromIntegral (natVal (Proxy @nc))
             nCols = fromIntegral (natVal (Proxy @nd))

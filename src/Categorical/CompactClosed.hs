@@ -36,6 +36,10 @@
 -- not symmetric. Kelly–Laplaza compact closed would also ask for 'Symmetric'.
 module Categorical.CompactClosed
   ( CompactClosed (..)
+  , NameC
+  , UnnameC
+  , name
+  , unname
   , ComposeNamesC
   , composeNames
   ) where
@@ -68,6 +72,59 @@ class Monoidal k p => CompactClosed (k :: κ -> κ -> Type) (p :: κ -> κ -> κ
        , Object k (p a (Dual k p a))
        )
     => k (p a (Dual k p a)) (Id k p)
+
+--------------------------------------------------------------------------------
+-- Name \/ unname (⌜f⌝ = (a* ⊗ f) ∘ η_a)
+--------------------------------------------------------------------------------
+
+type NameC (k :: κ -> κ -> Type) (p :: κ -> κ -> κ) (a :: κ) (b :: κ) =
+  ( CompactClosed k p
+  , Object k a
+  , Object k b
+  , Object k (Id k p)
+  , Object k (Dual k p a)
+  , Object k (p (Dual k p a) a)
+  , Object k (p (Dual k p a) b)
+  )
+
+-- | Name @⌜f⌝ = (a* ⊗ f) ∘ η_a : I → a* ⊗ b@.
+name
+  :: forall {κ} (k :: κ -> κ -> Type) (p :: κ -> κ -> κ) (a :: κ) (b :: κ)
+   . NameC k p a b
+  => k a b
+  -> k (Id k p) (p (Dual k p a) b)
+name f = bimap id f . unit
+
+type UnnameC (k :: κ -> κ -> Type) (p :: κ -> κ -> κ) (a :: κ) (c :: κ) =
+  ( CompactClosed k p
+  , Object k a
+  , Object k c
+  , Object k (Id k p)
+  , Object k (Dual k p a)
+  , Object k (p a (Id k p))
+  , Object k (p (Dual k p a) c)
+  , Object k (p a (p (Dual k p a) c))
+  , Object k (p (p a (Dual k p a)) c)
+  , Object k (p a (Dual k p a))
+  , Object k (p (Id k p) c)
+  )
+
+-- | Unname: recover @f : a → c@ from @⌜f⌝ : I → a* ⊗ c@.
+--
+-- @
+-- a ─ρ⁻¹→ a ⊗ I ─id⊗⌜f⌝→ a ⊗ (a* ⊗ c) ─α⁻¹→ (a ⊗ a*) ⊗ c ─ε⊗id→ I ⊗ c ─λ→ c
+-- @
+unname
+  :: forall {κ} (k :: κ -> κ -> Type) (p :: κ -> κ -> κ) (a :: κ) (c :: κ)
+   . UnnameC k p a c
+  => k (Id k p) (p (Dual k p a) c)
+  -> k a c
+unname n =
+  idl
+    . bimap counit id
+    . disassociate
+    . bimap id n
+    . coidr
 
 --------------------------------------------------------------------------------
 -- Name composition (Mac Lane ladder on ⌜f⌝ ⊗ ⌜g⌝)
@@ -119,9 +176,24 @@ composeNames
   -> hom (Id hom prod) (prod (Dual hom prod b) c)
   -> hom (Id hom prod) (prod (Dual hom prod a) c)
 composeNames nf ng =
-    bimap id idl
-  . bimap id (bimap counit id)
-  . bimap id disassociate
+    (id ⊗ idl)
+  . (id ⊗ (counit ⊗ id))
+  . (id ⊗ disassociate)
   . associate
   . bimap nf ng
   . coidr
+
+-- higher precedence for ⊗
+infixl 8 ⊗
+(⊗)
+    :: forall {κ}  (k :: κ -> κ -> Type) (p :: κ -> κ -> κ) (r :: κ -> κ -> Type) (s :: κ -> κ -> Type) (t :: κ -> κ -> Type) (a :: κ) (b :: κ) (c :: κ) (d :: κ). (Bifunctor (p :: κ -> κ -> κ) (r :: κ -> κ -> Type) (s :: κ -> κ -> Type) (t :: κ -> κ -> Type),  Object r a
+       , Object r b
+       , Object s c
+       , Object s d
+       , Object t (p a c)
+       , Object t (p b d)
+       )
+    => r a b
+    -> s c d
+    -> t (p a c) (p b d)
+(⊗) = bimap

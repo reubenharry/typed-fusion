@@ -92,9 +92,26 @@ g·v:[j=0: [0.3048+0.7993i], j=2: [-6.84e-2-0.3461i, -0.333-0.7278i, -0.4246-0.2
 
 ## Fusion trees
 
-In order to do f-moves properly, the types need to keep track of fusion trees. This took work, and isn't quite complete yet. But most of the operations you'd expect to do in a braided monoidal category are there. For instance: 
+In order to do f-moves properly, the types need to keep track of fusion trees. This took work, and isn't quite complete yet. But most of the operations you'd expect to do in a braided monoidal category are there. Here's an example:
 
 ```haskell
+compose
+  :: forall {κ} (hom :: κ -> κ -> Type) (⊗ :: κ -> κ -> κ) (a :: κ) (b :: κ) (c :: κ)
+   . (CompactClosed hom ⊗ a b c)
+  => hom Id (Dual a ⊗ b)
+  -> hom Id (Dual b ⊗ c)
+  -> hom Id (Dual a ⊗ c)
+compose nf ng =
+    (id ⊗ idl)
+  . (id ⊗ (counit ⊗ id))
+  . (id ⊗ disassociate)
+  . associate
+  . bimap nf ng
+  . coidr
+```
+
+
+<!-- ```haskell
 composeFGSteps :: FTreeV (ObjTrees SU2 (Dual Half :⊗: Half))
 composeFGSteps = step5
   where
@@ -114,7 +131,7 @@ composeFGSteps = step5
           step3
       step5 :: FTreeV (ObjTrees SU2 (Half :⊗: Half))
       step5 = idRight @'[HalfTree] (unitor @'[HalfTree]) step4
-```
+``` -->
 
 which directly corresponds to the five morphisms:
 
@@ -132,6 +149,8 @@ f \otimes g
     a^{\ast}\otimes c\,.
 \end{aligned}
 $$
+
+Note that the type in the code above is precise, but very general. It says: for any compact closed category, and any objects $a$, $b$, $c$, if you give me morphisms $f : I \to Dual a \otimes b$ and $g : I \to Dual b \otimes c$, I will give you a morphism $f \circ g : I \to Dual a \otimes c$. Having precise types like this lets you write general (in this case, category-level) code that specializes to specific cases automatically; think of it as a more powerful version of what multiple dispatch in Julia gives you.
 
 # Why do this?
 

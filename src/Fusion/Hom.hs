@@ -20,8 +20,11 @@
 module Fusion.Hom
   ( HomDualS (..)
   , SectorDual
+  , BuildIdDual
+  , BuildZeroDual
   , idHomDual
   , zeroHomDual
+  , fillHomDual
   , composeHomDual
   , eqHomDual
   , sectorFromMap
@@ -131,6 +134,38 @@ instance (SectorDual n n, BuildIdDual ns) => BuildIdDual (n ': ns) where
 
 idHomDual :: forall ns. BuildIdDual ns => HomDualS ns ns
 idHomDual = buildIdDual @ns
+
+-- | Build a rectangular spine by zipping two identity spines (same Irr
+-- length). Mismatch is a theory invariant: both 'Mults' walk 'Irr t'.
+fillHomDual
+  :: HomDualS nsDom nsDom
+  -> HomDualS nsCod nsCod
+  -> ( forall nd nc
+        . SectorDual nd nc
+       => Int
+       -> Proxy nd
+       -> Proxy nc
+       -> DualVector (C nd) ⊗ C nc
+     )
+  -> HomDualS nsDom nsCod
+fillHomDual = go 0
+  where
+    go
+      :: Int
+      -> HomDualS nsD nsD
+      -> HomDualS nsC nsC
+      -> ( forall nd nc
+            . SectorDual nd nc
+           => Int
+           -> Proxy nd
+           -> Proxy nc
+           -> DualVector (C nd) ⊗ C nc
+         )
+      -> HomDualS nsD nsC
+    go _ HomDualNil HomDualNil _ = HomDualNil
+    go i (HomDualCons (_ :: DualVector (C nd) ⊗ C nd) ds) (HomDualCons (_ :: DualVector (C nc) ⊗ C nc) cs) f =
+      HomDualCons (f i (Proxy @nd) (Proxy @nc)) (go (i + 1) ds cs f)
+    go _ _ _ _ = undefined
 
 class BuildZeroDual (nsDom :: [Nat]) (nsCod :: [Nat]) where
   buildZeroDual :: HomDualS nsDom nsCod

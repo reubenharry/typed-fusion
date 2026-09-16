@@ -17,6 +17,7 @@
 -- | Smokes for 'Hom': term-level checks and compile-time type equalities.
 -- Covers Dual-left 'HomUnfused' and genealogy 'HomFused' / 'composeHomTrees'.
 -- Fibonacci Dual-left CCC: 'composeFGStepsFib' / 'cupCapFibOk'.
+-- Ising Dual-left CCC: 'composeFGStepsIsing' / 'cupCapIsingOk'.
 -- Unit laws: 'composeHomTreesSelfTest'.
 -- Fused SU2 cup/cap: genealogy 'cup' / 'idHomFTrees'.
 -- Phase-1 fusion trees: 'FuseTrees' / 'ToVTree' / 'Root'.
@@ -30,10 +31,10 @@ import Data.Proxy (Proxy (..))
 import Data.VectorSpace (InnerSpace ((<.>)), (*^), (^-^))
 import Categorical.Associative (Associative (..))
 import Categorical.Bifunctor (Bifunctor (..))
-import Categorical.CompactClosed (ComposeNamesC, composeNames)
-import Categorical.Monoidal (Monoidal (..))
-import Fusion.Fibonacci (Fib (..), FibObj, FibTh, Simple (..), cap, phi)
+import Categorical.CompactClosed hiding (Dual)
+import Fusion.Fibonacci (Fib, FibObj, FibTh, Simple (..), cap, phi, pattern Fib)
 import qualified Fusion.Fibonacci as FibCat (cup)
+import Fusion.Ising (Ising, IsingObj, IsingSimple (..), IsingTh, sigmaDim, pattern Ising)
 import Fusion.Hom (HomDualS (..), sectorToMap)
 import Fusion.Obj (Obj (Irrep, (:⊗:), (:⊕:)), DualObj)
 import Fusion.Theory (UnitLab)
@@ -62,7 +63,6 @@ import Categorical.Linear (runit, swapMap)
 import Hom.Vec (vec)
 import Symmetry.SU2 (SU2Element, su2Alpha, su2Beta)
 import Test.QuickCheck (Gen, Property, counterexample, generate, (==>))
-import Categorical.CompactClosed (CompactClosed(counit))
 import Fusion.Theory (FusionTheory(UnitLab), Label)
 
 -- exampleFTreeV :: FTreeV '[ 'IrrepTree (Spin (1/2)), 'IrrepTree (Spin (3 / 2))]
@@ -160,48 +160,18 @@ type DualFib (a :: FibObj) = DualObj FibTh a
 -- | Name @⌜f⌝ = (a* ⊗ f) ∘ η_a : 𝟙 → a* ⊗ b@.
 nameFib
   :: forall (a :: FibObj) (b :: FibObj)
-   . ( Object Fib a
-     , Object Fib b
-     , Object Fib FibOne
-     , Object Fib (DualFib a)
-     , Object Fib (DualFib a :⊗: a)
-     , Object Fib (DualFib a :⊗: b)
-     )
+   . NameC Fib (:⊗:) a b
   => Fib a b
   -> Fib FibOne (DualFib a :⊗: b)
-nameFib f =
-  bimap (id :: Fib (DualFib a) (DualFib a)) f . cap @a
+nameFib = name @Fib @(:⊗:) @a @b
 
 -- | Unname: recover @f : a → c@ from @⌜f⌝ : 𝟙 → a* ⊗ c@.
---
--- @
--- a ─ρ⁻¹→ a ⊗ 𝟙 ─id⊗⌜f⌝→ a ⊗ (a* ⊗ c) ─α⁻¹→ (a ⊗ a*) ⊗ c ─ε⊗id→ 𝟙 ⊗ c ─λ→ c
--- @
 unnameFib
   :: forall (a :: FibObj) (c :: FibObj)
-   . ( Object Fib a
-     , Object Fib c
-     , Object Fib FibOne
-     , Object Fib (DualFib a)
-     , Object Fib (a :⊗: FibOne)
-     , Object Fib (DualFib a :⊗: c)
-     , Object Fib (a :⊗: (DualFib a :⊗: c))
-     , Object Fib ((a :⊗: DualFib a) :⊗: c)
-     , Object Fib (a :⊗: DualFib a)
-     , Object Fib (FibOne :⊗: c)
-     )
+   . UnnameC Fib (:⊗:) a c
   => Fib FibOne (DualFib a :⊗: c)
   -> Fib a c
-unnameFib n =
-  idl
-    . bimap (FibCat.cup @a) (id :: Fib c c)
-    . ( disassociate
-          :: Fib
-               (a :⊗: (DualFib a :⊗: c))
-               ((a :⊗: DualFib a) :⊗: c)
-      )
-    . bimap (id :: Fib a a) n
-    . coidr
+unnameFib = unname @Fib @(:⊗:) @a @c
 
 -- | Fib specialization of 'composeNames' (@CompactClosed Fib (:⊗:)@).
 composeNamesFib
@@ -273,6 +243,53 @@ cupCapFibOk =
   case fibOneVacAmp (FibCat.cup @FibTau . cap @FibTau) of
     [z] -> magnitude (z - phi) < 1e-9
     _ -> False
+
+--------------------------------------------------------------------------------
+-- Ising: Mac Lane Hom compose (name → cup ladder → unname)
+--------------------------------------------------------------------------------
+
+type IsingSigma = 'Irrep 'Sigma
+type IsingOne = 'Irrep 'Vac
+type DualIsing (a :: IsingObj) = DualObj IsingTh a
+
+-- | Ising specialization of 'composeNames' (@CompactClosed Ising (:⊗:)@).
+composeNamesIsing
+  :: forall (a :: IsingObj) (b :: IsingObj) (c :: IsingObj)
+   . ComposeNamesC Ising (:⊗:) a b c
+  => Ising (Irrep (UnitLab IsingTh)) (DualObj IsingTh a :⊗: b)
+  -> Ising (Irrep (UnitLab IsingTh)) (DualObj IsingTh b :⊗: c)
+  -> Ising (Irrep (UnitLab IsingTh)) (DualObj IsingTh a :⊗: c)
+composeNamesIsing = composeNames @Ising @(:⊗:) @a @b @c
+
+composeFGStepsIsing
+  :: forall (a :: IsingObj) (b :: IsingObj) (c :: IsingObj)
+   . ( NameC Ising (:⊗:) a b
+     , NameC Ising (:⊗:) b c
+     , UnnameC Ising (:⊗:) a c
+     , ComposeNamesC Ising (:⊗:) a b c
+     )
+  => Ising a b
+  -> Ising b c
+  -> Ising a c
+composeFGStepsIsing f g =
+  unname @Ising @(:⊗:) @a @c
+    (composeNamesIsing @a @b @c
+       (name @Ising @(:⊗:) @a @b f)
+       (name @Ising @(:⊗:) @b @c g))
+
+-- | Vacuum image of @1@ for @𝟙 → 𝟙@.
+isingOneVacAmp :: Ising IsingOne IsingOne -> [Complex Double]
+isingOneVacAmp (Ising (HomDualCons vac _)) =
+  VS.toList (unwrap (sectorToMap vac $ (konst 1 :: C 1)))
+
+-- | Vacuum round-trip: @ε ∘ η = √2 · id_𝟙@ on σ.
+cupCapIsingOk :: Bool
+cupCapIsingOk =
+  let η = unit :: Ising IsingOne (IsingSigma :⊗: IsingSigma)
+      ε = counit :: Ising (IsingSigma :⊗: IsingSigma) IsingOne
+   in case isingOneVacAmp (ε . η) of
+        [z] -> magnitude (z - sigmaDim) < 1e-9
+        _ -> False
 
 
 
@@ -505,6 +522,7 @@ symbolicExamplesOk =
     , composeHomTreesI1TypedOk
     , composeFGStepsFibOk
     , cupCapFibOk
+    , cupCapIsingOk
     ]
 
 --------------------------------------------------------------------------------

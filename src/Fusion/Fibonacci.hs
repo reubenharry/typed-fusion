@@ -1,23 +1,17 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoStarIsType #-}
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
--- | Fibonacci fusion category as an instance of the generic fusion core.
---
--- Trees \/ Fuse \/ Mult come from 'Fusion.Obj'; Hom from
--- 'Fusion.Hom'; tensor\/braid\/associator from 'Fusion.Ops'.
+-- | Fibonacci fusion data (@FibTh@) and the skeletal category @Fib = FinFusion FibTh@.
 module Fusion.Fibonacci
   ( -- * Labels \/ objects
     Simple (..)
@@ -31,10 +25,10 @@ module Fusion.Fibonacci
   , Mults
   , HomDim
   , FuseIdemMult
-    -- * KnownNat bundles
-  , KnownMult
     -- * Hom
-  , Fib (..)
+  , Fib
+  , pattern Fib
+  , unFib
   , phi
   , phiInv
   , phiInvSqrt
@@ -52,34 +46,10 @@ module Fusion.Fibonacci
 
 import Control.Category.Constrained.Prelude (Category (..))
 import Data.Complex (Complex (..))
-import Data.Proxy (Proxy (..))
-import Categorical.Associative (Associative (..))
-import Categorical.Bifunctor (Bifunctor (..), PFunctor (..), QFunctor (..))
-import Categorical.Braided (Braided (..))
-import Categorical.CompactClosed (CompactClosed (..))
-import Categorical.Monoidal (Monoidal (..))
 import Fusion.Data (FusionData (..), fuseOutcomesFinite)
-import Control.Arrow.Constrained (arr)
-import Data.VectorSpace (AdditiveGroup (zeroV), InnerSpace ((<.>)), VectorSpace ((*^)))
-import Fusion.Hom
-  ( HomDualS (..)
-  , MultsVal (..)
-  , composeHomDual
-  , eqHomDual
-  , idHomDual
-  , sectorFromMap
-  , zeroHomDual
-  )
-import Math.LinearMap.Category
-  ( DualVector
-  , pattern LinearFunction
-  , type (+>)
-  , type (⊗)
-  )
-import Math.LinearMap.Category.Backend.HMatrix ()
-import Math.LinearMap.Category.Instances ()
-import Math.OrphanInstances ()
-import Numeric.LinearAlgebra.Static.COrphans ()
+import Fusion.Finite (FinFusion (..))
+import qualified Fusion.Finite as Finite
+import Fusion.Hom (HomDualS, idHomDual)
 import Fusion.Obj
   ( DualObj
   , Fuse
@@ -92,19 +62,7 @@ import Fusion.Obj
   , Obj (..)
   , Stabilize
   )
-import Fusion.Ops
-  ( BuildHomDualS
-  , HomSectors
-  , associateHomDual
-  , braidHomDual
-  , disassociateHomDual
-  , tensorHomDual
-  , vacuumPairing
-  )
 import Fusion.Theory (FiniteIrr (..), FusionTheory (..), Label)
-import GHC.TypeLits (KnownNat, natVal)
-import Numeric.LinearAlgebra.Static (C, Sized (fromList), konst)
-import Prelude hiding (id, (.))
 
 --------------------------------------------------------------------------------
 -- Theory
@@ -165,33 +123,61 @@ instance FusionData Simple FibTh where
   cupCoeff _ _ = 1
 
 --------------------------------------------------------------------------------
--- Objects
+-- Category synonym
 --------------------------------------------------------------------------------
 
 type FibObj = Obj Simple
 
---------------------------------------------------------------------------------
--- KnownNat bundles
---------------------------------------------------------------------------------
+-- | Skeletal Fibonacci category.
+type Fib = FinFusion Simple FibTh
 
-type KnownMult (a :: FibObj) =
-  ( KnownNat (Mult FibTh 'One a)
-  , KnownNat (Mult FibTh 'Tau a)
-  )
+pattern Fib :: HomDualS (Mults FibTh a) (Mults FibTh b) -> Fib a b
+pattern Fib h = FinFusion h
 
---------------------------------------------------------------------------------
--- Hom: Dual-left Fib
---------------------------------------------------------------------------------
+{-# COMPLETE Fib #-}
 
-newtype Fib (a :: FibObj) (b :: FibObj) = Fib
-  { unFib :: HomDualS (Mults FibTh a) (Mults FibTh b) }
+unFib :: Fib a b -> HomDualS (Mults FibTh a) (Mults FibTh b)
+unFib = unFinFusion
 
--- Mults FibTh a = '[Mult FibTh 'One a, Mult FibTh 'Tau a] definitionally when Irr = [One,Tau]
+eqFib
+  :: (Object Fib a, Object Fib b)
+  => Fib a b
+  -> Fib a b
+  -> Bool
+eqFib = Finite.eqFin
 
-type FibHom a b =
-  ( Mults FibTh a ~ '[Mult FibTh 'One a, Mult FibTh 'Tau a]
-  , Mults FibTh b ~ '[Mult FibTh 'One b, Mult FibTh 'Tau b]
-  )
+cup
+  :: forall a
+   . ( Object Fib a
+     , Object Fib (DualObj FibTh a)
+     , Object Fib (a :⊗: DualObj FibTh a)
+     , Object Fib ('Irrep 'One)
+     )
+  => Fib (a :⊗: DualObj FibTh a) ('Irrep 'One)
+cup = Finite.cup @Simple @FibTh @a
+
+cap
+  :: forall a
+   . ( Object Fib a
+     , Object Fib (DualObj FibTh a)
+     , Object Fib (DualObj FibTh a :⊗: a)
+     , Object Fib ('Irrep 'One)
+     )
+  => Fib ('Irrep 'One) (DualObj FibTh a :⊗: a)
+cap = Finite.cap @Simple @FibTh @a
+
+zeroMor
+  :: forall a c
+   . (Object Fib a, Object Fib c)
+  => Fib a c
+zeroMor = Finite.zeroMor @Simple @FibTh @a @c
+
+fuseMap
+  :: forall a b
+   . (FuseIdemMult FibTh a, FuseIdemMult FibTh b)
+  => Fib a b
+  -> Fib (Fuse FibTh a) (Fuse FibTh b)
+fuseMap = Finite.fuseMap @Simple @FibTh @a @b
 
 phi :: Complex Double
 phi = (1 + sqrt 5) / 2 :+ 0
@@ -202,246 +188,10 @@ phiInv = 1 / phi
 phiInvSqrt :: Complex Double
 phiInvSqrt = sqrt phiInv
 
-natI :: forall n. KnownNat n => Int
-natI = fromIntegral (natVal (Proxy @n))
-
---------------------------------------------------------------------------------
--- Named morphisms
---------------------------------------------------------------------------------
-
-fuse :: Fib ('Irrep 'Tau :⊗: 'Irrep 'Tau) ('Irrep 'One :⊕: 'Irrep 'Tau)
+fuse :: (Object Fib ('Irrep 'Tau :⊗: 'Irrep 'Tau), Object Fib ('Irrep 'One :⊕: 'Irrep 'Tau))
+  => Fib ('Irrep 'Tau :⊗: 'Irrep 'Tau) ('Irrep 'One :⊕: 'Irrep 'Tau)
 fuse = Fib idHomDual
 
-split :: Fib ('Irrep 'One :⊕: 'Irrep 'Tau) ('Irrep 'Tau :⊗: 'Irrep 'Tau)
+split :: (Object Fib ('Irrep 'One :⊕: 'Irrep 'Tau), Object Fib ('Irrep 'Tau :⊗: 'Irrep 'Tau))
+  => Fib ('Irrep 'One :⊕: 'Irrep 'Tau) ('Irrep 'Tau :⊗: 'Irrep 'Tau)
 split = Fib idHomDual
-
-eqFib :: (KnownMult a, KnownMult b, FibHom a b) => Fib a b -> Fib a b -> Bool
-eqFib (Fib h) (Fib g) = eqHomDual h g
-
-zeroMor
-  :: forall a c
-   . (KnownMult a, KnownMult c, FibHom a c)
-  => Fib a c
-zeroMor = Fib zeroHomDual
-
-fuseMap
-  :: forall a b
-   . (FuseIdemMult FibTh a, FuseIdemMult FibTh b)
-  => Fib a b
-  -> Fib (Fuse FibTh a) (Fuse FibTh b)
-fuseMap (Fib h) = Fib h
-
---------------------------------------------------------------------------------
--- Category \/ monoidal
---------------------------------------------------------------------------------
-
-instance Category Fib where
-  type Object Fib a = (KnownMult a, Mults FibTh a ~ '[Mult FibTh 'One a, Mult FibTh 'Tau a])
-
-  id :: forall a. Object Fib a => Fib a a
-  id = Fib idHomDual
-
-  (.)
-    :: forall a b c
-     . (Object Fib a, Object Fib b, Object Fib c)
-    => Fib b c
-    -> Fib a b
-    -> Fib a c
-  (.) (Fib g) (Fib f) = Fib (composeHomDual g f)
-
-instance PFunctor (:⊗:) Fib Fib where
-  first
-    :: forall a b c
-     . ( Object Fib a
-       , Object Fib b
-       , Object Fib c
-       , Object Fib (a :⊗: c)
-       , Object Fib (b :⊗: c)
-       )
-    => Fib a b
-    -> Fib (a :⊗: c) (b :⊗: c)
-  first f = bimap f (id :: Fib c c)
-
-instance QFunctor (:⊗:) Fib Fib where
-  second
-    :: forall a b c
-     . ( Object Fib a
-       , Object Fib b
-       , Object Fib c
-       , Object Fib (c :⊗: a)
-       , Object Fib (c :⊗: b)
-       )
-    => Fib a b
-    -> Fib (c :⊗: a) (c :⊗: b)
-  second = bimap (id :: Fib c c)
-
--- Dual-left morphisms from Ops (no densify buffer \/ pack).
-instance Bifunctor (:⊗:) Fib Fib Fib where
-  bimap
-    :: forall a b c d
-     . ( Object Fib a
-       , Object Fib b
-       , Object Fib c
-       , Object Fib d
-       , Object Fib (a :⊗: c)
-       , Object Fib (b :⊗: d)
-       , HomSectors (Mults FibTh a) (Mults FibTh b)
-       , HomSectors (Mults FibTh c) (Mults FibTh d)
-       , BuildHomDualS (Mults FibTh (a :⊗: c)) (Mults FibTh (b :⊗: d))
-       )
-    => Fib a b
-    -> Fib c d
-    -> Fib (a :⊗: c) (b :⊗: d)
-  bimap (Fib f) (Fib g) =
-    Fib (tensorHomDual (Proxy @FibTh) f g)
-
-instance Associative Fib (:⊗:) where
-  associate
-    :: forall a b c
-     . ( Object Fib a
-       , Object Fib b
-       , Object Fib c
-       , Object Fib (a :⊗: b)
-       , Object Fib (b :⊗: c)
-       , Object Fib ((a :⊗: b) :⊗: c)
-       , Object Fib (a :⊗: (b :⊗: c))
-       , BuildHomDualS
-           (Mults FibTh ((a :⊗: b) :⊗: c))
-           (Mults FibTh (a :⊗: (b :⊗: c)))
-       )
-    => Fib ((a :⊗: b) :⊗: c) (a :⊗: (b :⊗: c))
-  associate =
-    Fib $
-      associateHomDual
-        (Proxy @FibTh)
-        [natI @(Mult FibTh 'One a), natI @(Mult FibTh 'Tau a)]
-        [natI @(Mult FibTh 'One b), natI @(Mult FibTh 'Tau b)]
-        [natI @(Mult FibTh 'One c), natI @(Mult FibTh 'Tau c)]
-
-  disassociate
-    :: forall a b c
-     . ( Object Fib a
-       , Object Fib b
-       , Object Fib c
-       , Object Fib (a :⊗: b)
-       , Object Fib (b :⊗: c)
-       , Object Fib ((a :⊗: b) :⊗: c)
-       , Object Fib (a :⊗: (b :⊗: c))
-       , BuildHomDualS
-           (Mults FibTh (a :⊗: (b :⊗: c)))
-           (Mults FibTh ((a :⊗: b) :⊗: c))
-       )
-    => Fib (a :⊗: (b :⊗: c)) ((a :⊗: b) :⊗: c)
-  disassociate =
-    Fib $
-      disassociateHomDual
-        (Proxy @FibTh)
-        [natI @(Mult FibTh 'One a), natI @(Mult FibTh 'Tau a)]
-        [natI @(Mult FibTh 'One b), natI @(Mult FibTh 'Tau b)]
-        [natI @(Mult FibTh 'One c), natI @(Mult FibTh 'Tau c)]
-
-instance Monoidal Fib (:⊗:) where
-  type Id Fib (:⊗:) = 'Irrep 'One
-
-  idl :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib ('Irrep 'One :⊗: a)) => Fib ('Irrep 'One :⊗: a) a
-  idl = Fib idHomDual
-
-  idr :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib (a :⊗: 'Irrep 'One)) => Fib (a :⊗: 'Irrep 'One) a
-  idr = Fib idHomDual
-
-  coidl :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib ('Irrep 'One :⊗: a)) => Fib a ('Irrep 'One :⊗: a)
-  coidl = Fib idHomDual
-
-  coidr :: forall a. (Object Fib a, Object Fib ('Irrep 'One), Object Fib (a :⊗: 'Irrep 'One)) => Fib a (a :⊗: 'Irrep 'One)
-  coidr = Fib idHomDual
-
-instance Braided Fib (:⊗:) where
-  braid
-    :: forall a b
-     . ( Object Fib a
-       , Object Fib b
-       , Object Fib (a :⊗: b)
-       , Object Fib (b :⊗: a)
-       , BuildHomDualS (Mults FibTh (a :⊗: b)) (Mults FibTh (b :⊗: a))
-       )
-    => Fib (a :⊗: b) (b :⊗: a)
-  braid =
-    Fib $
-      braidHomDual
-        (Proxy @FibTh)
-        [natI @(Mult FibTh 'One a), natI @(Mult FibTh 'Tau a)]
-        [natI @(Mult FibTh 'One b), natI @(Mult FibTh 'Tau b)]
-
---------------------------------------------------------------------------------
--- Cups \/ caps (cup = ε, cap = η)
---------------------------------------------------------------------------------
-
--- | Math contract (skeletal finite fusion):
---
---   * @ε_X : X ⊗ X* → 𝟙@, @η_X : 𝟙 → X* ⊗ X@ ('DualObj' / 'CompactClosed').
---   * Vacuum sector is Dual-left @Dual (C n_𝟙(X⊗X*)) ⊗ C 1@ (ε) or the
---     dual column (η); other Irr sectors are zero Hom.
---   * Weights from 'vacuumPairing' + 'cupCoeff' (ε) \/ @1@ (η).
-
--- | Counit @ε_a : a ⊗ a* → 𝟙@ as Dual-left sector Hom.
-cup
-  :: forall a
-   . ( Object Fib a
-     , Object Fib (DualObj FibTh a)
-     , Object Fib (a :⊗: DualObj FibTh a)
-     , Object Fib ('Irrep 'One)
-     )
-  => Fib (a :⊗: DualObj FibTh a) ('Irrep 'One)
-cup =
-  let nx = multsVal @(Mults FibTh a)
-      ny = multsVal @(Mults FibTh (DualObj FibTh a))
-      w = vacuumPairing (Proxy @FibTh) nx ny (cupCoeff (Proxy @FibTh))
-      wVec = fromList w :: C (Mult FibTh 'One (a :⊗: DualObj FibTh a))
-      vac =
-        sectorFromMap
-          ( arr (LinearFunction (\v -> konst (wVec <.> v)))
-              :: C (Mult FibTh 'One (a :⊗: DualObj FibTh a)) +> C 1
-          )
-   in Fib $
-        HomDualCons
-          vac
-          (HomDualCons
-             (zeroV :: DualVector (C (Mult FibTh 'Tau (a :⊗: DualObj FibTh a))) ⊗ C 0)
-             HomDualNil)
-
--- | Unit @η_a : 𝟙 → a* ⊗ a@ as Dual-left sector Hom.
-cap
-  :: forall a
-   . ( Object Fib a
-     , Object Fib (DualObj FibTh a)
-     , Object Fib (DualObj FibTh a :⊗: a)
-     , Object Fib ('Irrep 'One)
-     )
-  => Fib ('Irrep 'One) (DualObj FibTh a :⊗: a)
-cap =
-  let nx = multsVal @(Mults FibTh (DualObj FibTh a))
-      ny = multsVal @(Mults FibTh a)
-      w = vacuumPairing (Proxy @FibTh) nx ny (const 1)
-      wVec = fromList w :: C (Mult FibTh 'One (DualObj FibTh a :⊗: a))
-      vac =
-        sectorFromMap
-          ( arr (LinearFunction (\s -> (konst 1 <.> s) *^ wVec))
-              :: C 1 +> C (Mult FibTh 'One (DualObj FibTh a :⊗: a))
-          )
-   in Fib $
-        HomDualCons
-          vac
-          (HomDualCons
-             (zeroV :: DualVector (C 0) ⊗ C (Mult FibTh 'Tau (DualObj FibTh a :⊗: a)))
-             HomDualNil)
-
-
-
---------------------------------------------------------------------------------
--- Compact closed (right duals)
---------------------------------------------------------------------------------
-
-instance CompactClosed Fib (:⊗:) where
-  type Dual Fib (:⊗:) a = DualObj FibTh a
-  unit = cap
-  counit = cup

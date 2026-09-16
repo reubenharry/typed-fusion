@@ -31,7 +31,9 @@ library
         Fusion.Unbounded
         Fusion.SU2
         Fusion.U1
+        Fusion.Finite
         Fusion.Fibonacci
+        Fusion.Ising
         Fusion.ChannelF
         -- HomUnfused / HomFused / HomInter (group-indexed; SU(2)+U(1))
         Hom
